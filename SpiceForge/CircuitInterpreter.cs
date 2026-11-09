@@ -758,6 +758,110 @@ public sealed class CircuitInterpreter
     public double AbsoluteTolerance { get; set; } = 1e-6;
 
 
+    /// <summary>
+    /// Solves one segment on its own, to tight tolerance, for the given inputs (as laid out in
+    /// <see cref="Segment.InputNames"/>), starting Newton from <paramref name="guess"/> (laid out as its outputs).
+    /// Writes the outputs, with the nonlinear-term values evaluated exactly at the solution. Returns whether it
+    /// converged. This uses the interpreter's working state, so don't call it while the interpreter is running.
+    /// </summary>
+    public bool SolveSegment(Segment segment, ReadOnlySpan<double> inputs, Span<double> outputs, ReadOnlySpan<double> guess,
+        double tolerance = 1e-12, int maxIterations = 100)
+    {
+        int ports = segment.Ports.Length, frees = segment.Free.Length, size = ports + frees;
+        var open = new double[ports];
+        var constant = new double[frees];
+        int position = 0;
+        for (int i = 0; i < ports; i++)
+            open[i] = inputs[position++];
+        for (int f = 0; f < frees; f++)
+            constant[f] = inputs[position++];
+        foreach (int p in segment.Upstream)
+            w[p] = inputs[position++];
+
+        for (int i = 0; i < ports; i++)
+            w[segment.Ports[i]] = guess[i];
+        var freeValues = new double[frees];
+        for (int f = 0; f < frees; f++)
+            freeValues[f] = guess[ports + f];
+
+        var rows = Enumerable.Range(0, size).Select(_ => new double[size + 1]).ToArray();
+        bool converged = false;
+        for (int iteration = 0; iteration < maxIterations && !converged; iteration++)
+        {
+            EvaluateNonlinear();
+            for (int i = 0; i < ports; i++)
+            {
+                int r = segment.Ports[i];
+                double[] row = rows[i];
+                Array.Clear(row);
+                double residual = w[r] - open[i];
+                row[i] = 1;
+                for (int c = 0; c < m; c++)
+                {
+                    double zc = Z[r, c];
+                    if (zc == 0)
+                        continue;
+                    residual -= zc * q[c];
+                    for (int j = 0; j < ports; j++)
+                        row[j] -= zc * jacobian[c, segment.Ports[j]];
+                }
+                for (int f = 0; f < frees; f++)
+                {
+                    double coupling = Qz[r, segment.Free[f]];
+                    residual -= coupling * freeValues[f];
+                    row[ports + f] = -coupling;
+                }
+                row[size] = -residual;
+            }
+            for (int f = 0; f < frees; f++)
+            {
+                int constraint = segment.Constraints[f];
+                double[] row = rows[ports + f];
+                Array.Clear(row);
+                double residual = constant[f];
+                for (int c = 0; c < m; c++)
+                {
+                    double weight = CP[constraint, c];
+                    if (weight == 0)
+                        continue;
+                    residual += weight * q[c];
+                    for (int j = 0; j < ports; j++)
+                        row[j] += weight * jacobian[c, segment.Ports[j]];
+                }
+                row[size] = -residual;
+            }
+
+            Simulation.Solve(rows, size, size + 1);
+            converged = true;
+            for (int j = 0; j < size; j++)
+            {
+                double delta = rows[j][size];
+                if (double.IsNaN(delta) || double.IsInfinity(delta))
+                    return false;
+                if (j < ports)
+                {
+                    int p = segment.Ports[j];
+                    converged &= Math.Abs(delta) <= tolerance * (1 + Math.Abs(w[p]));
+                    w[p] += delta;
+                }
+                else
+                {
+                    converged &= Math.Abs(delta) <= tolerance * (1 + Math.Abs(freeValues[j - ports]));
+                    freeValues[j - ports] += delta;
+                }
+            }
+        }
+
+        EvaluateNonlinear();
+        position = 0;
+        for (int i = 0; i < ports; i++)
+            outputs[position++] = w[segment.Ports[i]];
+        for (int f = 0; f < frees; f++)
+            outputs[position++] = freeValues[f];
+        foreach (int c in segment.NonlinearTerms)
+            outputs[position++] = q[c];
+        return converged;
+    }
     private double Combine(int i)
     {
         double value = yLinear[i];

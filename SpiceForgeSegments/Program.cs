@@ -15,11 +15,17 @@ const int BlockSize = 4800;
 
 int stride = Oversample;
 double verifySeconds = 2;
+bool lut = false;
+int lutResolution = 0;
 var positional = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--stride" && i + 1 < args.Length)
         stride = int.Parse(args[++i]);
+    else if (args[i] == "--lut")
+        lut = true;
+    else if (args[i] == "--lut-resolution" && i + 1 < args.Length)
+        lutResolution = int.Parse(args[++i]);
     else if (args[i] == "--verify-seconds" && i + 1 < args.Length)
         verifySeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
     else if (args[i].StartsWith("--"))
@@ -52,6 +58,7 @@ try
     ExtractedSystem system = Extractor.Extract(analysis, h);
     // The default exact rebuild is the same as black-box mode, so the data matches what a box will see.
     CircuitInterpreter Create() => new(system, inputSymbol, nodes, h, Oversample, Iterations, solution);
+    CircuitInterpreter CreateWithCap(int cap) => new(system, inputSymbol, nodes, h, Oversample, cap, solution);
 
     var engine = Create();
     if (engine.Segments.Count == 0)
@@ -67,7 +74,8 @@ try
 
     // Record every step's statistics, and every stride-th step's data. Capped steps are always kept.
     Directory.CreateDirectory(outputDirectory);
-    var recorder = new Recorder(engine.Segments, outputDirectory, stride);
+    long expectedRows = (long)input.Length * Oversample / stride;
+    var recorder = new Recorder(engine.Segments, outputDirectory, stride, (int)Math.Max(1, expectedRows / 200000));
     engine.SegmentObserver = recorder;
     Run(engine, input, nodes.Length, scales);
     recorder.Dispose();
@@ -133,6 +141,8 @@ try
     Console.WriteLine($"Recorded {recorder.Rows} rows to {Path.GetFullPath(outputDirectory)}.");
     Console.WriteLine($"Replay check over {replay.seconds:F1} s: output matches to {replay.outputErrorDb:F1} dB, segment inputs to {replay.inputErrorDb:F1} dB.");
     Console.WriteLine($"Recorded behaviour versus LiveSPICE over the same span: {stockDb:F1} dB.");
+    if (lut)
+        TryLookupTables(Create, CreateWithCap, recorder, input, sampleRate, nodes.Length, scales, outputDirectory, lutResolution);
     return 0;
 }
 catch (Exception ex)
@@ -207,6 +217,87 @@ static double CompareWithStock(TransientSolution solution, Expression inputSymbo
     return Db(error / Math.Max(peak, 1e-30));
 }
 
+// Builds a lookup table for every segment, then renders the whole input with them as the black boxes and compares
+// that with the normal engine. Both renders are written out for listening.
+static void TryLookupTables(Func<CircuitInterpreter> create, Func<int, CircuitInterpreter> createWithCap, Recorder recorder, double[] input, int sampleRate, int nodeCount, double[] scales, string directory, int resolution)
+{
+    var builder = create();
+    var tables = new List<LookupTable>();
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    foreach (Segment segment in builder.Segments)
+    {
+        int dimensions = recorder.Statistics[segment.Index].EffectiveDimension(1e-4);
+        int size = resolution > 0 ? resolution : dimensions <= 1 ? 4096 : 256;
+        LookupTable? table = LookupTable.Build(builder, segment, recorder.SampleInputs[segment.Index], recorder.SampleOutputs[segment.Index], size, out string reason);
+        if (table == null)
+        {
+            Console.WriteLine($"Lookup table: segment {segment.Index} can't use one: {reason}");
+            return;
+        }
+        Console.WriteLine($"Lookup table: segment {segment.Index}: {table.Dimensions} dimension(s), {table.Resolution} points per dimension, "
+            + $"projection residual {table.ProjectionResidual:E1}, {table.FailedPoints} grid point(s) didn't converge.");
+        tables.Add(table);
+    }
+    Console.WriteLine($"Built in {watch.Elapsed.TotalSeconds:F2} s from {recorder.SampleInputs[0].Count} sample inputs.");
+
+    var newton = create();
+    double[] expected = Run(newton, input, nodeCount, scales);
+    var boxed = create();
+    boxed.SegmentSolver = new LookupTableSolver(tables);
+    double[] actual = Run(boxed, input, nodeCount, scales);
+
+    double peak = expected.Max(Math.Abs), worst = 0;
+    int window = sampleRate / 10, badWindows = 0, windows = 0;
+    for (int start = 0; start < input.Length; start += window, windows++)
+    {
+        double windowWorst = 0;
+        for (int n = start; n < Math.Min(input.Length, start + window); n++)
+            windowWorst = Math.Max(windowWorst, Math.Abs(expected[n] - actual[n]));
+        if (windowWorst > peak * 1e-3 || double.IsNaN(windowWorst))
+            badWindows++;
+        worst = Math.Max(worst, windowWorst);
+    }
+
+    double Share(CircuitInterpreter e) => e.SolveTicks / (double)Math.Max(e.RunTicks, 1);
+    double Microseconds(CircuitInterpreter e) => e.RunTicks * 1e6 / System.Diagnostics.Stopwatch.Frequency / input.Length;
+    Console.WriteLine($"Lookup table versus Newton over {input.Length / (double)sampleRate:F1} s: worst error {Db(worst / Math.Max(peak, 1e-30)):F1} dB re peak; "
+        + $"{badWindows} of {windows} 100 ms windows above -60 dB; {tables.Sum(tb => tb.OutOfRange)} lookups outside the table.");
+    Console.WriteLine($"Interpreter time per sample: Newton {Microseconds(newton):F2} us ({Share(newton):P0} solving), lookup table {Microseconds(boxed):F2} us ({Share(boxed):P0} solving).");
+
+    // A tightly converged render, to tell table error from the normal engine's own stopping error.
+    var tight = createWithCap(100);
+    tight.RelativeTolerance = 1e-10;
+    tight.AbsoluteTolerance = 1e-12;
+    double[] reference = RunWithCap(tight, input, nodeCount, scales);
+    Console.WriteLine($"Against a tightly converged render: Newton {Compare(reference, expected, sampleRate)}; lookup table {Compare(reference, actual, sampleRate)}.");
+    WriteWav(Path.Combine(directory, "newton.wav"), expected, sampleRate);
+    WriteWav(Path.Combine(directory, "lut.wav"), actual, sampleRate);
+    Console.WriteLine($"Wrote newton.wav and lut.wav to {Path.GetFullPath(directory)}.");
+}
+
+static double[] RunWithCap(CircuitInterpreter engine, double[] input, int nodeCount, double[] scales) => Run(engine, input, nodeCount, scales);
+
+static string Compare(double[] reference, double[] actual, int sampleRate)
+{
+    double peak = reference.Max(Math.Abs), worst = 0;
+    int window = sampleRate / 10, bad = 0, windows = 0;
+    for (int start = 0; start < reference.Length; start += window, windows++)
+    {
+        double windowWorst = 0;
+        for (int n = start; n < Math.Min(reference.Length, start + window); n++)
+            windowWorst = Math.Max(windowWorst, Math.Abs(reference[n] - actual[n]));
+        if (windowWorst > peak * 1e-3 || double.IsNaN(windowWorst))
+            bad++;
+        worst = Math.Max(worst, windowWorst);
+    }
+    return $"worst {Db(worst / Math.Max(peak, 1e-30)):F1} dB, {bad} of {windows} windows above -60 dB";
+}
+static void WriteWav(string path, double[] samples, int sampleRate)
+{
+    using var writer = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1));
+    writer.WriteSamples(samples.Select(x => (float)x).ToArray(), 0, samples.Length);
+}
+
 static double Db(double ratio) => ratio == 0 ? double.NegativeInfinity : 20 * Math.Log10(ratio);
 
 static double[] ReadMono(string path, out int sampleRate)
@@ -236,9 +327,11 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeSegments <schematic.schx> <input.wav> <output folder> [--stride N] [--verify-seconds S]");
+    Console.Error.WriteLine("Usage: SpiceForgeSegments <schematic.schx> <input.wav> <output folder> [--stride N] [--verify-seconds S] [--lut] [--lut-resolution N]");
     Console.Error.WriteLine("  --stride N          record every Nth internal step (default 8, one per sample); capped steps are always recorded");
     Console.Error.WriteLine("  --verify-seconds S  length of the replay check (default 2, 0 to skip)");
+    Console.Error.WriteLine("  --lut               build a lookup table for each segment, render with them, and compare with Newton");
+    Console.Error.WriteLine("  --lut-resolution N  grid points per dimension (default 4096 for one dimension, 256 for two)");
     return 2;
 }
 
@@ -253,9 +346,13 @@ sealed class Recorder : ISegmentObserver, IDisposable
     private int lastStep = -1;
 
     public SegmentStatistics[] Statistics { get; }
+    public List<double[]>[] SampleInputs { get; }
+    public List<double[]>[] SampleOutputs { get; }
+    private readonly int sampleEvery;
+    private long kept;
     public long Rows => steps.Rows;
 
-    public Recorder(IReadOnlyList<Segment> segments, string directory, int stride)
+    public Recorder(IReadOnlyList<Segment> segments, string directory, int stride, int sampleEvery)
     {
         this.stride = stride;
         steps = new NpyWriter(Path.Combine(directory, "steps.npy"), 3);
@@ -263,6 +360,9 @@ sealed class Recorder : ISegmentObserver, IDisposable
         outputs = segments.Select(s => new NpyWriter(Path.Combine(directory, $"segment{s.Index}_outputs.npy"), s.OutputCount)).ToArray();
         Statistics = segments.Select(s => new SegmentStatistics(s.InputCount, s.OutputCount)).ToArray();
         keep = new bool[1];
+        this.sampleEvery = sampleEvery;
+        SampleInputs = segments.Select(_ => new List<double[]>()).ToArray();
+        SampleOutputs = segments.Select(_ => new List<double[]>()).ToArray();
     }
 
     public void Observe(int step, Segment segment, ReadOnlySpan<double> input, ReadOnlySpan<double> output, int iterations, bool capped)
@@ -273,12 +373,20 @@ sealed class Recorder : ISegmentObserver, IDisposable
             lastStep = step;
             keep[0] = step % stride == 0 || capped;
             if (keep[0])
+            {
                 steps.Write(new double[] { step, iterations, capped ? 1 : 0 });
+                kept++;
+            }
         }
         if (keep[0])
         {
             inputs[segment.Index].Write(input);
             outputs[segment.Index].Write(output);
+            if ((kept - 1) % sampleEvery == 0)
+            {
+                SampleInputs[segment.Index].Add(input.ToArray());
+                SampleOutputs[segment.Index].Add(output.ToArray());
+            }
         }
     }
 
