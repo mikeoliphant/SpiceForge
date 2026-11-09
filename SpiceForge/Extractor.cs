@@ -14,14 +14,14 @@ public static class Extractor
 
     public static ExtractedSystem Extract(Analysis analysis, Expression timeStep)
     {
-        SystemOfEquations system = Discretize(analysis, timeStep);
+        SystemOfEquations system = Discretize(analysis, timeStep, out Arrow[] initialConditions);
         Expression[] unknowns = system.Unknowns.ToArray();
         LinearCombination[] equations = system.Equations.ToArray();
-        return Split(unknowns, equations);
+        return Split(unknowns, equations, initialConditions);
     }
 
     // Follows TransientSolution.Solve up to the point where the system is discretized.
-    private static SystemOfEquations Discretize(Analysis analysis, Expression h)
+    private static SystemOfEquations Discretize(Analysis analysis, Expression h, out Arrow[] initialConditions)
     {
         List<Equal> mna = analysis.Equations.ToList();
         List<Expression> y = analysis.Unknowns.ToList();
@@ -33,6 +33,8 @@ public static class Extractor
         mna = mna.Resolve(analysis).Resolve(globals).OfType<Equal>().ToList();
 
         List<Expression> dy_dt = y.Where(i => mna.Any(j => j.DependsOn(Call.D(i, t)))).Select(i => Call.D(i, t)).ToList();
+
+        initialConditions = SolveSteadyState(analysis, mna, y, dy_dt);
 
         var system = new SystemOfEquations(mna.Substitute(SinglePoleSwitch.ExcludeOpen).OfType<Equal>(), dy_dt.Concat(y));
         system.RowReduce(dy_dt);
@@ -48,7 +50,29 @@ public static class Extractor
         return system;
     }
 
-    private static ExtractedSystem Split(Expression[] unknowns, LinearCombination[] equations)
+    private static Arrow[] SolveSteadyState(Analysis analysis, List<Equal> mna, List<Expression> y, List<Expression> dy_dt)
+    {
+        var initial = new List<Arrow>();
+        var dc = new SystemOfEquations(mna
+            .Substitute(dy_dt.Select(i => Arrow.New(i, 0)).Append(Arrow.New(t, 0), Arrow.New(Component.T, 0), SinglePoleSwitch.IncludeOpen))
+            .Substitute(analysis.InitialConditions)
+            .OfType<Equal>(), y.Select(j => j.Substitute(t, 0)));
+
+        foreach (SystemOfEquations partition in dc.Partition())
+        {
+            try
+            {
+                initial.AddRange(partition.Equations.Select(j => Equal.New(j, 0)).NSolve(partition.Unknowns.Select(j => Arrow.New(j, 0))));
+            }
+            catch (Exception)
+            {
+                // LiveSPICE continues without initial conditions for a partition it can't solve.
+            }
+        }
+        return initial.ToArray();
+    }
+
+    private static ExtractedSystem Split(Expression[] unknowns, LinearCombination[] equations, Arrow[] initialConditions)
     {
         var column = new Dictionary<Expression, int>();
         for (int j = 0; j < unknowns.Length; j++)
@@ -121,6 +145,7 @@ public static class Extractor
             Q = InferPorts(unknowns, nonlinearList),
             Sources = sources.ToArray(),
             Equations = equations,
+            InitialConditions = initialConditions,
         };
     }
 

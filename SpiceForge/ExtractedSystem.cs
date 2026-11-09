@@ -30,6 +30,9 @@ public sealed class ExtractedSystem
     /// <summary>The original equations, each meaning <c>F == 0</c>.</summary>
     public required Expression[] Equations { get; init; }
 
+    /// <summary>The DC steady state, found the same way LiveSPICE finds it.</summary>
+    public required Arrow[] InitialConditions { get; init; }
+
     public int Rows => Equations.Length;
     public int Ports => Q.GetLength(0);
 }

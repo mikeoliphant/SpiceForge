@@ -11,6 +11,9 @@ const double Tolerance = 1e-6;
 
 string repo = FindRepoRoot();
 string testsDir = Path.Combine(repo, "Dependencies", "LiveSPICE", "Tests");
+if (args.Length > 0 && args[0] == "linear")
+    return LinearCheck.Run(testsDir, repo, args.Length > 1 ? args[1] : null);
+
 string? filter = args.Length > 0 ? args[0] : null;
 
 var files = new[] { "Circuits", "Examples", "Unstable" }
