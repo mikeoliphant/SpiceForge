@@ -14,6 +14,9 @@ string testsDir = Path.Combine(repo, "Dependencies", "LiveSPICE", "Tests");
 if (args.Length > 0 && args[0] == "segment")
     return SegmentCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
+if (args.Length > 0 && args[0] == "jit")
+    return JitCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
+
 if (args.Length > 2 && args[0] == "trace")
     return TraceCheck.Run(testsDir, args[1], double.Parse(args[2]));
 

@@ -15,60 +15,61 @@ public sealed class CircuitInterpreter
     private const byte CapFlag = 0x80;
     private const double CouplingTolerance = 1e-12;
 
-    private enum Kind { Time, Input, InputHistory, History, Current }
+    internal enum Kind { Time, Input, InputHistory, History, Current }
 
-    private readonly record struct Binding(Kind Kind, int Unknown, int Delay);
+    internal readonly record struct Binding(Kind Kind, int Unknown, int Delay);
 
     private static readonly Variable t = Component.t;
 
-    private readonly Binding[] bindings;
-    private readonly double[] values;
-    private readonly int parameterCount;
-    private readonly double[,] parameterGain;
-    private readonly double[] constant;
-    private readonly double[,] sourceGain;
-    private readonly ExpressionEvaluator? sourceEvaluator;
-    private readonly double[] sourceValues;
-    private readonly double[] sourceCoefficients;
-    private readonly int[] outputs;
-    private readonly int oversample;
-    private readonly int iterationCap;
-    private readonly double substep;
-    private readonly double inverseOversample;
+    internal readonly Binding[] bindings;
+    internal readonly Expression[] Symbols;
+    internal readonly double[] values;
+    internal readonly int parameterCount;
+    internal readonly double[,] parameterGain;
+    internal readonly double[] constant;
+    internal readonly double[,] sourceGain;
+    internal readonly ExpressionEvaluator? sourceEvaluator;
+    internal readonly double[] sourceValues;
+    internal readonly double[] sourceCoefficients;
+    internal readonly int[] outputs;
+    internal readonly int oversample;
+    internal readonly int iterationCap;
+    internal readonly double substep;
+    internal readonly double inverseOversample;
 
     // Port reduction: w = voc + Z·q(w), and y = yLinear + G·q.
-    private readonly int k;
-    private readonly int m;
-    private readonly double[,] Q;
-    private readonly double[,] G;
-    private readonly double[,] Z;
-    private readonly ExpressionEvaluator? nonlinearEvaluator;
-    private readonly double[] nonlinearInputs = Array.Empty<double>();
-    private readonly double[] nonlinearResults = Array.Empty<double>();
-    private readonly int[] portSymbols = Array.Empty<int>();
-    private readonly int[] convergence;
-    private readonly double[,] D;
-    private readonly Binding[] finalBindings = Array.Empty<Binding>();
-    private readonly double[] finalInputs = Array.Empty<double>();
-    private readonly double[] finalResults = Array.Empty<double>();
-    private readonly int[] finalTargets = Array.Empty<int>();
-    private readonly FinalSolutionEvaluator? finalEvaluator;
-    private readonly int[] finalNewton = Array.Empty<int>();
-    private readonly double[] yBeforeUpdate;
-    private readonly double[][] augmented;
-    private readonly bool[,] dependsOn;
-    private readonly double[] stepSolution;
-    private readonly int[][] groups;
-    private readonly double[][][] groupRows;
+    internal readonly int k;
+    internal readonly int m;
+    internal readonly double[,] Q;
+    internal readonly double[,] G;
+    internal readonly double[,] Z;
+    internal readonly ExpressionEvaluator? nonlinearEvaluator;
+    internal readonly double[] nonlinearInputs = Array.Empty<double>();
+    internal readonly double[] nonlinearResults = Array.Empty<double>();
+    internal readonly int[] portSymbols = Array.Empty<int>();
+    internal readonly int[] convergence;
+    internal readonly double[,] D;
+    internal readonly Binding[] finalBindings = Array.Empty<Binding>();
+    internal readonly double[] finalInputs = Array.Empty<double>();
+    internal readonly double[] finalResults = Array.Empty<double>();
+    internal readonly int[] finalTargets = Array.Empty<int>();
+    internal readonly FinalSolutionEvaluator? finalEvaluator;
+    internal readonly int[] finalNewton = Array.Empty<int>();
+    internal readonly double[] yBeforeUpdate;
+    internal readonly double[][] augmented;
+    internal readonly bool[,] dependsOn;
+    internal readonly double[] stepSolution;
+    internal readonly int[][] groups;
+    internal readonly double[][][] groupRows;
 
-    private readonly double[] y;
-    private readonly double[] yLinear;
-    private readonly double[] w;
-    private readonly double[] voc;
-    private readonly double[] q;
-    private readonly double[,] jacobian;
-    private readonly double[] linearizedQ;
-    private readonly double[][] history;
+    internal readonly double[] y;
+    internal readonly double[] yLinear;
+    internal readonly double[] w;
+    internal readonly double[] voc;
+    internal readonly double[] q;
+    internal readonly double[,] jacobian;
+    internal readonly double[] linearizedQ;
+    internal readonly double[][] history;
     private double time;
     private double input;
     private double inputPrevious;
@@ -147,6 +148,7 @@ public sealed class CircuitInterpreter
             .Concat(system.Sources.SelectMany(s => SymbolScan.Collect(s.Body)))
             .Distinct().ToArray();
 
+        Symbols = symbols;
         bindings = symbols.Select(s => Bind(s, system.Unknowns, inputSymbol, timeStep)).ToArray();
         values = new double[symbols.Length];
         int maxDelay = bindings.Where(b => b.Kind == Kind.History).Select(b => b.Delay).DefaultIfEmpty(0).Max();
@@ -323,7 +325,7 @@ public sealed class CircuitInterpreter
                 }
                 row[k] = rhs;
             }
-            SolveLinearStep();
+            SolveLinearStep(augmented, stepSolution, groups, groupRows, k);
 
             // q linearized at w and evaluated at the next w, which is what full Newton solves with.
             for (int c = 0; c < m; c++)
@@ -357,7 +359,7 @@ public sealed class CircuitInterpreter
 
     // Solves (I - Z·J)·x = b, one coupled port group at a time in dependency order. This is the same
     // linear solve as the joint one, so Newton's iterates and its stopping decisions don't change.
-    private void SolveLinearStep()
+    internal static void SolveLinearStep(double[][] augmented, double[] stepSolution, int[][] groups, double[][][] groupRows, int k)
     {
         if (groups.Length <= 1)
         {
@@ -593,7 +595,7 @@ public sealed class CircuitInterpreter
     }
 
     // Q is in reduced row echelon form, so each row has a pivot that is the only nonzero in its column.
-    private static int[] PortPivots(ExtractedSystem system)
+    internal static int[] PortPivots(ExtractedSystem system)
     {
         double[,] matrix = system.Q;
         int k = matrix.GetLength(0), n = matrix.GetLength(1);
@@ -633,7 +635,7 @@ public sealed class CircuitInterpreter
         return result;
     }
 
-    private static Binding Bind(Expression symbol, Expression[] unknowns, Expression input, Expression h)
+    internal static Binding Bind(Expression symbol, Expression[] unknowns, Expression input, Expression h)
     {
         if (symbol.Equals(t))
             return new Binding(Kind.Time, -1, 0);
