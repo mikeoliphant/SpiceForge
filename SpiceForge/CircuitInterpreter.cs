@@ -225,6 +225,7 @@ public sealed class CircuitInterpreter
         stepSolution = new double[K];
         groupRows = groups.Select(g => g.Select(_ => new double[RowLength(g.Length)]).ToArray()).ToArray();
         StateBlocks = CountStateBlocks();
+        Segments = BuildSegments(system);
 
         convergence = solution.Solutions.OfType<NewtonIteration>().SelectMany(s => s.Unknowns)
             .Select(u => Array.IndexOf(system.Unknowns, u)).Where(j => j >= 0).ToArray();
@@ -260,6 +261,7 @@ public sealed class CircuitInterpreter
 
     public void Run(double[] inputSamples, double[][] outputBuffers)
     {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var sums = new double[outputs.Length];
         for (int n = 0; n < inputSamples.Length; n++)
         {
@@ -282,6 +284,7 @@ public sealed class CircuitInterpreter
             for (int o = 0; o < outputs.Length; o++)
                 outputBuffers[o][n] = sums[o] * inverseOversample;
         }
+        RunTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
     }
 
     private double Read(Binding b) => b.Kind switch
@@ -320,12 +323,18 @@ public sealed class CircuitInterpreter
             cs[f] = value;
         }
 
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         if (m == 0)
             Array.Copy(yLinear, y, y.Length);
+        else if (SegmentSolver != null)
+            SolveWithSegments();
         else
+        {
             SolveNewton();
+        }
+        SolveTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
 
-        if (finalEvaluator != null)
+        if (finalEvaluator != null && SegmentSolver == null && !ExactReconstruction)
         {
             int position = 0;
             for (int i = 0; i < finalBindings.Length; i++)
@@ -436,6 +445,8 @@ public sealed class CircuitInterpreter
             if (done || iteration == iterationCap)
             {
                 IterationCounts.Add((byte)(done ? iteration : iteration | CapFlag));
+                if (SegmentObserver != null)
+                    ObserveSegments(iteration, !done);
                 return;
             }
         }
@@ -587,6 +598,155 @@ public sealed class CircuitInterpreter
             max = Math.Max(max, Math.Abs(matrix[i, column]));
         return Math.Abs(matrix[row, column]) > max * CouplingTolerance;
     }
+
+    /// <summary>Candidate black boxes, in solve order.</summary>
+    public IReadOnlyList<Segment> Segments { get; }
+
+    /// <summary>When set, receives every segment's inputs and outputs after each Newton solve.</summary>
+    public ISegmentObserver? SegmentObserver { get; set; }
+
+    /// <summary>When set, replaces Newton's method: each segment's outputs come from this solver instead.</summary>
+    public ISegmentSolver? SegmentSolver { get; set; }
+
+    /// <summary>Time spent solving for the unknowns (Newton or segment solvers), and in total, in Stopwatch ticks.</summary>
+    public long SolveTicks { get; private set; }
+    public long RunTicks { get; private set; }
+
+    private int step;
+    private double[][] segmentInputs = Array.Empty<double[]>();
+    private double[][] segmentOutputs = Array.Empty<double[]>();
+
+    private IReadOnlyList<Segment> BuildSegments(ExtractedSystem system)
+    {
+        var portNames = new string[k];
+        for (int r = 0; r < k; r++)
+            portNames[r] = string.Join(" + ", Enumerable.Range(0, system.Unknowns.Length)
+                .Where(j => Q[r, j] != 0)
+                .Select(j => Q[r, j] == 1 ? system.Unknowns[j].ToString() : $"{Q[r, j]:G6}*{system.Unknowns[j]}"));
+
+        var segments = new List<Segment>();
+        var solved = new HashSet<int>();
+        foreach (int[] group in groups)
+        {
+            int[] ports = group.Where(i => i < k).ToArray();
+            int[] freeIndices = group.Where(i => i >= k).Select(i => i - k).ToArray();
+            // Each nonlinear term belongs to the last segment whose ports it reads.
+            int[] terms = Enumerable.Range(0, m).Where(c => ports.Any(p => dependsOn[c, p]) && !LaterReads(c, group)).ToArray();
+
+            // Upstream ports: those of earlier segments that this segment's equations read through Z and q.
+            var upstream = new SortedSet<int>();
+            foreach (int r in ports)
+                for (int c = 0; c < m; c++)
+                    if (Z[r, c] != 0)
+                        for (int p = 0; p < k; p++)
+                            if (dependsOn[c, p] && solved.Contains(p))
+                                upstream.Add(p);
+            foreach (int f in freeIndices)
+                for (int c = 0; c < m; c++)
+                    if (CP[f, c] != 0)
+                        for (int p = 0; p < k; p++)
+                            if (dependsOn[c, p] && solved.Contains(p))
+                                upstream.Add(p);
+
+            string FreeName(int f) => system.Unknowns[free[f]].ToString();
+            segments.Add(new Segment
+            {
+                Index = segments.Count,
+                Ports = ports,
+                Free = freeIndices,
+                Constraints = freeIndices,
+                Upstream = upstream.ToArray(),
+                NonlinearTerms = terms,
+                InputNames = ports.Select(p => $"open-circuit {portNames[p]}")
+                    .Concat(freeIndices.Select(f => $"constraint {f} constant (free unknown {FreeName(f)})"))
+                    .Concat(upstream.Select(p => $"upstream port {portNames[p]}"))
+                    .ToArray(),
+                OutputNames = ports.Select(p => $"port {portNames[p]}")
+                    .Concat(freeIndices.Select(f => $"free unknown {FreeName(f)}"))
+                    .Concat(terms.Select(c => $"nonlinear term {c}"))
+                    .ToArray(),
+            });
+            foreach (int p in ports)
+                solved.Add(p);
+        }
+
+        bool LaterReads(int c, int[] group)
+        {
+            int index = Array.IndexOf(groups, group);
+            for (int g = index + 1; g < groups.Length; g++)
+                foreach (int p in groups[g])
+                    if (p < k && dependsOn[c, p])
+                        return true;
+            return false;
+        }
+
+        segmentInputs = segments.Select(s => new double[s.InputCount]).ToArray();
+        segmentOutputs = segments.Select(s => new double[s.OutputCount]).ToArray();
+        return segments;
+    }
+
+    private void FillInputs(Segment segment, double[] inputs)
+    {
+        int position = 0;
+        foreach (int p in segment.Ports)
+            inputs[position++] = voc[p];
+        foreach (int f in segment.Constraints)
+            inputs[position++] = cs[f];
+        foreach (int p in segment.Upstream)
+            inputs[position++] = w[p];
+    }
+
+    private void ObserveSegments(int iterations, bool capped)
+    {
+        foreach (Segment segment in Segments)
+        {
+            double[] inputs = segmentInputs[segment.Index], outputs = segmentOutputs[segment.Index];
+            FillInputs(segment, inputs);
+            int position = 0;
+            foreach (int p in segment.Ports)
+                outputs[position++] = w[p];
+            foreach (int f in segment.Free)
+                outputs[position++] = z[f];
+            foreach (int c in segment.NonlinearTerms)
+                outputs[position++] = linearizedQ[c];
+            SegmentObserver!.Observe(step, segment, inputs, outputs, iterations, capped);
+        }
+        step++;
+    }
+
+    // Black-box mode: each segment's solver gives its ports, free unknowns and nonlinear-term values, in solve order,
+    // and every unknown then follows from y = yLinear + G·q + Nz·z. LiveSPICE's post-Newton evaluation doesn't apply.
+    private void SolveWithSegments()
+    {
+        Multiply(Q, yLinear, voc);
+        foreach (Segment segment in Segments)
+        {
+            double[] inputs = segmentInputs[segment.Index], outputs = segmentOutputs[segment.Index];
+            FillInputs(segment, inputs);
+            SegmentSolver!.Solve(segment, inputs, outputs);
+            int position = 0;
+            foreach (int p in segment.Ports)
+                w[p] = outputs[position++];
+            foreach (int f in segment.Free)
+                z[f] = outputs[position++];
+            foreach (int c in segment.NonlinearTerms)
+                linearizedQ[c] = outputs[position++];
+        }
+        Array.Copy(z, zNext, dz);
+        for (int i = 0; i < y.Length; i++)
+            y[i] = Combine(i);
+        IterationCounts.Add(0);
+        step++;
+    }
+
+    /// <summary>
+    /// When set, every unknown follows from the segment outputs, y = yLinear + G·q + Nz·z, with q the nonlinear-term
+    /// values the solve settled on, instead of through LiveSPICE's post-Newton evaluation. That is how black-box mode
+    /// works, so recordings made this way match what a black box will see. Rebuilding from q, not from the ports
+    /// through q(w), matters: in high-gain circuits G is large, and q(w) at a converged but inexact w is not accurate enough.
+    /// </summary>
+    public bool ExactReconstruction { get; set; }
+
 
     private double Combine(int i)
     {
