@@ -20,6 +20,9 @@ if (args.Length > 0 && args[0] == "jit")
 if (args.Length > 0 && args[0] == "coverage")
     return CoverageCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
+if (args.Length > 3 && args[0] == "accuracy")
+    return AccuracyCheck.Run(args[1], args[2], double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
+
 if (args.Length > 4 && args[0] == "wavtrace")
 {
     if (args.Length > 5) WavTrace.Tolerance = double.Parse(args[5]);

@@ -52,7 +52,7 @@ internal static class TraceCheck
             .Run(interpolated, stock);
 
         double[][] ours = system.Unknowns.Select(_ => new double[steps]).ToArray();
-        var interpreter = new CircuitInterpreter(system, input, system.Unknowns, h, 1, IterationCap, solution);
+        var interpreter = new CircuitInterpreter(system, input, system.Unknowns, h, 1, IterationCap, solution, matchLiveSpice: true);
         interpreter.Run(interpolated, ours);
 
         var newton = new HashSet<Expression>(solution.Solutions.OfType<NewtonIteration>().SelectMany(s => s.Unknowns));

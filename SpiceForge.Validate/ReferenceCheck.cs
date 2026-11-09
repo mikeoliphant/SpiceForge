@@ -64,7 +64,7 @@ internal static class ReferenceCheck
                     for (int n = 0; n < samples; n++)
                         inputBuffer[n] = Harmonics(n / (double)SampleRate, stimulus.Amplitude, 82, 2);
 
-                    var interpreter = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution);
+                    var interpreter = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, matchLiveSpice: true);
                     double[][] actual = outputs.Select(_ => new double[samples]).ToArray();
                     var watch = Stopwatch.StartNew();
                     interpreter.Run(inputBuffer, actual);
@@ -107,7 +107,7 @@ internal static class ReferenceCheck
         new Simulation(solution) { Oversample = Oversample, Iterations = IterationCap, Input = new[] { input }, Output = system.Unknowns }.Run(inputBuffer, stock);
 
         double[][] ours = system.Unknowns.Select(_ => new double[samples]).ToArray();
-        new CircuitInterpreter(system, input, system.Unknowns, h, Oversample, IterationCap, solution).Run(inputBuffer, ours);
+        new CircuitInterpreter(system, input, system.Unknowns, h, Oversample, IterationCap, solution, matchLiveSpice: true).Run(inputBuffer, ours);
 
         Console.WriteLine("All unknowns, largest error first:");
         var rows = Enumerable.Range(0, system.Unknowns.Length).Select(j =>

@@ -102,8 +102,9 @@ public sealed class CircuitInterpreter
     /// <summary>One entry per oversampled step: the Newton iteration count, with 0x80 set if the cap was hit.</summary>
     public List<byte> IterationCounts { get; } = new();
 
-    /// <param name="solution">LiveSPICE's solution of the circuit. It decides which unknowns the stopping rule tests,
-    /// and how the unknowns outside its Newton systems are computed once Newton has finished.</param>
+    /// <param name="solution">LiveSPICE's solution of the circuit. It decides which unknowns the stopping rule tests.</param>
+    /// <param name="matchLiveSpice">Reproduce LiveSPICE's output sample for sample, including its use of stale cached
+    /// values after the Newton loop (see <see cref="MatchLiveSpice"/>). Off by default.</param>
     public CircuitInterpreter(
         ExtractedSystem system,
         Expression inputSymbol,
@@ -112,8 +113,10 @@ public sealed class CircuitInterpreter
         int oversample,
         int iterationCap,
         TransientSolution solution,
-        bool segment = true)
+        bool segment = true,
+        bool matchLiveSpice = false)
     {
+        MatchLiveSpice = matchLiveSpice;
         this.oversample = oversample;
         this.iterationCap = iterationCap;
         inverseOversample = 1.0 / oversample;
@@ -230,7 +233,7 @@ public sealed class CircuitInterpreter
         convergence = solution.Solutions.OfType<NewtonIteration>().SelectMany(s => s.Unknowns)
             .Select(u => Array.IndexOf(system.Unknowns, u)).Where(j => j >= 0).ToArray();
 
-        if (m > 0)
+        if (m > 0 && matchLiveSpice)
         {
             finalEvaluator = new FinalSolutionEvaluator(solution);
             finalBindings = finalEvaluator.Symbols.Select(s =>
@@ -334,7 +337,7 @@ public sealed class CircuitInterpreter
         }
         SolveTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
 
-        if (finalEvaluator != null && SegmentSolver == null && !ExactReconstruction)
+        if (finalEvaluator != null && SegmentSolver == null)
         {
             int position = 0;
             for (int i = 0; i < finalBindings.Length; i++)
@@ -431,7 +434,7 @@ public sealed class CircuitInterpreter
             foreach (int j in convergence)
             {
                 double next = Combine(j);
-                done &= Math.Abs(next - y[j]) < Math.Abs(y[j]) * 1e-4 + 1e-6;
+                done &= Math.Abs(next - y[j]) < Math.Abs(y[j]) * RelativeTolerance + AbsoluteTolerance;
             }
 
             Array.Copy(y, yBeforeUpdate, y.Length);
@@ -740,12 +743,19 @@ public sealed class CircuitInterpreter
     }
 
     /// <summary>
-    /// When set, every unknown follows from the segment outputs, y = yLinear + G·q + Nz·z, with q the nonlinear-term
-    /// values the solve settled on, instead of through LiveSPICE's post-Newton evaluation. That is how black-box mode
-    /// works, so recordings made this way match what a black box will see. Rebuilding from q, not from the ports
-    /// through q(w), matters: in high-gain circuits G is large, and q(w) at a converged but inexact w is not accurate enough.
+    /// By default every unknown follows from the solve, y = yLinear + G·q + Nz·z, with q the nonlinear-term values
+    /// Newton settled on. That is also how black-box mode works. (Rebuilding from q, not from the ports through q(w),
+    /// matters: in high-gain circuits G is large, and q(w) at a converged but inexact w is not accurate enough.)
+    /// When set, the unknowns outside LiveSPICE's Newton system are instead computed the way LiveSPICE's compiled code
+    /// does, reusing subexpressions cached before the last Newton update. That reproduces LiveSPICE's output sample for
+    /// sample, and its error: against a tightly converged reference, it is up to tens of dB less accurate on some
+    /// circuits. See LiveSPICE pull request 284.
     /// </summary>
-    public bool ExactReconstruction { get; set; }
+    public bool MatchLiveSpice { get; }
+
+    /// <summary>Newton's stopping rule: |dv| < |v|·RelativeTolerance + AbsoluteTolerance. The defaults are LiveSPICE's.</summary>
+    public double RelativeTolerance { get; set; } = 1e-4;
+    public double AbsoluteTolerance { get; set; } = 1e-6;
 
 
     private double Combine(int i)

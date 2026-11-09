@@ -87,7 +87,7 @@ internal static class CoverageCheck
                         double[][] stock = NewBuffers(outputs.Length);
                         Stock(solution, input, outputs).Run(inputBuffer, stock);
 
-                        var compiled = new CompiledCircuit(system, input, outputs, h, Oversample, IterationCap, solution);
+                        var compiled = new CompiledCircuit(system, input, outputs, h, Oversample, IterationCap, solution, matchLiveSpice: true);
                         double[][] actual = NewBuffers(outputs.Length);
                         var watch = Stopwatch.StartNew();
                         compiled.Run(inputBuffer, actual);

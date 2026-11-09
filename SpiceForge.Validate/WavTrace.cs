@@ -55,7 +55,7 @@ internal static class WavTrace
 
         var recorder = new NewtonRecorder();
         var stock = new InstrumentedSimulation(solution, recorder) { Oversample = 1, Iterations = IterationCap, Input = new[] { input }, Output = watched };
-        var ours = new CompiledCircuit(system, input, watched, h, 1, IterationCap, solution);
+        var ours = new CompiledCircuit(system, input, watched, h, 1, IterationCap, solution, matchLiveSpice: true);
 
         int windowStart = (int)(startSeconds * rate) * Oversample;
         var stockWindow = watched.Select(_ => new double[steps - windowStart]).ToArray();

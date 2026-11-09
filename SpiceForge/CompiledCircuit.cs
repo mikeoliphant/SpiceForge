@@ -38,9 +38,10 @@ public sealed class CompiledCircuit
         Expression timeStep,
         int oversample,
         int iterationCap,
-        TransientSolution solution)
+        TransientSolution solution,
+        bool matchLiveSpice = false)
     {
-        var plan = new CircuitInterpreter(system, inputSymbol, outputSymbols, timeStep, oversample, iterationCap, solution);
+        var plan = new CircuitInterpreter(system, inputSymbol, outputSymbols, timeStep, oversample, iterationCap, solution, matchLiveSpice: matchLiveSpice);
         outputs = plan.outputs;
         this.oversample = oversample;
         substep = plan.substep;
@@ -217,7 +218,7 @@ public sealed class CompiledCircuit
             while (work.Count > 0)
             {
                 int i = work.Pop();
-                if (plan.m == 0)
+                if (plan.m == 0 || !plan.MatchLiveSpice)
                     rows.Add(i);
 
                 if (rows.Contains(i))
@@ -225,7 +226,7 @@ public sealed class CompiledCircuit
                         if (parameterGain[i][j] != 0 && plan.bindings[j].Kind == CircuitInterpreter.Kind.History)
                             Require(plan.bindings[j].Unknown);
 
-                if (plan.m > 0 && arrowFor.TryGetValue(i, out Arrow? arrow))
+                if (plan.m > 0 && plan.MatchLiveSpice && arrowFor.TryGetValue(i, out Arrow? arrow))
                 {
                     foreach (Expression symbol in SymbolScan.Collect(arrow.Right))
                     {
@@ -252,13 +253,13 @@ public sealed class CompiledCircuit
                         if (parameterGain[i][j] != 0 && plan.bindings[j].Kind == CircuitInterpreter.Kind.History && required.Add(plan.bindings[j].Unknown))
                         {
                             changed = true;
-                            if (plan.m == 0)
+                            if (plan.m == 0 || !plan.MatchLiveSpice)
                                 rows.Add(plan.bindings[j].Unknown);
                         }
             }
 
             linearRows = rows;
-            keptArrows = arrows.Where(a => required.Contains(Array.IndexOf(system.Unknowns, a.Left))).ToArray();
+            keptArrows = plan.MatchLiveSpice ? arrows.Where(a => required.Contains(Array.IndexOf(system.Unknowns, a.Left))).ToArray() : Array.Empty<Arrow>();
         }
 
         private LinqExpr LinearPart(int i, ParameterExpression[] sources)
@@ -339,6 +340,7 @@ public sealed class CompiledCircuit
 
             var before = active.ToDictionary(i => i, i => code.Decl<double>("before" + i));
             ParameterExpression iteration = code.DeclInit<int>("iteration", 0);
+            var finalLinearized = new ParameterExpression[m];
             ParameterExpression result = code.DeclInit<int>("result", 0);
 
             code.DoWhile((LinqExpr exit) =>
@@ -447,6 +449,7 @@ public sealed class CompiledCircuit
                         if (jacobian[c, p] is LinqExpr partial)
                             value = LinqExpr.Add(value, LinqExpr.Multiply(partial, LinqExpr.Subtract(next[p], w[p])));
                     linearized[c] = Local(value);
+                    finalLinearized[c] = linearized[c];
                 }
 
                 var nextY = new Dictionary<int, ParameterExpression>();
@@ -488,7 +491,26 @@ public sealed class CompiledCircuit
             foreach (int i in active)
                 code.Add(LinqExpr.Assign(Element(y, i), current[i]));
 
-            EmitFinalSolutions(newtonSets[0], before);
+            if (plan.MatchLiveSpice)
+            {
+                EmitFinalSolutions(newtonSets[0], before);
+            }
+            else
+            {
+                // Every other unknown anything reads follows from the solve: y = yLinear + G·q + Nz·z.
+                var activeSet = new HashSet<int>(active);
+                foreach (int i in required.Where(i => !activeSet.Contains(i)).OrderBy(i => i))
+                {
+                    LinqExpr value = LinearPart(i, sources);
+                    for (int c = 0; c < m; c++)
+                        if (G[i][c] != 0)
+                            value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(G, i, c), finalLinearized[c]));
+                    for (int f = 0; f < dz; f++)
+                        if (Nz[i][f] != 0)
+                            value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(Nz, i, f), z[f]));
+                    code.Add(LinqExpr.Assign(Element(y, i), value));
+                }
+            }
             code.Return(result);
         }
 

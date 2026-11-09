@@ -50,8 +50,8 @@ try
     Analysis analysis = circuit.Analyze();
     TransientSolution solution = TransientSolution.Solve(analysis, h);
     ExtractedSystem system = Extractor.Extract(analysis, h);
-    // Recordings use exact reconstruction, the same as black-box mode, so the data matches what a box will see.
-    CircuitInterpreter Create() => new(system, inputSymbol, nodes, h, Oversample, Iterations, solution) { ExactReconstruction = true };
+    // The default exact rebuild is the same as black-box mode, so the data matches what a box will see.
+    CircuitInterpreter Create() => new(system, inputSymbol, nodes, h, Oversample, Iterations, solution);
 
     var engine = Create();
     if (engine.Segments.Count == 0)

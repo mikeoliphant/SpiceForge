@@ -60,8 +60,8 @@ internal static class SegmentCheck
                     for (int n = 0; n < Samples; n++)
                         inputBuffer[n] = ReferenceCheck.Harmonics(n / (double)SampleRate, amplitude, 82, 2);
 
-                    var joint = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, segment: false);
-                    var split = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, segment: true);
+                    var joint = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, segment: false, matchLiveSpice: true);
+                    var split = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, segment: true, matchLiveSpice: true);
 
                     double[][] jointOut = outputs.Select(_ => new double[Samples]).ToArray();
                     double[][] splitOut = outputs.Select(_ => new double[Samples]).ToArray();

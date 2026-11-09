@@ -80,7 +80,7 @@ internal static class RatCheck
                         controlDb.Add(ReferenceCheck.WorstErrorDb(stock, control));
                     }
 
-                    var interpreter = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution);
+                    var interpreter = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, matchLiveSpice: true);
                     double[][] actual = NewBuffers(outputs.Length);
                     watch.Restart();
                     interpreter.Run(inputBuffer, actual);
