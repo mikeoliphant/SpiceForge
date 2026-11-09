@@ -1,0 +1,1375 @@
+{
+  "formatVersion": 1,
+  "sampleRate": 48000,
+  "oversample": 8,
+  "iterations": 8,
+  "samples": 4800,
+  "circuits": [
+    {
+      "circuit": "Circuits/59 Bassman Preamp.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "16D3532887232EC5CEB4DD4A108B90C2F99542701B1DCB1EEABE4957F77A4393",
+      "outputs": 16,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        11
+      ],
+      "totalIterations": 78753,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/59 Bassman Preamp.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "06134031CC05E4A36624CB2E09EA9FD084F2A5DB2DE277FE6D78570DC87E9D46",
+      "outputs": 16,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        11
+      ],
+      "totalIterations": 79540,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/59 Bassman Tone Stack.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "DD7A266B77F480743CC15743354D7DBF4F01532B1C01272B3D51366A95C0A9EB",
+      "outputs": 8,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/59 Bassman Tone Stack.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "228B9451D3CF7B830E195549E380BB4479800A02D8AFE3362AB3BDA1D51645F1",
+      "outputs": 8,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Active 1stOrder Highpass RC.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "5B6235660AB5A474A09F09020E5C71360900984DD801480405450BD96943A4FF",
+      "outputs": 7,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        2
+      ],
+      "totalIterations": 38400,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Active 1stOrder Highpass RC.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "EDE6FCE7C863A8E15086CBF2B005E245A032AD1C80EA2FE0C2CB7170BA033A7F",
+      "outputs": 7,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        2
+      ],
+      "totalIterations": 38400,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Active 1stOrder Lowpass RC.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "F52374E8D5D41F222B579AB2C52AD605901D5CBC901BA086B8452E3598CB66D4",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        2
+      ],
+      "totalIterations": 38400,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Active 1stOrder Lowpass RC.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "1D08D26A5483F43288C78EC585008443133D7288745FE708BB03B61CE3A836AA",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        2
+      ],
+      "totalIterations": 38400,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Diode Rectifier.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "761E6B2673BFAE9CED808A211D9D5AE74B48F6E0340824DF29F23C40A6F5BAFC",
+      "outputs": 4,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        8
+      ],
+      "totalIterations": 79122,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Diode Rectifier.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "8A00F5BD465DE708053113A705424DA3232FCBB6EDC3601881A349EC72E95EA1",
+      "outputs": 4,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        8
+      ],
+      "totalIterations": 77596,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Floating Diode Clipper.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "BA8C515B33F7FC4E6D69A1D52ABA612BF3B414FE43884EDCCF4DF978B75B1D45",
+      "outputs": 4,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        1
+      ],
+      "totalIterations": 75680,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Floating Diode Clipper.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "FB5487EE9B98E6F135C9CE41D91B28623F4D2403E45BB7144CCD2ADA33B0CFE2",
+      "outputs": 4,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        1
+      ],
+      "totalIterations": 63925,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Floating Input.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "F93B90A648CBDC2CA789AA529D3B972A1D89C6C4803C961D5930E9933F00743F",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Floating Input.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "A7396F0D3E010464AD196B92F3794DE9E6ECD9F005A042DE010CDB65782C1EFB",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Floating Voltage Source.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "D5019A5F0F7E03A2983E6A452C58A46BBDD9CC2F8EC723DF12B8CBCE06C91B51",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Floating Voltage Source.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "901206B4247DDCF441BA9D04F2A0CE494ACB6416F8FB85A88EA8D8136D1749F7",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Half Rectifier.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "42AFEF33634649E37AB5FE9601FD8F166C541BFFAC2A555185492BDC69EB5D5B",
+      "outputs": 5,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        3
+      ],
+      "totalIterations": 77918,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Half Rectifier.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "E9981F4A7863DB7A7E93747526448232FF4D16A985053559A08A29DCFE77E605",
+      "outputs": 5,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        3
+      ],
+      "totalIterations": 76857,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/JFET.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "F24E1B52F8DD8DDCABC7C65628AD77DEA44AC91EE02E588B76EBF95D3680DB00",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        8
+      ],
+      "totalIterations": 75865,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/JFET.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "728342DE9DCBAFCC05AFF7FC570E3CFD7008B545BB34B7D98EBF546AF91CAE03",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        8
+      ],
+      "totalIterations": 78231,
+      "cappedSteps": 89,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Op-Amp Inverting.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "B64F299EEB3F4B1B3F3BAB5D2A5CCD27930B1282546B57E2F295CD41D43E9250",
+      "outputs": 5,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        9
+      ],
+      "totalIterations": 58070,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Op-Amp Inverting.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "2B34C1CF62E43F3C98768759868F2BF914C641A6E82C0E7D91BC5239A0C7841D",
+      "outputs": 5,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        9
+      ],
+      "totalIterations": 58004,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Op-Amp Non-Inverting.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "4F915920CCD4C6AEE7FD6D68A77E836DCF35BCF6611223919D7CA05D5DF764CC",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        7
+      ],
+      "totalIterations": 57157,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Op-Amp Non-Inverting.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "38B60CED56FA270194011C18F3B2D43EAD0E1D8C48F08075AAE9435FC5A782F2",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        7
+      ],
+      "totalIterations": 54140,
+      "cappedSteps": 26,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Op-Amp Saturation.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "4E49E830E1F3EC2B2D4EE4B88C5F73DE5E4F8CB75851A52A55977B5E3B0C2F53",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        8
+      ],
+      "totalIterations": 64452,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Op-Amp Saturation.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "0F10E41228FA653448F84D50A903F8DA99AAF5620E26BF65E9EEC6632701E6FA",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        8
+      ],
+      "totalIterations": 54505,
+      "cappedSteps": 29,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Parallel capacitors 1.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "C5FBFB7BD8E2B4D51BACECA8461D56FC2E04C00CCD3F979ADDBDB27D2417162F",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Parallel capacitors 1.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "B64A9C27E1BC728872E07F4FF7386BF562AC377893A381654D16C1552D1D7370",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Parallel capacitors 2.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "C5FBFB7BD8E2B4D51BACECA8461D56FC2E04C00CCD3F979ADDBDB27D2417162F",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Parallel capacitors 2.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "B64A9C27E1BC728872E07F4FF7386BF562AC377893A381654D16C1552D1D7370",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 1stOrder Highpass RC.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "AC3F5E824C90D83EEBD41DD34140E2E480745F452402F513311F05839A442320",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 1stOrder Highpass RC.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "CEDF6D0270B1399E61E24E49FEDA8C1DEEA4758842D3E5ACC60A9F96634F60E6",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 1stOrder Lowpass RL.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "0D0F9CCE54BCD9562FD938A7AE77AE4D52237A3C4DEBCCD01976FACBEE17702E",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 1stOrder Lowpass RL.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "1E20CF573AC9DE7240A08B7F6473BE6D2487100C4C1FC5D9900774058FCA1A51",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 2ndOrder Bandpass RLC.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "50D9CE604E6F25421DC3A51DE2C6D62D81141816019396F162EDD40151A06366",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 2ndOrder Bandpass RLC.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "A255BEA33FCD52D67EB352DE1AD8880F751AE3B8308699AAD26508E9E83BCA91",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 2ndOrder Lowpass RC.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "E291987E584DC132E0FCEB845D614B7F34E61B2095C876AF55F40DD11975F7F7",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 2ndOrder Lowpass RC.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "DD2BC1DFA9083EEA95610C5A32BF5CCDB6B4451D1186A592677DA6B8F4EB68D4",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 2ndOrder Lowpass RLC.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "562DD683BA5A58A20E5C529AD29EDAE04A9281A0EE17BD3CC247B6D67270C129",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Passive 2ndOrder Lowpass RLC.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "24C58996C756CD38B1119CE4DB05F772CC702A4F41611A456398546E62C14CBB",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Rectifier.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "2661C5159A642FD169B478DE863F7773B147D54C6A56D84804BF10F8001C717D",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        7
+      ],
+      "totalIterations": 78245,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Rectifier.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "8150D961F23C5D3F8B314B5EEE8971BB3B34CA0004C9BFCBFBC15ACD045CD0A0",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        7
+      ],
+      "totalIterations": 76639,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/SP3T.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "244BB411A33AB5181431D4CCB362B9C4A6BF1E360F30A7D9F4C50C7885960203",
+      "outputs": 6,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/SP3T.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "0C889CE8CB104185DBD7985ABD1BD81BDD9F99FC103AD73644DDD8DFF908C994",
+      "outputs": 6,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/SPDT.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "C1F3F29F09562BE9E644A7F537A949B93158F38D4CF4315D2ED04E82B0661906",
+      "outputs": 5,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/SPDT.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "17443C4548C5690109EE4C9ACD18AAFF640529F2BF7BE3F90DB1C56CCB1E0051",
+      "outputs": 5,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Tone Stack.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "CFD3EE8B267E68F879AFB31B57247514C79AE0CFEE6016DF9C348B8F33CD2C07",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Tone Stack.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "A1EEB7E966E18F43F5E5DAA0D06DD07A96644871BB88AD6A3A5BEB71F0435B21",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Tone Stacks.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "0064B2E5E56B22226B75155A0AD7AAA3CE2EEA397ED87FB1E3987E354815E1F6",
+      "outputs": 6,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Tone Stacks.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "4A5A90D3B0BBEC7E8CF449D835E06662A0BFC39DAF7BD3D97B249BE4186F6D22",
+      "outputs": 6,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Trivial Two-Port.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "5917B09FB4C0E1EF6103B3AEF9DA50A39F53B30DD077B48C6410ED9EF3AFFBB9",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Trivial Two-Port.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "C93380E6E3FA0BB50AB15B4165F6883AC7B5E9C9719025E3CE30AF387230C086",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Trivial.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "F88B0EB9CD0598D1ACFC3CBE9F3AA54909CE4A2AEFF9BA504C38E4010B6C5FFE",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Trivial.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "244B7B56027072629DBD1CAA427CD22B563BC270397F9EDF6E90468C570217E5",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Voltage Divider.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "1A11CC093E60BBFED3BE9DBB1264BB2CDDBCF97A4D1AFB9EB892F10DBCD0700C",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Subcircuit Voltage Divider.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "6538D64A85196A6D62066D8C5E57B43449016ED9FFB48C4467255BD6B09B5FA2",
+      "outputs": 4,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Transformer.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "9EEDEC8B06BBF7FD94EB57D889FD01EDC34F0EBE00AC2377EEFBFE7B3589C90C",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Circuits/Transformer.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "F6F4EC1CEF48C63C89F186BFF4134C97F235A247CECA1894BF5886824B23E499",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/59 Bassman Preamp\u002BTone Stack.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "0A304D62573FA9DA125A96DBB37804DE2178BAE9694BB0AEEDC1BA76B95002C2",
+      "outputs": 22,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        12
+      ],
+      "totalIterations": 79588,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/59 Bassman Preamp\u002BTone Stack.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "7774FB8621166EC2E02ED36FCCAB0BF0880C2B1D05A5C885A2C25CFCBAB4E78C",
+      "outputs": 22,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        12
+      ],
+      "totalIterations": 80008,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Big Muff Pi.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "6FB3B8F6BF184D8DD9206FC74C5DFE0B2277A5E493D2FABFB3D70C91FC3E90EB",
+      "outputs": 31,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        31
+      ],
+      "totalIterations": 78212,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Big Muff Pi.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "F4A9D2796CD6A0F47B07DF189C9194F94D5056DF026A9D1CDA0299C2B51AE34F",
+      "outputs": 31,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        31
+      ],
+      "totalIterations": 79143,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Boss Super Overdrive SD-1.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "FB59120450A8FF0C5C604DBF6348A69DA3E9CD86B08A4D7E69EF545B65569BBD",
+      "outputs": 18,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        6
+      ],
+      "totalIterations": 75063,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Boss Super Overdrive SD-1.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "C64607EF9C4ACD63594E81D4DF6F66EA559B94C5A02516D37B772E1238AE76F7",
+      "outputs": 18,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        6
+      ],
+      "totalIterations": 77759,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Bridge Rectifier.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "4FC7FDE6BDA217E40B2809A5F2FACFCDC87854CDE077C3F90AB620E694289D72",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        9
+      ],
+      "totalIterations": 79122,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Bridge Rectifier.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "32F1A800931C726FD65A4D41951426355265BCDBEC95F53C8A5AE66CD3BE080A",
+      "outputs": 6,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        9
+      ],
+      "totalIterations": 77596,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Common Cathode Triode Amplifier.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "9839706A764771273680CCC020BA9124A1CF0C9D15CA1F23C5E404108EC3A551",
+      "outputs": 8,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        6
+      ],
+      "totalIterations": 75815,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Common Cathode Triode Amplifier.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "E6F8CDCC8C9EDF407349FBA9DB97DEA2518DF357558541607EBA476E8C440A93",
+      "outputs": 8,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        6
+      ],
+      "totalIterations": 72738,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Common Emitter Transistor Amplifier.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "612A01C96307A8FDBD1A2F01DF830B6BF7B4FE6BD848D9EE5B6ED553FBB54257",
+      "outputs": 7,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        5
+      ],
+      "totalIterations": 75392,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Common Emitter Transistor Amplifier.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "D593D96C32F19232F8AC908F646707F850EA7DEC2ADC3FBB7C9E4DF77E85D582",
+      "outputs": 7,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        5
+      ],
+      "totalIterations": 73937,
+      "cappedSteps": 15,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Dunlop Cry Baby GCB-95.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "13FBE9A29852592BECA06F24310ACFA5981732042A2139A162985E31576B66FC",
+      "outputs": 19,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        18
+      ],
+      "totalIterations": 76596,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Dunlop Cry Baby GCB-95.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "87DF31907E0FCB5C832A946487455A0E900875C2B54EBB4574B9F2B6AF1CA535",
+      "outputs": 19,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        18
+      ],
+      "totalIterations": 77482,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Fender 5e3.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "53EDA77EDB09FFA0ACC76704DA33BCD32935C7EE0E49E9C8365A2753777E2CEF",
+      "outputs": 32,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        23
+      ],
+      "totalIterations": 78977,
+      "cappedSteps": 1,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Fender 5e3.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "6995410450376152304645B99FDE7A9EEFEFA1E7C9A93C0EC677B79F48292831",
+      "outputs": 32,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        23
+      ],
+      "totalIterations": 85415,
+      "cappedSteps": 1,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Ibanez Tube Screamer TS-9.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "6A41DA9C10A2AE979896AF6E439D96C3C9828BE7FE8FEB9BEA226A839127D88A",
+      "outputs": 16,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        3
+      ],
+      "totalIterations": 76307,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Ibanez Tube Screamer TS-9.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "F3AC0D5D2F47AC4853C9A2A4C7CFBC8509DFAF7F3C64EA9C91978F0B4DB7C289",
+      "outputs": 16,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        3
+      ],
+      "totalIterations": 79217,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/MXR Distortion \u002B.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "9EF19546FAE5F8776740C6632712F74777C3A54BDB761013416298A2C291D989",
+      "outputs": 13,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        12
+      ],
+      "totalIterations": 76168,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/MXR Distortion \u002B.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "F311A1A3C59BF763626B5260AB5442369623584F60B504C314DA74F64AC457DA",
+      "outputs": 13,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        12
+      ],
+      "totalIterations": 78754,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/MXR Phase 90.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "02B4FA98DA9E665E57FD2C9592AD5BD597E3877D760A073C677E1AA24A41D47E",
+      "outputs": 28,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        23
+      ],
+      "totalIterations": 76668,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/MXR Phase 90.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "345A9613E9C4BCB212340E64C1FF2AD9626DCC95EE4D54E1B2321E28991A5E7A",
+      "outputs": 28,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        23
+      ],
+      "totalIterations": 77075,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Marshall Blues Breaker.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "400DE00557E3EBDF1DBBECF15AD16A30B30B2FCBAE89BC2BDE2CD2CC6EEC96F8",
+      "outputs": 27,
+      "newtonSystems": 2,
+      "newtonSizes": [
+        1,
+        8
+      ],
+      "totalIterations": 110795,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Marshall Blues Breaker.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "E862F11EF787A86738632A82110CB1C3044AD4B6B72EE849421C1073FB25E5A7",
+      "outputs": 27,
+      "newtonSystems": 2,
+      "newtonSizes": [
+        1,
+        8
+      ],
+      "totalIterations": 111593,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Marshall JCM2000 DSL Preamp.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "84EEB2B0B9D1668716E477F037346E61B1774C5781AA003C75AB85C1FD386258",
+      "outputs": 33,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        17
+      ],
+      "totalIterations": 82125,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Marshall JCM2000 DSL Preamp.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "BC54C4563C88B7E4BB03DDB67F76D90CBD21D3A8CCD3924DFC5C1CE552ED23A2",
+      "outputs": 33,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        17
+      ],
+      "totalIterations": 82822,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Marshall JCM800 2203 Preamp.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "FD63B95B4B0CB138FA058EE42EFB1DD06250C21BE1B1CF23CF296999566C9F4D",
+      "outputs": 27,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        17
+      ],
+      "totalIterations": 83500,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Marshall JCM800 2203 Preamp.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "31BD69444B7DCCDF6178AA2BF7BD4EB97FAA0631A7C9AEEA9C9F70B54C73E702",
+      "outputs": 27,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        17
+      ],
+      "totalIterations": 83124,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Marshall JCM800 2203 preamp modded.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "9CD13885B6162A33DEBE1681D28DF8F8CE3442EA904AD40019AC18E6BA18EACF",
+      "outputs": 33,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        20
+      ],
+      "totalIterations": 78307,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Marshall JCM800 2203 preamp modded.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "39D7AB388FBA22A9560B877793437F1956531D0580B23F97F8FB5474A281CD9B",
+      "outputs": 33,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        20
+      ],
+      "totalIterations": 80139,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Op-Amp Model.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "C0926B844ADBA24CA6DEE290A81739F36930777F219FD877829B92106A03AEAC",
+      "outputs": 10,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        7
+      ],
+      "totalIterations": 64355,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Op-Amp Model.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "FDFDE47C52978EAD931D934CA832739D40C1DE1887FC9F610FB7C0AE8B48AA36",
+      "outputs": 10,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        7
+      ],
+      "totalIterations": 54430,
+      "cappedSteps": 24,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Orange Rockerverb 50 Preamp.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "60702888C5FA2C1844143DFDE25028FBE1B272792ACDEC53E43E19AE31D31F56",
+      "outputs": 29,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        25
+      ],
+      "totalIterations": 79325,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Orange Rockerverb 50 Preamp.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "1F4ED529D8DBB00EE31EF3EBBFE11C7F2D102D72EB1EEC7054B344724C89C836",
+      "outputs": 29,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        25
+      ],
+      "totalIterations": 81163,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Passive 1stOrder Lowpass RC.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "AA15ECAA8B180A5D65A53672634E2E0CD0EA03B4EBC2869A1B15518D334E5B2A",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Passive 1stOrder Lowpass RC.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "C0DA4EA5B1574606FA1AE2219DE2D2CAB37C64FE16B18556AC8598BA8B00A777",
+      "outputs": 3,
+      "newtonSystems": 0,
+      "newtonSizes": [],
+      "totalIterations": 0,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Pro Co Rat.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "C9981ACC2D70DAC9671D6454092B5F0C8396E797632E7F4B2AFAE745CC2998EC",
+      "outputs": 19,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        18
+      ],
+      "totalIterations": 78741,
+      "cappedSteps": 5,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Pro Co Rat.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "8D5CB964ED9E19430128F2B0A3D2927460E4C59F2518EC7E019CE0F4564162C2",
+      "outputs": 19,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        18
+      ],
+      "totalIterations": 76449,
+      "cappedSteps": 2,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Wien Bridge Oscillator.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "52D1564651175F98E65D05B4F2249A3DB8A4D590FE53A782E462F76E5A571523",
+      "outputs": 9,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        8
+      ],
+      "totalIterations": 73799,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Examples/Wien Bridge Oscillator.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "52D1564651175F98E65D05B4F2249A3DB8A4D590FE53A782E462F76E5A571523",
+      "outputs": 9,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        8
+      ],
+      "totalIterations": 73799,
+      "cappedSteps": 0,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Unstable/Fuzz Face.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "690CC45E540B67DDA6CB164010F1DD5CE1BBC3FBFB8F59ABE48F96FFBA2B5D54",
+      "outputs": 11,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        10
+      ],
+      "totalIterations": 54865,
+      "cappedSteps": 5,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Unstable/Fuzz Face.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "70BEB726163F5956FEB4AC721C654D3277F8B852EA1233556B1A423185290D85",
+      "outputs": 11,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        10
+      ],
+      "totalIterations": 76793,
+      "cappedSteps": 28,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Unstable/Orange Squeezer Compressor.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "ok",
+      "sha256": "AFA011DF2A7355716F089DD01273A6D53234A91ACC4B6D38859C631481CAC259",
+      "outputs": 18,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        15
+      ],
+      "totalIterations": 61644,
+      "cappedSteps": 6,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Unstable/Orange Squeezer Compressor.schx",
+      "stimulus": "harmonics-5",
+      "status": "ok",
+      "sha256": "D8AB7CF79C9DBE426FA37F3F51DE995A650106886DF356FD0D9AD29F009E9F08",
+      "outputs": 18,
+      "newtonSystems": 1,
+      "newtonSizes": [
+        15
+      ],
+      "totalIterations": 61964,
+      "cappedSteps": 6,
+      "nonFinite": false
+    },
+    {
+      "circuit": "Unstable/Triode stage.schx",
+      "stimulus": "harmonics-0.5",
+      "status": "error",
+      "error": "Exception: Failed to eliminate differentials from system of equations."
+    },
+    {
+      "circuit": "Unstable/Triode stage.schx",
+      "stimulus": "harmonics-5",
+      "status": "error",
+      "error": "Exception: Failed to eliminate differentials from system of equations."
+    }
+  ]
+}

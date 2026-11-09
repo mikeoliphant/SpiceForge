@@ -6,4 +6,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Dependencies\LiveSPICE\Circuit\Circuit.csproj" />
+    <ProjectReference Include="..\Dependencies\LiveSPICE\ComputerAlgebra\ComputerAlgebra\ComputerAlgebra.csproj" />
+    <ProjectReference Include="..\Dependencies\LiveSPICE\Util\Util.csproj" />
+  </ItemGroup>
+
 </Project>
