@@ -1,6 +1,10 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="PLAN.md" />
+  </Folder>
   <Project Path="Dependencies/LiveSPICE/Circuit/Circuit.csproj" />
   <Project Path="Dependencies/LiveSPICE/ComputerAlgebra/ComputerAlgebra/ComputerAlgebra.csproj" />
   <Project Path="Dependencies/LiveSPICE/Util/Util.csproj" />
+  <Project Path="SpiceForge.ReferenceCapture/SpiceForge.ReferenceCapture.csproj" />
   <Project Path="SpiceForge/SpiceForge.csproj" Id="12d1f692-0f24-4201-acb6-3a17f1988831" />
 </Solution>
