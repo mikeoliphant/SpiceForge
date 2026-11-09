@@ -98,7 +98,7 @@ public sealed class CompiledCircuit
         private readonly int iterationCap;
         private readonly TransientSolution solution;
         private readonly CodeGen code = new();
-        private readonly double[][] parameterGain, sourceGain, G, Z, Q, D;
+        private readonly double[][] parameterGain, sourceGain, G, Z, Q, D, Nz, Qz, CH, CS, CP;
         private ParameterExpression time = null!, input = null!, inputPrevious = null!, history = null!, y = null!;
         private ParameterExpression[] historyRows = Array.Empty<ParameterExpression>();
         private readonly HashSet<int> required = new();
@@ -121,6 +121,11 @@ public sealed class CompiledCircuit
             Z = Jagged(plan.Z);
             Q = Jagged(plan.Q);
             D = Jagged(plan.D);
+            Nz = Jagged(plan.Nz);
+            Qz = Jagged(plan.Qz);
+            CH = Jagged(plan.CH);
+            CS = Jagged(plan.CS);
+            CP = Jagged(plan.CP);
         }
 
         public StepFunction Build()
@@ -145,7 +150,8 @@ public sealed class CompiledCircuit
             for (int i = 0; i < plan.Symbols.Length; i++)
             {
                 bool used = i >= plan.parameterCount || sourceSymbols.Contains(plan.Symbols[i])
-                    || linearRows.Any(row => parameterGain[row][i] != 0);
+                    || linearRows.Any(row => parameterGain[row][i] != 0)
+                    || (i < plan.parameterCount && Enumerable.Range(0, plan.dz).Any(f => CH[f][i] != 0));
                 if (used)
                     code.DeclInit(plan.Symbols[i], Read(plan.bindings[i]));
             }
@@ -191,6 +197,8 @@ public sealed class CompiledCircuit
 
             if (plan.m > 0)
             {
+                foreach (int j in plan.free)
+                    Require(j);
                 for (int i = 0; i < n; i++)
                     if (!arrowFor.ContainsKey(i))
                     {
@@ -269,7 +277,7 @@ public sealed class CompiledCircuit
 
         private void EmitNewton(ParameterExpression[] sources)
         {
-            int n = system.Unknowns.Length, k = plan.k, m = plan.m;
+            int n = system.Unknowns.Length, k = plan.k, m = plan.m, dz = plan.dz, K = plan.K;
             // A Newton system with no equations only holds a free unknown at its previous value.
             List<NewtonIteration> newtonSets = solution.Solutions.OfType<NewtonIteration>().Where(s => s.Equations.Any()).ToList();
             if (newtonSets.Count != 1)
@@ -306,8 +314,24 @@ public sealed class CompiledCircuit
 
             var current = active.ToDictionary(i => i, i => Local(History(1, i)));
 
-            var augmented = Enumerable.Range(0, k).Select(_ => new double[CircuitInterpreter.RowLength(k)]).ToArray();
-            var stepSolution = new double[k];
+            // Free unknowns and constraints, when E is singular (see SingularSplit).
+            ParameterExpression[] z = plan.free.Select(j => Local(History(1, j))).ToArray();
+            var cs = new ParameterExpression[dz];
+            for (int f = 0; f < dz; f++)
+            {
+                LinqExpr value = LinqExpr.Constant(plan.CC[f]);
+                for (int j = 0; j < plan.parameterCount; j++)
+                    if (CH[f][j] != 0)
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(CH, f, j), code[plan.Symbols[j]]));
+                for (int x = 0; x < sources.Length; x++)
+                    if (CS[f][x] != 0)
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(
+                            LinqExpr.Multiply(Cell(CS, f, x), LinqExpr.Constant(plan.sourceCoefficients[x])), sources[x]));
+                cs[f] = Local(value);
+            }
+
+            var augmented = Enumerable.Range(0, K).Select(_ => new double[CircuitInterpreter.RowLength(K)]).ToArray();
+            var stepSolution = new double[K];
             ConstantExpression augmentedArray = LinqExpr.Constant(augmented);
 
             int[] pivots = CircuitInterpreter.PortPivots(system);
@@ -354,7 +378,7 @@ public sealed class CompiledCircuit
                 {
                     ParameterExpression row = code.Decl<double[]>("row" + r);
                     code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(r))));
-                    for (int p = 0; p <= k; p++)
+                    for (int p = 0; p <= K; p++)
                         code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(p)), LinqExpr.Constant(p == r ? 1.0 : 0.0)));
 
                     LinqExpr rhs = voc[r];
@@ -373,11 +397,43 @@ public sealed class CompiledCircuit
                         }
                         rhs = LinqExpr.Add(rhs, LinqExpr.Multiply(Cell(Z, r, c), linear));
                     }
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(k)), rhs));
+                    for (int f = 0; f < dz; f++)
+                        if (Qz[r][f] != 0)
+                            code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(k + f)), LinqExpr.Constant(-Qz[r][f])));
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(K)), rhs));
                 }
 
+                for (int f = 0; f < dz; f++)
+                {
+                    ParameterExpression row = code.Decl<double[]>("constraint" + f);
+                    code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(k + f))));
+                    for (int p = 0; p <= K; p++)
+                        code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(p)), LinqExpr.Constant(0.0)));
+
+                    LinqExpr rhs = LinqExpr.Negate(cs[f]);
+                    for (int c = 0; c < m; c++)
+                    {
+                        if (CP[f][c] == 0)
+                            continue;
+                        LinqExpr linear = q[c];
+                        for (int p = 0; p < k; p++)
+                        {
+                            if (jacobian[c, p] is not LinqExpr partial)
+                                continue;
+                            IndexExpression target = LinqExpr.ArrayAccess(row, LinqExpr.Constant(p));
+                            code.Add(LinqExpr.Assign(target, LinqExpr.Add(target, LinqExpr.Multiply(Cell(CP, f, c), partial))));
+                            linear = LinqExpr.Subtract(linear, LinqExpr.Multiply(partial, w[p]));
+                        }
+                        rhs = LinqExpr.Subtract(rhs, LinqExpr.Multiply(Cell(CP, f, c), linear));
+                    }
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(K)), rhs));
+                }
                 code.Add(LinqExpr.Call(SolveStep, augmentedArray, LinqExpr.Constant(stepSolution),
-                    LinqExpr.Constant(plan.groups), LinqExpr.Constant(plan.groupRows), LinqExpr.Constant(k)));
+                    LinqExpr.Constant(plan.groups), LinqExpr.Constant(plan.groupRows), LinqExpr.Constant(K)));
+
+                ParameterExpression[] zNext = Enumerable.Range(0, dz)
+                    .Select(f => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(k + f))))
+                    .ToArray();
 
                 ParameterExpression[] next = Enumerable.Range(0, k)
                     .Select(p => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(p))))
@@ -400,6 +456,9 @@ public sealed class CompiledCircuit
                     for (int c = 0; c < m; c++)
                         if (G[i][c] != 0)
                             value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(G, i, c), linearized[c]));
+                    for (int f = 0; f < dz; f++)
+                        if (Nz[i][f] != 0)
+                            value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(Nz, i, f), zNext[f]));
                     nextY[i] = Local(value);
                 }
 
@@ -418,6 +477,8 @@ public sealed class CompiledCircuit
                 }
                 for (int p = 0; p < k; p++)
                     code.Add(LinqExpr.Assign(w[p], next[p]));
+                for (int f = 0; f < dz; f++)
+                    code.Add(LinqExpr.Assign(z[f], zNext[f]));
 
                 code.Add(LinqExpr.IfThen(done, LinqExpr.Block(LinqExpr.Assign(result, iteration), exit)));
                 code.Add(LinqExpr.IfThen(LinqExpr.Equal(iteration, LinqExpr.Constant(iterationCap)),

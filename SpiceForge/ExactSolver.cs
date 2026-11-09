@@ -52,6 +52,56 @@ public static class ExactSolver
         return x;
     }
 
+    /// <summary>
+    /// Finds rows and columns of A that form a nonsingular block of full rank, by elimination with full pivoting.
+    /// </summary>
+    public static void RankBasis(Real[,] a, out int[] rows, out int[] columns)
+    {
+        int n = a.GetLength(0), cols = a.GetLength(1);
+        var work = (Real[,])a.Clone();
+        var rowOrder = Enumerable.Range(0, n).ToArray();
+        var colOrder = Enumerable.Range(0, cols).ToArray();
+        int rank = 0;
+        for (; rank < Math.Min(n, cols); rank++)
+        {
+            int bestRow = -1, bestCol = -1;
+            Real best = 0;
+            for (int i = rank; i < n; i++)
+                for (int j = rank; j < cols; j++)
+                {
+                    Real value = Real.Abs(work[rowOrder[i], colOrder[j]]);
+                    if (value != 0 && (bestRow < 0 || value > best))
+                    {
+                        best = value;
+                        bestRow = i;
+                        bestCol = j;
+                    }
+                }
+            if (bestRow < 0)
+                break;
+
+            (rowOrder[rank], rowOrder[bestRow]) = (rowOrder[bestRow], rowOrder[rank]);
+            (colOrder[rank], colOrder[bestCol]) = (colOrder[bestCol], colOrder[rank]);
+            int pr = rowOrder[rank], pc = colOrder[rank];
+            for (int i = rank + 1; i < n; i++)
+            {
+                int r = rowOrder[i];
+                if (work[r, pc] == 0)
+                    continue;
+                Real factor = work[r, pc] / work[pr, pc];
+                for (int j = rank; j < cols; j++)
+                {
+                    int c = colOrder[j];
+                    if (work[pr, c] != 0)
+                        work[r, c] -= factor * work[pr, c];
+                }
+            }
+        }
+
+        rows = rowOrder.Take(rank).OrderBy(i => i).ToArray();
+        columns = colOrder.Take(rank).OrderBy(j => j).ToArray();
+    }
+
     public static Real[,] Zeros(int rows, int columns)
     {
         var matrix = new Real[rows, columns];

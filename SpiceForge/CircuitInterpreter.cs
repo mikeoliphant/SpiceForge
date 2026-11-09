@@ -5,7 +5,7 @@ using Expression = ComputerAlgebra.Expression;
 namespace SpiceForge;
 
 /// <summary>
-/// Runs a circuit from one offline factorization of E, with Newton's method on the k ports only.
+/// Runs a circuit from one offline factorization of E, with Newton's method on the k ports only (plus the free unknowns, when E is singular).
 /// Oversampling, input interpolation, output averaging, history handling, the initial guess and
 /// the stopping rule all follow LiveSPICE's Simulation.
 /// </summary>
@@ -49,6 +49,20 @@ public sealed class CircuitInterpreter
     internal readonly int[] portSymbols = Array.Empty<int>();
     internal readonly int[] convergence;
     internal readonly double[,] D;
+
+    // Singular E: free unknowns z join the Newton unknowns, and d constraint rows join its equations.
+    internal readonly int dz;
+    internal readonly int K;
+    internal readonly int[] free = Array.Empty<int>();
+    internal readonly double[,] Nz;
+    internal readonly double[,] Qz;
+    internal readonly double[,] CH;
+    internal readonly double[] CC;
+    internal readonly double[,] CS;
+    internal readonly double[,] CP;
+    internal readonly double[] z;
+    internal readonly double[] zNext;
+    internal readonly double[] cs;
     internal readonly Binding[] finalBindings = Array.Empty<Binding>();
     internal readonly double[] finalInputs = Array.Empty<double>();
     internal readonly double[] finalResults = Array.Empty<double>();
@@ -139,8 +153,17 @@ public sealed class CircuitInterpreter
             portSymbols = pivots.Select(p => Array.IndexOf(nonlinearSymbols, p)).ToArray();
         }
 
-        DenseLu lu = Factor(system, out double[,] shifted);
-        ConditionNumber = lu.ConditionNumber;
+        DenseLu? lu = null;
+        SingularSplit? split = null;
+        try
+        {
+            lu = new DenseLu(system.E);
+        }
+        catch (SingularSystemException) when (m > 0 && k > 0 && system.Rows == system.Unknowns.Length)
+        {
+            split = SingularSplit.Build(system);
+        }
+        ConditionNumber = lu?.ConditionNumber ?? double.NaN;
 
         int n = system.Unknowns.Length;
         int rows = system.Rows;
@@ -155,13 +178,13 @@ public sealed class CircuitInterpreter
 
         // Parameters come first in the symbol list; symbols only read by sources follow them.
         parameterCount = system.Parameters.Length;
-        parameterGain = SolveColumns(lu, system.H, n);
-        constant = lu.Solve(system.C);
+        parameterGain = split?.ParameterGain ?? SolveColumns(lu!, system.H, n);
+        constant = split?.Constant ?? lu!.Solve(system.C);
 
         var sourceRows = new double[rows, system.Sources.Length];
         for (int x = 0; x < system.Sources.Length; x++)
             sourceRows[system.Sources[x].Row, x] = 1;
-        sourceGain = SolveColumns(lu, sourceRows, n);
+        sourceGain = split?.SourceGain ?? SolveColumns(lu!, sourceRows, n);
         sourceCoefficients = system.Sources.Select(s => s.Coefficient).ToArray();
         sourceValues = new double[system.Sources.Length];
         if (system.Sources.Length > 0)
@@ -169,23 +192,37 @@ public sealed class CircuitInterpreter
 
         outputs = outputSymbols.Select(o => Array.IndexOf(system.Unknowns, o)).ToArray();
 
-        G = SolveColumns(lu, system.P, n);
-        Z = new double[k, m];
-        for (int r = 0; r < k; r++)
-            for (int c = 0; c < m; c++)
-                for (int j = 0; j < n; j++)
-                    Z[r, c] += Q[r, j] * G[j, c];
+        if (split != null)
+        {
+            G = split.G;
+            Z = split.Z;
+        }
+        else
+        {
+            G = SolveColumns(lu!, system.P, n);
+            Z = new double[k, m];
+            for (int r = 0; r < k; r++)
+                for (int c = 0; c < m; c++)
+                    for (int j = 0; j < n; j++)
+                        Z[r, c] += Q[r, j] * G[j, c];
+        }
 
-        // A shifted E is badly conditioned, and double-precision error in these fixed coefficients is enough to
-        // make nearly floating nodes run away. Compute them exactly instead.
-        bool shiftedE = false;
-        foreach (double d in D)
-            shiftedE |= d != 0;
-        if (shiftedE)
-            ApplyExactCoefficients(system);
+        dz = split?.Free.Length ?? 0;
+        K = k + dz;
+        free = split?.Free ?? Array.Empty<int>();
+        Nz = split?.Nz ?? new double[n, 0];
+        Qz = split?.Qz ?? new double[k, 0];
+        CH = split?.CH ?? new double[0, parameterCount];
+        CC = split?.CC ?? Array.Empty<double>();
+        CS = split?.CS ?? new double[0, system.Sources.Length];
+        CP = split?.CP ?? new double[0, m];
+        z = new double[dz];
+        zNext = new double[dz];
+        cs = new double[dz];
 
-        groups = BuildGroups(segment);
-        stepSolution = new double[k];
+        // The constraint rows couple everything, so a split system is solved as one group.
+        groups = dz > 0 ? new[] { Enumerable.Range(0, K).ToArray() } : BuildGroups(segment);
+        stepSolution = new double[K];
         groupRows = groups.Select(g => g.Select(_ => new double[RowLength(g.Length)]).ToArray()).ToArray();
         StateBlocks = CountStateBlocks();
 
@@ -208,7 +245,7 @@ public sealed class CircuitInterpreter
         }
         yBeforeUpdate = new double[n];
 
-        augmented = Enumerable.Range(0, k).Select(_ => new double[RowLength(k)]).ToArray();
+        augmented = Enumerable.Range(0, K).Select(_ => new double[RowLength(K)]).ToArray();
 
         y = new double[n];
         yLinear = new double[n];
@@ -273,6 +310,16 @@ public sealed class CircuitInterpreter
             yLinear[i] = value;
         }
 
+        for (int f = 0; f < dz; f++)
+        {
+            double value = CC[f];
+            for (int j = 0; j < parameterCount; j++)
+                value += CH[f, j] * values[j];
+            for (int x = 0; x < sourceValues.Length; x++)
+                value += CS[f, x] * sourceCoefficients[x] * sourceValues[x];
+            cs[f] = value;
+        }
+
         if (m == 0)
             Array.Copy(yLinear, y, y.Length);
         else
@@ -306,12 +353,15 @@ public sealed class CircuitInterpreter
         Array.Copy(previous, y, y.Length);
         Multiply(Q, previous, w);
         Multiply(Q, yLinear, voc);
+        for (int f = 0; f < dz; f++)
+            z[f] = previous[free[f]];
 
         for (int iteration = 1; ; iteration++)
         {
             EvaluateNonlinear();
 
-            // Solve (I - Z·J)·wNext = voc + Z·(q - J·w), the linearization of w = voc + Z·q(w).
+            // Solve (I - Z·J)·wNext - Qz·zNext = voc + Z·(q - J·w), the linearization of w = voc + Z·q(w) + Qz·z,
+            // together with CP·J·wNext = -cs - CP·(q - J·w), the linearization of the constraints cs + CP·q(w) = 0.
             for (int r = 0; r < k; r++)
             {
                 double[] row = augmented[r];
@@ -320,20 +370,44 @@ public sealed class CircuitInterpreter
                 double rhs = voc[r];
                 for (int c = 0; c < m; c++)
                 {
-                    double z = Z[r, c];
-                    if (z == 0)
+                    double zc = Z[r, c];
+                    if (zc == 0)
                         continue;
                     double linear = q[c];
                     for (int p = 0; p < k; p++)
                     {
-                        row[p] -= z * jacobian[c, p];
+                        row[p] -= zc * jacobian[c, p];
                         linear -= jacobian[c, p] * w[p];
                     }
-                    rhs += z * linear;
+                    rhs += zc * linear;
                 }
-                row[k] = rhs;
+                for (int f = 0; f < dz; f++)
+                    row[k + f] = -Qz[r, f];
+                row[K] = rhs;
             }
-            SolveLinearStep(augmented, stepSolution, groups, groupRows, k);
+            for (int f = 0; f < dz; f++)
+            {
+                double[] row = augmented[k + f];
+                Array.Clear(row);
+                double rhs = -cs[f];
+                for (int c = 0; c < m; c++)
+                {
+                    double weight = CP[f, c];
+                    if (weight == 0)
+                        continue;
+                    double linear = q[c];
+                    for (int p = 0; p < k; p++)
+                    {
+                        row[p] += weight * jacobian[c, p];
+                        linear -= jacobian[c, p] * w[p];
+                    }
+                    rhs -= weight * linear;
+                }
+                row[K] = rhs;
+            }
+            SolveLinearStep(augmented, stepSolution, groups, groupRows, K);
+            for (int f = 0; f < dz; f++)
+                zNext[f] = stepSolution[k + f];
 
             // q linearized at w and evaluated at the next w, which is what full Newton solves with.
             for (int c = 0; c < m; c++)
@@ -356,6 +430,8 @@ public sealed class CircuitInterpreter
                 y[i] = Combine(i);
             for (int p = 0; p < k; p++)
                 w[p] = stepSolution[p];
+            for (int f = 0; f < dz; f++)
+                z[f] = zNext[f];
 
             if (done || iteration == iterationCap)
             {
@@ -517,6 +593,8 @@ public sealed class CircuitInterpreter
         double value = yLinear[i];
         for (int c = 0; c < m; c++)
             value += G[i, c] * linearizedQ[c];
+        for (int f = 0; f < dz; f++)
+            value += Nz[i, f] * zNext[f];
         return value;
     }
 
@@ -538,75 +616,6 @@ public sealed class CircuitInterpreter
             }
             q[c] = value;
         }
-    }
-
-    // E can be singular when an unknown appears only inside nonlinear terms. Writing q = q' + D·w moves
-    // D·Q into E, which leaves the equations and the Newton iterates unchanged. D is a sampled Jacobian.
-    private DenseLu Factor(ExtractedSystem system, out double[,] matrix)
-    {
-        matrix = system.E;
-        try
-        {
-            return new DenseLu(matrix);
-        }
-        catch (SingularSystemException) when (m > 0 && k > 0 && system.Rows == system.Unknowns.Length)
-        {
-        }
-
-        // Prefer the smallest linearization that works. A large D swamps small currents with cancellation
-        // error, so start at w = 0 and only move to larger voltages if E is still singular.
-        var random = new Random(4);
-        double[] scales = { 0, 0.01, 0.03, 0.1, 0.3, 0.5, 1 };
-
-        for (int sample = 0; sample < scales.Length * 4; sample++)
-        {
-            double scale = scales[sample / 4];
-            for (int p = 0; p < k; p++)
-                w[p] = (random.NextDouble() * 2 - 1) * scale;
-            Array.Clear(D);
-            EvaluateNonlinear();
-
-            bool finite = true;
-            foreach (double value in jacobian)
-                finite &= !double.IsNaN(value) && !double.IsInfinity(value);
-            if (!finite)
-                continue;
-
-            double[,] candidate = Shift(system, jacobian);
-            try
-            {
-                var lu = new DenseLu(candidate);
-                Array.Copy(jacobian, D, D.Length);
-                matrix = candidate;
-                return lu;
-            }
-            catch (SingularSystemException)
-            {
-            }
-        }
-
-        throw new SingularSystemException("E is singular for every sampled linearization.");
-    }
-
-    private double[,] Shift(ExtractedSystem system, double[,] d)
-    {
-        int rows = system.Rows, n = system.Unknowns.Length;
-        var shifted = (double[,])system.E.Clone();
-        for (int i = 0; i < rows; i++)
-            for (int c = 0; c < m; c++)
-            {
-                double pic = system.P[i, c];
-                if (pic == 0)
-                    continue;
-                for (int p = 0; p < k; p++)
-                {
-                    if (d[c, p] == 0)
-                        continue;
-                    for (int j = 0; j < n; j++)
-                        shifted[i, j] -= pic * d[c, p] * Q[p, j];
-                }
-            }
-        return shifted;
     }
 
     // Q is in reduced row echelon form, so each row has a pivot that is the only nonzero in its column.
@@ -634,63 +643,6 @@ public sealed class CircuitInterpreter
         }
     }
 
-    private void ApplyExactCoefficients(ExtractedSystem system)
-    {
-        int rows = system.Rows, n = system.Unknowns.Length, parameters = system.Parameters.Length;
-        int sourceColumn = parameters + 1, nonlinearColumn = sourceColumn + system.Sources.Length;
-
-        Real[,] shifted = (Real[,])system.ExactE.Clone();
-        for (int c = 0; c < m; c++)
-            for (int p = 0; p < k; p++)
-            {
-                if (D[c, p] == 0)
-                    continue;
-                Real d = D[c, p];
-                for (int j = 0; j < n; j++)
-                {
-                    if (Q[p, j] == 0)
-                        continue;
-                    Real scale = d * (Real)Q[p, j];
-                    for (int i = 0; i < rows; i++)
-                        if (system.ExactP[i, c] != 0)
-                            shifted[i, j] -= system.ExactP[i, c] * scale;
-                }
-            }
-
-        Real[,] right = ExactSolver.Zeros(rows, nonlinearColumn + m);
-        for (int i = 0; i < rows; i++)
-        {
-            for (int j = 0; j < parameters; j++)
-                right[i, j] = system.ExactH[i, j];
-            right[i, parameters] = system.ExactC[i, 0];
-            for (int c = 0; c < m; c++)
-                right[i, nonlinearColumn + c] = system.ExactP[i, c];
-        }
-        for (int x = 0; x < system.Sources.Length; x++)
-            right[system.Sources[x].Row, sourceColumn + x] = 1;
-
-        Real[,] solved = ExactSolver.Solve(shifted, right);
-        for (int i = 0; i < n; i++)
-        {
-            for (int j = 0; j < parameters; j++)
-                parameterGain[i, j] = (double)solved[i, j];
-            constant[i] = (double)solved[i, parameters];
-            for (int x = 0; x < system.Sources.Length; x++)
-                sourceGain[i, x] = (double)solved[i, sourceColumn + x];
-            for (int c = 0; c < m; c++)
-                G[i, c] = (double)solved[i, nonlinearColumn + c];
-        }
-
-        for (int r = 0; r < k; r++)
-            for (int c = 0; c < m; c++)
-            {
-                Real value = 0;
-                for (int j = 0; j < n; j++)
-                    if (Q[r, j] != 0)
-                        value += (Real)Q[r, j] * solved[j, nonlinearColumn + c];
-                Z[r, c] = (double)value;
-            }
-    }
     private static double[,] SolveColumns(DenseLu lu, double[,] rightHandSides, int n)
     {
         int rows = rightHandSides.GetLength(0), columns = rightHandSides.GetLength(1);
