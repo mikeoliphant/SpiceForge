@@ -133,6 +133,8 @@ public static class Extractor
         Expression[] parameterList = parameters.ToArray();
         Expression[] nonlinearList = nonlinear.ToArray();
 
+        double[,] Q = InferPorts(unknowns, nonlinearList);
+        DropFreeUnknowns(ref unknowns, ref E, ref Q, rows, out Expression[] free);
         return new ExtractedSystem
         {
             Unknowns = unknowns,
@@ -142,7 +144,8 @@ public static class Extractor
             H = ToMatrix(rows, parameterList.Length, parameterEntries),
             C = C,
             P = ToMatrix(rows, nonlinearList.Length, nonlinearEntries),
-            Q = InferPorts(unknowns, nonlinearList),
+            Q = Q,
+            FreeUnknowns = free,
             Sources = sources.ToArray(),
             Equations = equations,
             InitialConditions = initialConditions,
@@ -194,6 +197,34 @@ public static class Extractor
         }
 
         return basis.ToMatrix();
+    }
+
+    // An unknown that appears in no equation, such as an unused switch control, can take any value. LiveSPICE
+    // leaves it at its previous value, and nothing reads it, so it is dropped when there are more unknowns than rows.
+    private static void DropFreeUnknowns(ref Expression[] unknowns, ref double[,] E, ref double[,] Q, int rows, out Expression[] free)
+    {
+        int n = unknowns.Length, k = Q.GetLength(0);
+        double[,] e = E, q = Q;
+        int[] keep = Enumerable.Range(0, n)
+            .Where(j => rows >= n || Enumerable.Range(0, rows).Any(i => e[i, j] != 0) || Enumerable.Range(0, k).Any(r => q[r, j] != 0))
+            .ToArray();
+        Expression[] all = unknowns;
+        free = Enumerable.Range(0, n).Except(keep).Select(j => all[j]).ToArray();
+        if (free.Length == 0)
+            return;
+
+        var newE = new double[rows, keep.Length];
+        var newQ = new double[k, keep.Length];
+        for (int c = 0; c < keep.Length; c++)
+        {
+            for (int i = 0; i < rows; i++)
+                newE[i, c] = E[i, keep[c]];
+            for (int r = 0; r < k; r++)
+                newQ[r, c] = Q[r, keep[c]];
+        }
+        unknowns = keep.Select(j => all[j]).ToArray();
+        E = newE;
+        Q = newQ;
     }
 
     private static bool IsSymbol(Expression x) => x is Variable || (x is Call call && call.Target is UnknownFunction);

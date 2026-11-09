@@ -25,6 +25,9 @@ public sealed class ExtractedSystem
     public required double[] C { get; init; }
     public required double[,] P { get; init; }
     public required double[,] Q { get; init; }
+
+    /// <summary>Unknowns that appear in no equation, left out of <see cref="Unknowns"/>.</summary>
+    public required Expression[] FreeUnknowns { get; init; }
     public required NonlinearSource[] Sources { get; init; }
 
     /// <summary>The original equations, each meaning <c>F == 0</c>.</summary>

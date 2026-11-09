@@ -276,9 +276,9 @@ public sealed class CircuitInterpreter
             for (int i = 0; i < finalBindings.Length; i++)
                 finalInputs[position++] = Read(finalBindings[i]);
             for (int i = 0; i < finalNewton.Length; i++)
-                finalInputs[position++] = yBeforeUpdate[finalNewton[i]];
+                finalInputs[position++] = finalNewton[i] >= 0 ? yBeforeUpdate[finalNewton[i]] : 0;
             for (int i = 0; i < finalNewton.Length; i++)
-                finalInputs[position++] = y[finalNewton[i]];
+                finalInputs[position++] = finalNewton[i] >= 0 ? y[finalNewton[i]] : 0;
             finalEvaluator.Evaluate(finalInputs, finalResults);
             for (int i = 0; i < finalTargets.Length; i++)
                 if (finalTargets[i] >= 0)

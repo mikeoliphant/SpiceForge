@@ -270,7 +270,8 @@ public sealed class CompiledCircuit
         private void EmitNewton(ParameterExpression[] sources)
         {
             int n = system.Unknowns.Length, k = plan.k, m = plan.m;
-            List<NewtonIteration> newtonSets = solution.Solutions.OfType<NewtonIteration>().ToList();
+            // A Newton system with no equations only holds a free unknown at its previous value.
+            List<NewtonIteration> newtonSets = solution.Solutions.OfType<NewtonIteration>().Where(s => s.Equations.Any()).ToList();
             if (newtonSets.Count != 1)
                 throw new NotSupportedException("Circuits with several LiveSPICE Newton systems aren't supported.");
 
