@@ -11,6 +11,12 @@ const double Tolerance = 1e-6;
 
 string repo = FindRepoRoot();
 string testsDir = Path.Combine(repo, "Dependencies", "LiveSPICE", "Tests");
+if (args.Length > 2 && args[0] == "trace")
+    return TraceCheck.Run(testsDir, args[1], double.Parse(args[2]));
+
+if (args.Length > 1 && args[0] == "pots")
+    return RatCheck.Run(testsDir, args[1]);
+
 if (args.Length > 0 && args[0] == "dump")
 {
     ReferenceCheck.Dump = true;

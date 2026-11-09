@@ -207,7 +207,7 @@ internal static class ReferenceCheck
 
     // The worst error across all nodes, relative to that node's peak. Nodes that sit near zero are
     // measured against the circuit's peak instead, so roundoff on them isn't reported as a large error.
-    private static double WorstErrorDb(double[][] reference, double[][] actual)
+    internal static double WorstErrorDb(double[][] reference, double[][] actual)
     {
         double circuitPeak = reference.Max(o => o.Max(Math.Abs));
         double floor = Math.Max(circuitPeak * 1e-6, 1e-12);
@@ -253,7 +253,7 @@ internal static class ReferenceCheck
 
     private static string Clip(string s, int length) => s.Length <= length ? s : s.Substring(0, length);
 
-    private static double Harmonics(double t, double amplitude, double f0, int count)
+    internal static double Harmonics(double t, double amplitude, double f0, int count)
     {
         double s = 0;
         for (int i = 1; i <= count; ++i)
