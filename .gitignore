@@ -361,3 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Regenerable reference captures (manifest.json is tracked)
+Reference/data/
