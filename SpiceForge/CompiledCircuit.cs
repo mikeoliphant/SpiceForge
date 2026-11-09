@@ -39,17 +39,22 @@ public sealed class CompiledCircuit
         int oversample,
         int iterationCap,
         TransientSolution solution,
-        bool matchLiveSpice = false)
+        bool matchLiveSpice = false,
+        ISegmentSolver? segmentSolver = null)
     {
+        if (segmentSolver != null && matchLiveSpice)
+            throw new ArgumentException("Black boxes can't reproduce LiveSPICE's post-Newton evaluation.", nameof(segmentSolver));
         var plan = new CircuitInterpreter(system, inputSymbol, outputSymbols, timeStep, oversample, iterationCap, solution, matchLiveSpice: matchLiveSpice);
         outputs = plan.outputs;
         this.oversample = oversample;
         substep = plan.substep;
         inverseOversample = plan.inverseOversample;
         newton = plan.m > 0;
+        if (segmentSolver != null && plan.UnownedTerms > 0)
+            throw new NotSupportedException("Some nonlinear terms read no ports, so no segment computes them.");
         y = new double[system.Unknowns.Length];
         history = plan.history;
-        step = new Emitter(plan, system, inputSymbol, timeStep, iterationCap, solution).Build();
+        step = new Emitter(plan, system, inputSymbol, timeStep, iterationCap, solution, segmentSolver).Build();
     }
 
     public void Run(double[] inputSamples, double[][] outputBuffers)
@@ -98,6 +103,7 @@ public sealed class CompiledCircuit
         private readonly Expression timeStep;
         private readonly int iterationCap;
         private readonly TransientSolution solution;
+        private readonly ISegmentSolver? segmentSolver;
         private readonly CodeGen code = new();
         private readonly double[][] parameterGain, sourceGain, G, Z, Q, D, Nz, Qz, CH, CS, CP;
         private ParameterExpression time = null!, input = null!, inputPrevious = null!, history = null!, y = null!;
@@ -107,8 +113,9 @@ public sealed class CompiledCircuit
         private Arrow[] keptArrows = Array.Empty<Arrow>();
         private readonly int[] outputs;
 
-        public Emitter(CircuitInterpreter plan, ExtractedSystem system, Expression inputSymbol, Expression timeStep, int iterationCap, TransientSolution solution)
+        public Emitter(CircuitInterpreter plan, ExtractedSystem system, Expression inputSymbol, Expression timeStep, int iterationCap, TransientSolution solution, ISegmentSolver? segmentSolver)
         {
+            this.segmentSolver = segmentSolver;
             this.plan = plan;
             outputs = plan.outputs;
             this.system = system;
@@ -167,6 +174,10 @@ public sealed class CompiledCircuit
                 foreach (int i in required)
                     code.Add(LinqExpr.Assign(Element(y, i), LinearPart(i, sources)));
                 code.Return(LinqExpr.Constant(0));
+            }
+            else if (segmentSolver != null)
+            {
+                EmitBlackBox(sources);
             }
             else
             {
@@ -275,6 +286,91 @@ public sealed class CompiledCircuit
                         sources[x]));
             return value;
         }
+
+        // Black-box mode, as CircuitInterpreter.SolveWithSegments: each segment's solver gives its ports, free unknowns
+        // and nonlinear-term values in solve order, and every unknown anything reads follows from y = yLinear + G·q + Nz·z.
+        private void EmitBlackBox(ParameterExpression[] sources)
+        {
+            int n = system.Unknowns.Length, k = plan.k, m = plan.m, dz = plan.dz;
+
+            var linearNeeded = new SortedSet<int>(required);
+            for (int r = 0; r < k; r++)
+                for (int j = 0; j < n; j++)
+                    if (Q[r][j] != 0)
+                        linearNeeded.Add(j);
+            var yLinear = new Dictionary<int, ParameterExpression>();
+            foreach (int i in linearNeeded)
+                yLinear[i] = Local(LinearPart(i, sources));
+
+            var voc = new LinqExpr[k];
+            for (int r = 0; r < k; r++)
+            {
+                LinqExpr open = LinqExpr.Constant(0.0);
+                for (int j = 0; j < n; j++)
+                    if (Q[r][j] != 0)
+                        open = LinqExpr.Add(open, LinqExpr.Multiply(Cell(Q, r, j), yLinear[j]));
+                voc[r] = Local(open);
+            }
+
+            var cs = new LinqExpr[dz];
+            for (int f = 0; f < dz; f++)
+            {
+                LinqExpr value = LinqExpr.Constant(plan.CC[f]);
+                for (int j = 0; j < plan.parameterCount; j++)
+                    if (CH[f][j] != 0)
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(CH, f, j), code[plan.Symbols[j]]));
+                for (int x = 0; x < sources.Length; x++)
+                    if (CS[f][x] != 0)
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(
+                            LinqExpr.Multiply(Cell(CS, f, x), LinqExpr.Constant(plan.sourceCoefficients[x])), sources[x]));
+                cs[f] = Local(value);
+            }
+
+            var w = new LinqExpr?[k];
+            var z = new LinqExpr?[dz];
+            var q = new LinqExpr?[m];
+            foreach (Segment segment in plan.Segments)
+            {
+                var inputs = new double[segment.InputCount];
+                var outputs = new double[segment.OutputCount];
+                ConstantExpression inputArray = LinqExpr.Constant(inputs), outputArray = LinqExpr.Constant(outputs);
+
+                int position = 0;
+                foreach (int p in segment.Ports)
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), voc[p]));
+                foreach (int f in segment.Constraints)
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), cs[f]));
+                foreach (int p in segment.Upstream)
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), w[p]!));
+
+                code.Add(LinqExpr.Call(SegmentCall, LinqExpr.Constant(segmentSolver, typeof(ISegmentSolver)), LinqExpr.Constant(segment), inputArray, outputArray));
+
+                position = 0;
+                foreach (int p in segment.Ports)
+                    w[p] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
+                foreach (int f in segment.Free)
+                    z[f] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
+                foreach (int c in segment.NonlinearTerms)
+                    q[c] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
+            }
+
+            foreach (int i in required.OrderBy(i => i))
+            {
+                LinqExpr value = yLinear[i];
+                for (int c = 0; c < m; c++)
+                    if (G[i][c] != 0)
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(G, i, c), q[c]!));
+                for (int f = 0; f < dz; f++)
+                    if (Nz[i][f] != 0)
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(Nz, i, f), z[f]!));
+                code.Add(LinqExpr.Assign(Element(y, i), value));
+            }
+            code.Return(LinqExpr.Constant(0));
+        }
+
+        private static readonly MethodInfo SegmentCall = typeof(Emitter).GetMethod(nameof(CallSegment), BindingFlags.Static | BindingFlags.NonPublic)!;
+
+        private static void CallSegment(ISegmentSolver solver, Segment segment, double[] inputs, double[] outputs) => solver.Solve(segment, inputs, outputs);
 
         private void EmitNewton(ParameterExpression[] sources)
         {

@@ -59,6 +59,20 @@ try
     // The default exact rebuild is the same as black-box mode, so the data matches what a box will see.
     CircuitInterpreter Create() => new(system, inputSymbol, nodes, h, Oversample, Iterations, solution);
     CircuitInterpreter CreateWithCap(int cap) => new(system, inputSymbol, nodes, h, Oversample, cap, solution);
+    CompiledCircuit Compile(ISegmentSolver? box) => new(system, inputSymbol, nodes, h, Oversample, Iterations, solution, segmentSolver: box);
+    double[] Stock(double[] samples)
+    {
+        var simulation = new Simulation(solution) { Oversample = Oversample, Iterations = Iterations, Input = new[] { inputSymbol }, Output = new[] { speakers.Select(s => s.Out).Aggregate((a, b) => a + b) } };
+        var result = new double[samples.Length];
+        for (int start = 0; start < samples.Length; start += BlockSize)
+        {
+            int count = Math.Min(BlockSize, samples.Length - start);
+            var block = new double[count];
+            simulation.Run(samples.AsSpan(start, count).ToArray(), block);
+            Array.Copy(block, 0, result, start, count);
+        }
+        return result;
+    }
 
     var engine = Create();
     if (engine.Segments.Count == 0)
@@ -142,7 +156,7 @@ try
     Console.WriteLine($"Replay check over {replay.seconds:F1} s: output matches to {replay.outputErrorDb:F1} dB, segment inputs to {replay.inputErrorDb:F1} dB.");
     Console.WriteLine($"Recorded behaviour versus LiveSPICE over the same span: {stockDb:F1} dB.");
     if (lut)
-        TryLookupTables(Create, CreateWithCap, recorder, input, sampleRate, nodes.Length, scales, outputDirectory, lutResolution);
+        TryLookupTables(Create, CreateWithCap, Compile, Stock, recorder, input, sampleRate, nodes.Length, scales, outputDirectory, lutResolution);
     return 0;
 }
 catch (Exception ex)
@@ -219,7 +233,7 @@ static double CompareWithStock(TransientSolution solution, Expression inputSymbo
 
 // Builds a lookup table for every segment, then renders the whole input with them as the black boxes and compares
 // that with the normal engine. Both renders are written out for listening.
-static void TryLookupTables(Func<CircuitInterpreter> create, Func<int, CircuitInterpreter> createWithCap, Recorder recorder, double[] input, int sampleRate, int nodeCount, double[] scales, string directory, int resolution)
+static void TryLookupTables(Func<CircuitInterpreter> create, Func<int, CircuitInterpreter> createWithCap, Func<ISegmentSolver?, CompiledCircuit> compile, Func<double[], double[]> stock, Recorder recorder, double[] input, int sampleRate, int nodeCount, double[] scales, string directory, int resolution)
 {
     var builder = create();
     var tables = new List<LookupTable>();
@@ -270,6 +284,24 @@ static void TryLookupTables(Func<CircuitInterpreter> create, Func<int, CircuitIn
     tight.AbsoluteTolerance = 1e-12;
     double[] reference = RunWithCap(tight, input, nodeCount, scales);
     Console.WriteLine($"Against a tightly converged render: Newton {Compare(reference, expected, sampleRate)}; lookup table {Compare(reference, actual, sampleRate)}.");
+    // The same two configurations compiled, which is how they would really run.
+    var compiledBoxed = compile(new LookupTableSolver(tables));
+    var watchCompiled = System.Diagnostics.Stopwatch.StartNew();
+    double[] compiledActual = RunCompiled(compiledBoxed, input, nodeCount, scales);
+    double boxedSeconds = watchCompiled.Elapsed.TotalSeconds;
+    var compiledNewton = compile(null);
+    watchCompiled.Restart();
+    RunCompiled(compiledNewton, input, nodeCount, scales);
+    double newtonSeconds = watchCompiled.Elapsed.TotalSeconds;
+    watchCompiled.Restart();
+    stock(input);
+    double stockSeconds = watchCompiled.Elapsed.TotalSeconds;
+    bool same = compiledActual.Zip(actual, (a, b) => BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b)).All(s => s);
+    double audio = input.Length / (double)sampleRate;
+    Console.WriteLine($"Compiled lookup table output {(same ? "is identical to" : "differs from")} the interpreter's.");
+    Console.WriteLine($"Compiled time per sample: stock LiveSPICE {stockSeconds * 1e6 / input.Length:F2} us, Newton {newtonSeconds * 1e6 / input.Length:F2} us, "
+        + $"lookup table {boxedSeconds * 1e6 / input.Length:F2} us ({audio / boxedSeconds:F0}x real time; {newtonSeconds / boxedSeconds:F2}x Newton, {stockSeconds / boxedSeconds:F2}x stock).");
+
     WriteWav(Path.Combine(directory, "newton.wav"), expected, sampleRate);
     WriteWav(Path.Combine(directory, "lut.wav"), actual, sampleRate);
     Console.WriteLine($"Wrote newton.wav and lut.wav to {Path.GetFullPath(directory)}.");
@@ -292,6 +324,27 @@ static string Compare(double[] reference, double[] actual, int sampleRate)
     }
     return $"worst {Db(worst / Math.Max(peak, 1e-30)):F1} dB, {bad} of {windows} windows above -60 dB";
 }
+static double[] RunCompiled(CompiledCircuit engine, double[] input, int nodeCount, double[] scales)
+{
+    var output = new double[input.Length];
+    double[][] buffers = Enumerable.Range(0, nodeCount).Select(_ => new double[BlockSize]).ToArray();
+    for (int start = 0; start < input.Length; start += BlockSize)
+    {
+        int count = Math.Min(BlockSize, input.Length - start);
+        if (count != BlockSize)
+            buffers = Enumerable.Range(0, nodeCount).Select(_ => new double[count]).ToArray();
+        engine.Run(input.AsSpan(start, count).ToArray(), buffers);
+        for (int n = 0; n < count; n++)
+        {
+            double sum = 0;
+            for (int s = 0; s < scales.Length; s++)
+                sum += (buffers[2 * s][n] - buffers[2 * s + 1][n]) * scales[s];
+            output[start + n] = sum;
+        }
+    }
+    return output;
+}
+
 static void WriteWav(string path, double[] samples, int sampleRate)
 {
     using var writer = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1));

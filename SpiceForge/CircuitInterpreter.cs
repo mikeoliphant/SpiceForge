@@ -602,6 +602,9 @@ public sealed class CircuitInterpreter
         return Math.Abs(matrix[row, column]) > max * CouplingTolerance;
     }
 
+    /// <summary>Nonlinear terms no segment computes, because they read no ports. Black-box mode needs this to be zero.</summary>
+    public int UnownedTerms { get; private set; }
+
     /// <summary>Candidate black boxes, in solve order.</summary>
     public IReadOnlyList<Segment> Segments { get; }
 
@@ -683,6 +686,7 @@ public sealed class CircuitInterpreter
             return false;
         }
 
+        UnownedTerms = m - segments.Sum(s => s.NonlinearTerms.Length);
         segmentInputs = segments.Select(s => new double[s.InputCount]).ToArray();
         segmentOutputs = segments.Select(s => new double[s.OutputCount]).ToArray();
         return segments;
@@ -721,6 +725,8 @@ public sealed class CircuitInterpreter
     // and every unknown then follows from y = yLinear + G·q + Nz·z. LiveSPICE's post-Newton evaluation doesn't apply.
     private void SolveWithSegments()
     {
+        if (UnownedTerms > 0)
+            throw new NotSupportedException("Some nonlinear terms read no ports, so no segment computes them.");
         Multiply(Q, yLinear, voc);
         foreach (Segment segment in Segments)
         {
