@@ -26,6 +26,12 @@ public sealed class ExtractedSystem
     public required double[,] P { get; init; }
     public required double[,] Q { get; init; }
 
+    /// <summary>E, H, C (one column) and P as exact rationals.</summary>
+    public required Real[,] ExactE { get; init; }
+    public required Real[,] ExactH { get; init; }
+    public required Real[,] ExactC { get; init; }
+    public required Real[,] ExactP { get; init; }
+
     /// <summary>Unknowns that appear in no equation, left out of <see cref="Unknowns"/>.</summary>
     public required Expression[] FreeUnknowns { get; init; }
     public required NonlinearSource[] Sources { get; init; }

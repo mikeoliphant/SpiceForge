@@ -79,15 +79,15 @@ public static class Extractor
             column[unknowns[j]] = j;
 
         int rows = equations.Length;
-        var E = new double[rows, unknowns.Length];
-        var C = new double[rows];
+        Real[,] exactE = ExactSolver.Zeros(rows, unknowns.Length);
+        Real[,] C = ExactSolver.Zeros(rows, 1);
         var nonlinear = new TermTable();
         var parameters = new TermTable();
-        var parameterEntries = new List<(int Row, int Column, double Value)>();
-        var nonlinearEntries = new List<(int Row, int Column, double Value)>();
+        var parameterEntries = new List<(int Row, int Column, Real Value)>();
+        var nonlinearEntries = new List<(int Row, int Column, Real Value)>();
         var sources = new List<NonlinearSource>();
 
-        void AddNonlinear(int row, double coefficient, Expression body) =>
+        void AddNonlinear(int row, Real coefficient, Expression body) =>
             nonlinearEntries.Add((row, nonlinear.IndexOf(body), -coefficient));
 
         for (int row = 0; row < rows; row++)
@@ -100,13 +100,13 @@ public static class Extractor
                 if (!entry.Key.EqualsOne())
                 {
                     int j = column[entry.Key];
-                    if (TryConstant(entry.Value, out double a))
+                    if (TryConstant(entry.Value, out Real a))
                     {
-                        E[row, j] += a;
+                        exactE[row, j] += a;
                     }
                     else
                     {
-                        (double c, Expression body) = SplitCoefficient(entry.Key * entry.Value);
+                        (Real c, Expression body) = SplitCoefficient(entry.Key * entry.Value);
                         AddNonlinear(row, c, body);
                     }
                     continue;
@@ -115,35 +115,42 @@ public static class Extractor
                 // The constant bucket holds source terms, and every term that isn't linear in an unknown.
                 foreach (Expression term in Sum.TermsOf(entry.Value.Expand()))
                 {
-                    (double c, Expression body) = SplitCoefficient(term);
+                    (Real c, Expression body) = SplitCoefficient(term);
                     if (body.EqualsOne())
-                        C[row] -= c;
+                        C[row, 0] -= c;
                     else if (column.TryGetValue(body, out int j))
-                        E[row, j] += c;
+                        exactE[row, j] += c;
                     else if (body.DependsOn(unknowns))
                         AddNonlinear(row, c, body);
                     else if (IsSymbol(body))
                         parameterEntries.Add((row, parameters.IndexOf(body), -c));
                     else
-                        sources.Add(new NonlinearSource(row, -c, body));
+                        sources.Add(new NonlinearSource(row, (double)(-c), body));
                 }
             }
         }
 
         Expression[] parameterList = parameters.ToArray();
         Expression[] nonlinearList = nonlinear.ToArray();
+        Real[,] exactH = ToMatrix(rows, parameterList.Length, parameterEntries);
+        Real[,] exactP = ToMatrix(rows, nonlinearList.Length, nonlinearEntries);
+        double[,] E = ExactSolver.ToDouble(exactE);
 
         double[,] Q = InferPorts(unknowns, nonlinearList);
-        DropFreeUnknowns(ref unknowns, ref E, ref Q, rows, out Expression[] free);
+        DropFreeUnknowns(ref unknowns, ref E, ref exactE, ref Q, rows, out Expression[] free);
         return new ExtractedSystem
         {
             Unknowns = unknowns,
             Parameters = parameterList,
             Nonlinear = nonlinearList,
             E = E,
-            H = ToMatrix(rows, parameterList.Length, parameterEntries),
-            C = C,
-            P = ToMatrix(rows, nonlinearList.Length, nonlinearEntries),
+            H = ExactSolver.ToDouble(exactH),
+            ExactE = exactE,
+            ExactH = exactH,
+            ExactC = C,
+            ExactP = exactP,
+            C = Enumerable.Range(0, rows).Select(i => (double)C[i, 0]).ToArray(),
+            P = ExactSolver.ToDouble(exactP),
             Q = Q,
             FreeUnknowns = free,
             Sources = sources.ToArray(),
@@ -201,7 +208,7 @@ public static class Extractor
 
     // An unknown that appears in no equation, such as an unused switch control, can take any value. LiveSPICE
     // leaves it at its previous value, and nothing reads it, so it is dropped when there are more unknowns than rows.
-    private static void DropFreeUnknowns(ref Expression[] unknowns, ref double[,] E, ref double[,] Q, int rows, out Expression[] free)
+    private static void DropFreeUnknowns(ref Expression[] unknowns, ref double[,] E, ref Real[,] exactE, ref double[,] Q, int rows, out Expression[] free)
     {
         int n = unknowns.Length, k = Q.GetLength(0);
         double[,] e = E, q = Q;
@@ -215,40 +222,45 @@ public static class Extractor
 
         var newE = new double[rows, keep.Length];
         var newQ = new double[k, keep.Length];
+        var newExact = new Real[rows, keep.Length];
         for (int c = 0; c < keep.Length; c++)
         {
             for (int i = 0; i < rows; i++)
+            {
                 newE[i, c] = E[i, keep[c]];
+                newExact[i, c] = exactE[i, keep[c]];
+            }
             for (int r = 0; r < k; r++)
                 newQ[r, c] = Q[r, keep[c]];
         }
         unknowns = keep.Select(j => all[j]).ToArray();
         E = newE;
+        exactE = newExact;
         Q = newQ;
     }
 
     private static bool IsSymbol(Expression x) => x is Variable || (x is Call call && call.Target is UnknownFunction);
 
     // Writes a term as a numeric coefficient times the product of its other factors.
-    private static (double Coefficient, Expression Body) SplitCoefficient(Expression term)
+    private static (Real Coefficient, Expression Body) SplitCoefficient(Expression term)
     {
-        double coefficient = 1;
+        Real coefficient = 1;
         var factors = new List<Expression>();
         foreach (Expression factor in Product.TermsOf(term))
         {
-            if (factor is Constant)
-                coefficient *= (double)factor;
+            if (factor is Constant constant)
+                coefficient *= constant.Value;
             else
                 factors.Add(factor);
         }
         return (coefficient, Product.New(factors));
     }
 
-    private static bool TryConstant(Expression x, out double value)
+    private static bool TryConstant(Expression x, out Real value)
     {
-        if (x is Constant)
+        if (x is Constant constant)
         {
-            value = (double)x;
+            value = constant.Value;
             return true;
         }
         if (SymbolCollector.Collect(x).Count == 0)
@@ -262,9 +274,9 @@ public static class Extractor
         return false;
     }
 
-    private static double[,] ToMatrix(int rows, int columns, List<(int Row, int Column, double Value)> entries)
+    private static Real[,] ToMatrix(int rows, int columns, List<(int Row, int Column, Real Value)> entries)
     {
-        var matrix = new double[rows, columns];
+        Real[,] matrix = ExactSolver.Zeros(rows, columns);
         foreach (var (row, column, value) in entries)
             matrix[row, column] += value;
         return matrix;

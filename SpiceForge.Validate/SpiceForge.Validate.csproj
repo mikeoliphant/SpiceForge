@@ -9,6 +9,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SpiceForge\SpiceForge.csproj" />
+    <ProjectReference Include="..\SpiceForge.ReferenceCapture\SpiceForge.ReferenceCapture.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="3.3.0" />
   </ItemGroup>
 
 </Project>

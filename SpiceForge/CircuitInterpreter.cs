@@ -176,6 +176,14 @@ public sealed class CircuitInterpreter
                 for (int j = 0; j < n; j++)
                     Z[r, c] += Q[r, j] * G[j, c];
 
+        // A shifted E is badly conditioned, and double-precision error in these fixed coefficients is enough to
+        // make nearly floating nodes run away. Compute them exactly instead.
+        bool shiftedE = false;
+        foreach (double d in D)
+            shiftedE |= d != 0;
+        if (shiftedE)
+            ApplyExactCoefficients(system);
+
         groups = BuildGroups(segment);
         stepSolution = new double[k];
         groupRows = groups.Select(g => g.Select(_ => new double[RowLength(g.Length)]).ToArray()).ToArray();
@@ -626,6 +634,63 @@ public sealed class CircuitInterpreter
         }
     }
 
+    private void ApplyExactCoefficients(ExtractedSystem system)
+    {
+        int rows = system.Rows, n = system.Unknowns.Length, parameters = system.Parameters.Length;
+        int sourceColumn = parameters + 1, nonlinearColumn = sourceColumn + system.Sources.Length;
+
+        Real[,] shifted = (Real[,])system.ExactE.Clone();
+        for (int c = 0; c < m; c++)
+            for (int p = 0; p < k; p++)
+            {
+                if (D[c, p] == 0)
+                    continue;
+                Real d = D[c, p];
+                for (int j = 0; j < n; j++)
+                {
+                    if (Q[p, j] == 0)
+                        continue;
+                    Real scale = d * (Real)Q[p, j];
+                    for (int i = 0; i < rows; i++)
+                        if (system.ExactP[i, c] != 0)
+                            shifted[i, j] -= system.ExactP[i, c] * scale;
+                }
+            }
+
+        Real[,] right = ExactSolver.Zeros(rows, nonlinearColumn + m);
+        for (int i = 0; i < rows; i++)
+        {
+            for (int j = 0; j < parameters; j++)
+                right[i, j] = system.ExactH[i, j];
+            right[i, parameters] = system.ExactC[i, 0];
+            for (int c = 0; c < m; c++)
+                right[i, nonlinearColumn + c] = system.ExactP[i, c];
+        }
+        for (int x = 0; x < system.Sources.Length; x++)
+            right[system.Sources[x].Row, sourceColumn + x] = 1;
+
+        Real[,] solved = ExactSolver.Solve(shifted, right);
+        for (int i = 0; i < n; i++)
+        {
+            for (int j = 0; j < parameters; j++)
+                parameterGain[i, j] = (double)solved[i, j];
+            constant[i] = (double)solved[i, parameters];
+            for (int x = 0; x < system.Sources.Length; x++)
+                sourceGain[i, x] = (double)solved[i, sourceColumn + x];
+            for (int c = 0; c < m; c++)
+                G[i, c] = (double)solved[i, nonlinearColumn + c];
+        }
+
+        for (int r = 0; r < k; r++)
+            for (int c = 0; c < m; c++)
+            {
+                Real value = 0;
+                for (int j = 0; j < n; j++)
+                    if (Q[r, j] != 0)
+                        value += (Real)Q[r, j] * solved[j, nonlinearColumn + c];
+                Z[r, c] = (double)value;
+            }
+    }
     private static double[,] SolveColumns(DenseLu lu, double[,] rightHandSides, int n)
     {
         int rows = rightHandSides.GetLength(0), columns = rightHandSides.GetLength(1);
