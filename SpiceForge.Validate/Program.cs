@@ -11,8 +11,14 @@ const double Tolerance = 1e-6;
 
 string repo = FindRepoRoot();
 string testsDir = Path.Combine(repo, "Dependencies", "LiveSPICE", "Tests");
-if (args.Length > 0 && args[0] == "linear")
-    return LinearCheck.Run(testsDir, repo, args.Length > 1 ? args[1] : null);
+if (args.Length > 0 && args[0] == "dump")
+{
+    ReferenceCheck.Dump = true;
+    return ReferenceCheck.Run(testsDir, repo, true, args[1]);
+}
+
+if (args.Length > 0 && (args[0] == "linear" || args[0] == "nonlinear"))
+    return ReferenceCheck.Run(testsDir, repo, args[0] == "nonlinear", args.Length > 1 ? args[1] : null);
 
 string? filter = args.Length > 0 ? args[0] : null;
 
