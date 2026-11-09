@@ -13,6 +13,7 @@ public sealed class CircuitInterpreter
 {
     private const int MaxHistory = 6;
     private const byte CapFlag = 0x80;
+    private const double CouplingTolerance = 1e-12;
 
     private enum Kind { Time, Input, InputHistory, History, Current }
 
@@ -55,6 +56,10 @@ public sealed class CircuitInterpreter
     private readonly int[] finalNewton = Array.Empty<int>();
     private readonly double[] yBeforeUpdate;
     private readonly double[][] augmented;
+    private readonly bool[,] dependsOn;
+    private readonly double[] stepSolution;
+    private readonly int[][] groups;
+    private readonly double[][][] groupRows;
 
     private readonly double[] y;
     private readonly double[] yLinear;
@@ -70,6 +75,15 @@ public sealed class CircuitInterpreter
 
     public double ConditionNumber { get; }
 
+    /// <summary>Sizes of the coupled port groups, in solve order.</summary>
+    public int[] GroupSizes => groups.Select(g => g.Length).ToArray();
+
+    /// <summary>Strongly connected blocks of ports and states together.</summary>
+    public int StateBlocks { get; }
+
+    /// <summary>Largest Z entry treated as zero, relative to its column.</summary>
+    public double LargestDroppedCoupling { get; private set; }
+
     /// <summary>One entry per oversampled step: the Newton iteration count, with 0x80 set if the cap was hit.</summary>
     public List<byte> IterationCounts { get; } = new();
 
@@ -82,7 +96,8 @@ public sealed class CircuitInterpreter
         Expression timeStep,
         int oversample,
         int iterationCap,
-        TransientSolution solution)
+        TransientSolution solution,
+        bool segment = true)
     {
         this.oversample = oversample;
         this.iterationCap = iterationCap;
@@ -93,6 +108,7 @@ public sealed class CircuitInterpreter
         m = system.Nonlinear.Length;
         Q = system.Q;
         D = new double[m, k];
+        dependsOn = new bool[m, k];
         jacobian = new double[m, k];
         w = new double[k];
         q = new double[m];
@@ -105,10 +121,14 @@ public sealed class CircuitInterpreter
             // Each port's pivot unknown stands in for it: with the other unknowns at zero, Q·y = w.
             Expression[] pivots = PortPivots(system).Select(j => system.Unknowns[j]).ToArray();
             var expressions = system.Nonlinear.ToList();
+            int termIndex = 0;
             foreach (Expression term in system.Nonlinear)
             {
                 Dictionary<Expression, Expression> gradient = term.Gradient(pivots);
                 expressions.AddRange(pivots.Select(p => gradient[p]));
+                for (int p = 0; p < k; p++)
+                    dependsOn[termIndex, p] = !gradient[pivots[p]].EqualsZero();
+                termIndex++;
             }
 
             Expression[] nonlinearSymbols = expressions.SelectMany(SymbolScan.Collect).Concat(pivots).Distinct().ToArray();
@@ -153,6 +173,11 @@ public sealed class CircuitInterpreter
             for (int c = 0; c < m; c++)
                 for (int j = 0; j < n; j++)
                     Z[r, c] += Q[r, j] * G[j, c];
+
+        groups = BuildGroups(segment);
+        stepSolution = new double[k];
+        groupRows = groups.Select(g => g.Select(_ => new double[g.Length + 1]).ToArray()).ToArray();
+        StateBlocks = CountStateBlocks();
 
         convergence = solution.Solutions.OfType<NewtonIteration>().SelectMany(s => s.Unknowns)
             .Select(u => Array.IndexOf(system.Unknowns, u)).Where(j => j >= 0).ToArray();
@@ -298,14 +323,14 @@ public sealed class CircuitInterpreter
                 }
                 row[k] = rhs;
             }
-            Simulation.Solve(augmented, k, k + 1);
+            SolveLinearStep();
 
             // q linearized at w and evaluated at the next w, which is what full Newton solves with.
             for (int c = 0; c < m; c++)
             {
                 double value = q[c];
                 for (int p = 0; p < k; p++)
-                    value += jacobian[c, p] * (augmented[p][k] - w[p]);
+                    value += jacobian[c, p] * (stepSolution[p] - w[p]);
                 linearizedQ[c] = value;
             }
 
@@ -320,7 +345,7 @@ public sealed class CircuitInterpreter
             for (int i = 0; i < y.Length; i++)
                 y[i] = Combine(i);
             for (int p = 0; p < k; p++)
-                w[p] = augmented[p][k];
+                w[p] = stepSolution[p];
 
             if (done || iteration == iterationCap)
             {
@@ -328,6 +353,146 @@ public sealed class CircuitInterpreter
                 return;
             }
         }
+    }
+
+    // Solves (I - Z·J)·x = b, one coupled port group at a time in dependency order. This is the same
+    // linear solve as the joint one, so Newton's iterates and its stopping decisions don't change.
+    private void SolveLinearStep()
+    {
+        if (groups.Length <= 1)
+        {
+            Simulation.Solve(augmented, k, k + 1);
+            for (int p = 0; p < k; p++)
+                stepSolution[p] = augmented[p][k];
+            return;
+        }
+
+        for (int g = 0; g < groups.Length; g++)
+        {
+            int[] group = groups[g];
+            double[][] rows = groupRows[g];
+            for (int r = 0; r < group.Length; r++)
+            {
+                double[] source = augmented[group[r]];
+                double[] row = rows[r];
+                double rhs = source[k];
+                for (int earlier = 0; earlier < g; earlier++)
+                    foreach (int p in groups[earlier])
+                        rhs -= source[p] * stepSolution[p];
+                for (int c = 0; c < group.Length; c++)
+                    row[c] = source[group[c]];
+                row[group.Length] = rhs;
+            }
+
+            Simulation.Solve(rows, group.Length, group.Length + 1);
+            for (int r = 0; r < group.Length; r++)
+                stepSolution[group[r]] = rows[r][group.Length];
+        }
+    }
+
+    private int[][] BuildGroups(bool segment)
+    {
+        if (k == 0)
+            return Array.Empty<int[]>();
+        if (!segment)
+            return new[] { Enumerable.Range(0, k).ToArray() };
+
+        // Entries that exact arithmetic would make zero come out as roundoff, so clear them first.
+        for (int c = 0; c < m; c++)
+        {
+            double max = 0;
+            for (int r = 0; r < k; r++)
+                max = Math.Max(max, Math.Abs(Z[r, c]));
+            for (int r = 0; r < k; r++)
+            {
+                if (Z[r, c] != 0 && Math.Abs(Z[r, c]) <= max * CouplingTolerance)
+                {
+                    LargestDroppedCoupling = Math.Max(LargestDroppedCoupling, Math.Abs(Z[r, c]) / max);
+                    Z[r, c] = 0;
+                }
+            }
+        }
+
+        return DependencyGraph.StronglyConnected(k, PortDependencies).Select(g => g.OrderBy(p => p).ToArray()).ToArray();
+    }
+
+    private IEnumerable<int> PortDependencies(int r)
+    {
+        for (int p = 0; p < k; p++)
+            for (int c = 0; c < m; c++)
+                if (Z[r, c] != 0 && dependsOn[c, p])
+                {
+                    yield return p;
+                    break;
+                }
+    }
+
+    // Ports come first, then one node per unknown with history. Reported only; delays are treated as edges.
+    private int CountStateBlocks()
+    {
+        int[] states = bindings.Take(parameterCount).Where(b => b.Kind == Kind.History).Select(b => b.Unknown).Distinct().ToArray();
+        int n = parameterGain.GetLength(0);
+
+        bool Reads(int unknown, int state)
+        {
+            for (int j = 0; j < parameterCount; j++)
+                if (bindings[j].Kind == Kind.History && bindings[j].Unknown == state && Significant(parameterGain, unknown, j))
+                    return true;
+            return false;
+        }
+
+        bool PortReads(int r, int state)
+        {
+            for (int j = 0; j < parameterCount; j++)
+            {
+                if (bindings[j].Kind != Kind.History || bindings[j].Unknown != state)
+                    continue;
+                double value = 0, scale = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    value += Q[r, i] * parameterGain[i, j];
+                    scale += Math.Abs(Q[r, i] * parameterGain[i, j]);
+                }
+                if (Math.Abs(value) > scale * CouplingTolerance)
+                    return true;
+            }
+            return false;
+        }
+
+        IEnumerable<int> Dependencies(int node)
+        {
+            if (node < k)
+            {
+                foreach (int p in PortDependencies(node))
+                    yield return p;
+                for (int s = 0; s < states.Length; s++)
+                    if (PortReads(node, states[s]))
+                        yield return k + s;
+                yield break;
+            }
+
+            int unknown = states[node - k];
+            for (int s = 0; s < states.Length; s++)
+                if (Reads(unknown, states[s]))
+                    yield return k + s;
+            for (int p = 0; p < k; p++)
+                for (int c = 0; c < m; c++)
+                    if (dependsOn[c, p] && Significant(G, unknown, c))
+                    {
+                        yield return p;
+                        break;
+                    }
+        }
+
+        return DependencyGraph.StronglyConnected(k + states.Length, Dependencies).Count;
+    }
+
+    private static bool Significant(double[,] matrix, int row, int column)
+    {
+        double max = 0;
+        for (int i = 0; i < matrix.GetLength(0); i++)
+            max = Math.Max(max, Math.Abs(matrix[i, column]));
+        return Math.Abs(matrix[row, column]) > max * CouplingTolerance;
     }
 
     private double Combine(int i)
