@@ -22,7 +22,7 @@ internal static class JitCheck
             .SelectMany(folder => Directory.GetFiles(Path.Combine(testsDir, folder), "*.schx").OrderBy(p => p, StringComparer.Ordinal))
             .Where(p => filter == null || p.Contains(filter, StringComparison.OrdinalIgnoreCase));
 
-        Console.WriteLine($"{"Circuit",-46}{"k",4}{"LS solve",9}{"vs interp dB",14}{"iters",7}{"stock us",10}{"jit us",9}{"speedup",9}{"build ms",10}  status");
+        Console.WriteLine($"{"Circuit",-46}{"k",4}{"LS solve",9}{"vs interp dB",14}{"iters",7}{"out vs stock",13}{"stock us",10}{"jit us",9}{"speedup",9}{"build ms",10}  status");
         int passed = 0, failed = 0;
         var speedups = new List<double>();
         foreach (string file in files)
@@ -71,15 +71,24 @@ internal static class JitCheck
                 bool ok = sameIterations && db <= ThresholdDb;
                 if (ok) passed++; else failed++;
 
-                var stock = new Simulation(solution) { Oversample = Oversample, Iterations = IterationCap, Input = new[] { input }, Output = outputs };
+                // Benchmark one output, as LiveSPICE's own benchmark does.
+                Expression[] benchmarkOutput = { BenchmarkOutput(circuit, outputs) };
+                var single = new CompiledCircuit(system, input, benchmarkOutput, h, Oversample, IterationCap, solution);
+                expected = new[] { new double[Samples] };
+                actual = new[] { new double[Samples] };
+
+                var stock = new Simulation(solution) { Oversample = Oversample, Iterations = IterationCap, Input = new[] { input }, Output = benchmarkOutput };
+                stock.Run(inputBuffer, expected);
+                single.Run(inputBuffer, actual);
+                double singleDb = ReferenceCheck.WorstErrorDb(expected, actual);
                 stock.Run(inputBuffer, expected);
 
                 double stockUs = Measure(() => stock.Run(inputBuffer, expected));
-                double jitUs = Measure(() => compiled.Run(inputBuffer, actual));
+                double jitUs = Measure(() => single.Run(inputBuffer, actual));
                 double speedup = stockUs / jitUs;
                 speedups.Add(speedup);
 
-                Console.WriteLine($"{label}{system.Ports,4}{solution.Solutions.OfType<NewtonIteration>().Sum(s => s.UnknownDeltas.Count()),9}{db,14:F1}{(sameIterations ? "same" : "DIFF"),7}{stockUs,10:F2}{jitUs,9:F2}{speedup,8:F2}x{buildMs,10:F0}  {(ok ? "ok" : "FAIL")}");
+                Console.WriteLine($"{label}{system.Ports,4}{solution.Solutions.OfType<NewtonIteration>().Sum(s => s.UnknownDeltas.Count()),9}{db,14:F1}{(sameIterations ? "same" : "DIFF"),7}{singleDb,13:F1}{stockUs,10:F2}{jitUs,9:F2}{speedup,8:F2}x{buildMs,10:F0}  {(ok ? "ok" : "FAIL")}");
             }
             catch (Exception ex)
             {
@@ -94,6 +103,13 @@ internal static class JitCheck
             Console.WriteLine($"Speedup vs stock: min {speedups[0]:F2}x, median {speedups[speedups.Count / 2]:F2}x, max {speedups[^1]:F2}x");
         Console.WriteLine($"{passed} passed, {failed} not passing.");
         return failed == 0 ? 0 : 1;
+    }
+
+    private static Expression BenchmarkOutput(Circuit.Circuit circuit, Expression[] nodes)
+    {
+        Speaker? speaker = circuit.Components.OfType<Speaker>().FirstOrDefault();
+        Expression? anode = speaker?.Anode.ConnectedTo?.V;
+        return anode ?? nodes[0];
     }
 
     // Best of several passes, in microseconds per input sample.

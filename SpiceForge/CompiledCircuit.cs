@@ -100,10 +100,16 @@ public sealed class CompiledCircuit
         private readonly CodeGen code = new();
         private readonly double[][] parameterGain, sourceGain, G, Z, Q, D;
         private ParameterExpression time = null!, input = null!, inputPrevious = null!, history = null!, y = null!;
+        private ParameterExpression[] historyRows = Array.Empty<ParameterExpression>();
+        private readonly HashSet<int> required = new();
+        private SortedSet<int> linearRows = new();
+        private Arrow[] keptArrows = Array.Empty<Arrow>();
+        private readonly int[] outputs;
 
         public Emitter(CircuitInterpreter plan, ExtractedSystem system, Expression inputSymbol, Expression timeStep, int iterationCap, TransientSolution solution)
         {
             this.plan = plan;
+            outputs = plan.outputs;
             this.system = system;
             this.inputSymbol = inputSymbol;
             this.timeStep = timeStep;
@@ -125,8 +131,24 @@ public sealed class CompiledCircuit
             history = code.Decl<double[][]>(Scope.Parameter, "history");
             y = code.Decl<double[]>(Scope.Parameter, "y");
 
+            historyRows = new ParameterExpression[plan.history.Length];
+            for (int d = 0; d < historyRows.Length; d++)
+            {
+                historyRows[d] = code.Decl<double[]>("history" + d);
+                code.Add(LinqExpr.Assign(historyRows[d], LinqExpr.ArrayIndex(history, LinqExpr.Constant(d))));
+            }
+
+            ComputeRequired();
+
+            // Only read the parameters the remaining equations use.
+            var sourceSymbols = new HashSet<Expression>(system.Sources.SelectMany(s => SymbolScan.Collect(s.Body)));
             for (int i = 0; i < plan.Symbols.Length; i++)
-                code.DeclInit(plan.Symbols[i], Read(plan.bindings[i]));
+            {
+                bool used = i >= plan.parameterCount || sourceSymbols.Contains(plan.Symbols[i])
+                    || linearRows.Any(row => parameterGain[row][i] != 0);
+                if (used)
+                    code.DeclInit(plan.Symbols[i], Read(plan.bindings[i]));
+            }
 
             ParameterExpression[] sources = system.Sources
                 .Select(s => Local(ToDouble(code.Compile(s.Body))))
@@ -135,7 +157,7 @@ public sealed class CompiledCircuit
             int n = system.Unknowns.Length;
             if (plan.m == 0)
             {
-                for (int i = 0; i < n; i++)
+                foreach (int i in required)
                     code.Add(LinqExpr.Assign(Element(y, i), LinearPart(i, sources)));
                 code.Return(LinqExpr.Constant(0));
             }
@@ -147,16 +169,100 @@ public sealed class CompiledCircuit
             return code.Build<StepFunction>().Compile();
         }
 
+        // Finds the unknowns anything reads: outputs and state, then whatever computing those needs.
+        private void ComputeRequired()
+        {
+            int n = system.Unknowns.Length;
+            Arrow[] arrows = solution.Solutions.OfType<LinearSolutions>().SelectMany(s => s.Solutions).ToArray();
+            var arrowFor = new Dictionary<int, Arrow>();
+            foreach (Arrow arrow in arrows)
+                arrowFor[Array.IndexOf(system.Unknowns, arrow.Left)] = arrow;
+
+            var rows = new SortedSet<int>();
+            var work = new Stack<int>();
+            void Require(int unknown)
+            {
+                if (unknown >= 0 && required.Add(unknown))
+                    work.Push(unknown);
+            }
+
+            foreach (int output in outputs)
+                Require(output);
+
+            if (plan.m > 0)
+            {
+                for (int i = 0; i < n; i++)
+                    if (!arrowFor.ContainsKey(i))
+                    {
+                        Require(i);
+                        rows.Add(i);
+                    }
+                for (int r = 0; r < plan.k; r++)
+                    for (int j = 0; j < n; j++)
+                        if (Q[r][j] != 0)
+                        {
+                            Require(j);
+                            rows.Add(j);
+                        }
+            }
+
+            while (work.Count > 0)
+            {
+                int i = work.Pop();
+                if (plan.m == 0)
+                    rows.Add(i);
+
+                if (rows.Contains(i))
+                    for (int j = 0; j < plan.parameterCount; j++)
+                        if (parameterGain[i][j] != 0 && plan.bindings[j].Kind == CircuitInterpreter.Kind.History)
+                            Require(plan.bindings[j].Unknown);
+
+                if (plan.m > 0 && arrowFor.TryGetValue(i, out Arrow? arrow))
+                {
+                    foreach (Expression symbol in SymbolScan.Collect(arrow.Right))
+                    {
+                        int unknown = Array.IndexOf(system.Unknowns, symbol);
+                        if (unknown >= 0)
+                        {
+                            Require(unknown);
+                            continue;
+                        }
+                        CircuitInterpreter.Binding binding = CircuitInterpreter.Bind(symbol, system.Unknowns, inputSymbol, timeStep);
+                        if (binding.Kind == CircuitInterpreter.Kind.History)
+                            Require(binding.Unknown);
+                    }
+                }
+            }
+
+            // Rows added late can bring in more state.
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (int i in rows.ToArray())
+                    for (int j = 0; j < plan.parameterCount; j++)
+                        if (parameterGain[i][j] != 0 && plan.bindings[j].Kind == CircuitInterpreter.Kind.History && required.Add(plan.bindings[j].Unknown))
+                        {
+                            changed = true;
+                            if (plan.m == 0)
+                                rows.Add(plan.bindings[j].Unknown);
+                        }
+            }
+
+            linearRows = rows;
+            keptArrows = arrows.Where(a => required.Contains(Array.IndexOf(system.Unknowns, a.Left))).ToArray();
+        }
+
         private LinqExpr LinearPart(int i, ParameterExpression[] sources)
         {
-            LinqExpr value = LinqExpr.ArrayIndex(LinqExpr.Constant(plan.constant), LinqExpr.Constant(i));
+            LinqExpr value = LinqExpr.Constant(plan.constant[i]);
             for (int j = 0; j < plan.parameterCount; j++)
                 if (parameterGain[i][j] != 0)
                     value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(parameterGain, i, j), code[plan.Symbols[j]]));
             for (int x = 0; x < sources.Length; x++)
                 if (sourceGain[i][x] != 0)
                     value = LinqExpr.Add(value, LinqExpr.Multiply(
-                        LinqExpr.Multiply(Cell(sourceGain, i, x), LinqExpr.ArrayIndex(LinqExpr.Constant(plan.sourceCoefficients), LinqExpr.Constant(x))),
+                        LinqExpr.Multiply(Cell(sourceGain, i, x), LinqExpr.Constant(plan.sourceCoefficients[x])),
                         sources[x]));
             return value;
         }
@@ -197,10 +303,9 @@ public sealed class CompiledCircuit
                 voc[r] = Local(open);
             }
 
-            foreach (int i in active)
-                code.Add(LinqExpr.Assign(Element(y, i), History(1, i)));
+            var current = active.ToDictionary(i => i, i => Local(History(1, i)));
 
-            var augmented = Enumerable.Range(0, k).Select(_ => new double[k + 1]).ToArray();
+            var augmented = Enumerable.Range(0, k).Select(_ => new double[CircuitInterpreter.RowLength(k)]).ToArray();
             var stepSolution = new double[k];
             ConstantExpression augmentedArray = LinqExpr.Constant(augmented);
 
@@ -300,16 +405,15 @@ public sealed class CompiledCircuit
                 ParameterExpression done = code.DeclInit<bool>("done", true);
                 foreach (int j in plan.convergence)
                 {
-                    IndexExpression current = Element(y, j);
                     code.Add(LinqExpr.AndAssign(done, LinqExpr.LessThan(
-                        LinqExpr.Call(Abs, LinqExpr.Subtract(nextY[j], current)),
-                        LinqExpr.Add(LinqExpr.Multiply(LinqExpr.Call(Abs, current), LinqExpr.Constant(1e-4)), LinqExpr.Constant(1e-6)))));
+                        LinqExpr.Call(Abs, LinqExpr.Subtract(nextY[j], current[j])),
+                        LinqExpr.Add(LinqExpr.Multiply(LinqExpr.Call(Abs, current[j]), LinqExpr.Constant(1e-4)), LinqExpr.Constant(1e-6)))));
                 }
 
                 foreach (int i in active)
                 {
-                    code.Add(LinqExpr.Assign(before[i], Element(y, i)));
-                    code.Add(LinqExpr.Assign(Element(y, i), nextY[i]));
+                    code.Add(LinqExpr.Assign(before[i], current[i]));
+                    code.Add(LinqExpr.Assign(current[i], nextY[i]));
                 }
                 for (int p = 0; p < k; p++)
                     code.Add(LinqExpr.Assign(w[p], next[p]));
@@ -318,6 +422,9 @@ public sealed class CompiledCircuit
                 code.Add(LinqExpr.IfThen(LinqExpr.Equal(iteration, LinqExpr.Constant(iterationCap)),
                     LinqExpr.Block(LinqExpr.Assign(result, LinqExpr.Or(iteration, LinqExpr.Constant(0x80))), exit)));
             }, LinqExpr.Constant(true));
+
+            foreach (int i in active)
+                code.Add(LinqExpr.Assign(Element(y, i), current[i]));
 
             EmitFinalSolutions(newtonSets[0], before);
             code.Return(result);
@@ -330,7 +437,7 @@ public sealed class CompiledCircuit
         {
             code.SyncPoint();
 
-            Arrow[] arrows = solution.Solutions.OfType<LinearSolutions>().SelectMany(s => s.Solutions).ToArray();
+            Arrow[] arrows = keptArrows;
             HashSet<Expression> cached = CachedByNewton(newtonSet);
             var stale = new List<Expression>();
             var seen = new HashSet<Expression>();
@@ -468,13 +575,13 @@ public sealed class CompiledCircuit
         };
 
         private LinqExpr History(int delay, int unknown) =>
-            LinqExpr.ArrayIndex(LinqExpr.ArrayIndex(history, LinqExpr.Constant(delay - 1)), LinqExpr.Constant(unknown));
+            LinqExpr.ArrayIndex(historyRows[delay - 1], LinqExpr.Constant(unknown));
 
         private static IndexExpression Element(ParameterExpression array, int index) =>
             LinqExpr.ArrayAccess(array, LinqExpr.Constant(index));
 
-        private static LinqExpr Cell(double[][] matrix, int row, int column) =>
-            LinqExpr.ArrayIndex(LinqExpr.ArrayIndex(LinqExpr.Constant(matrix), LinqExpr.Constant(row)), LinqExpr.Constant(column));
+        // Coefficients are inlined. Dynamic pots will need the ones they affect read from arrays again.
+        private static LinqExpr Cell(double[][] matrix, int row, int column) => LinqExpr.Constant(matrix[row][column]);
 
         private ParameterExpression Local(LinqExpr value)
         {

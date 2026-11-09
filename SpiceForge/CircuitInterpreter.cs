@@ -178,7 +178,7 @@ public sealed class CircuitInterpreter
 
         groups = BuildGroups(segment);
         stepSolution = new double[k];
-        groupRows = groups.Select(g => g.Select(_ => new double[g.Length + 1]).ToArray()).ToArray();
+        groupRows = groups.Select(g => g.Select(_ => new double[RowLength(g.Length)]).ToArray()).ToArray();
         StateBlocks = CountStateBlocks();
 
         convergence = solution.Solutions.OfType<NewtonIteration>().SelectMany(s => s.Unknowns)
@@ -200,7 +200,7 @@ public sealed class CircuitInterpreter
         }
         yBeforeUpdate = new double[n];
 
-        augmented = Enumerable.Range(0, k).Select(_ => new double[k + 1]).ToArray();
+        augmented = Enumerable.Range(0, k).Select(_ => new double[RowLength(k)]).ToArray();
 
         y = new double[n];
         yLinear = new double[n];
@@ -359,11 +359,18 @@ public sealed class CircuitInterpreter
 
     // Solves (I - Z·J)·x = b, one coupled port group at a time in dependency order. This is the same
     // linear solve as the joint one, so Newton's iterates and its stopping decisions don't change.
+    // LiveSPICE's own elimination, in the SIMD form it uses when the hardware supports it. That form needs padded rows.
+    private static readonly Action<double[][], int, int> Eliminate = System.Numerics.Vector.IsHardwareAccelerated
+        ? (Action<double[][], int, int>)typeof(Simulation).GetMethod("SolveVector", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.CreateDelegate(typeof(Action<double[][], int, int>))
+        : Simulation.Solve;
+
+    internal static int RowLength(int size) => size + 1 + (System.Numerics.Vector.IsHardwareAccelerated ? System.Numerics.Vector<double>.Count - 1 : 0);
+
     internal static void SolveLinearStep(double[][] augmented, double[] stepSolution, int[][] groups, double[][][] groupRows, int k)
     {
         if (groups.Length <= 1)
         {
-            Simulation.Solve(augmented, k, k + 1);
+            Eliminate(augmented, k, k + 1);
             for (int p = 0; p < k; p++)
                 stepSolution[p] = augmented[p][k];
             return;
@@ -386,7 +393,7 @@ public sealed class CircuitInterpreter
                 row[group.Length] = rhs;
             }
 
-            Simulation.Solve(rows, group.Length, group.Length + 1);
+            Eliminate(rows, group.Length, group.Length + 1);
             for (int r = 0; r < group.Length; r++)
                 stepSolution[group[r]] = rows[r][group.Length];
         }
