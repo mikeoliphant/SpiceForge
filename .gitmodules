@@ -1,3 +1,6 @@
 [submodule "Dependencies/LiveSPICE"]
 	path = Dependencies/LiveSPICE
 	url = https://github.com/mikeoliphant/LiveSPICE
+[submodule "SpiceForgePlugin/Dependencies/UILayout"]
+	path = SpiceForgePlugin/Dependencies/UILayout
+	url = https://github.com/mikeoliphant/UILayout
