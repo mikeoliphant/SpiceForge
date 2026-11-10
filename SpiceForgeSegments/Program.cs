@@ -17,11 +17,27 @@ int stride = Oversample;
 double verifySeconds = 2;
 bool lut = false;
 int lutResolution = 0;
+bool dynamicPots = true;
+var potPositions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+var sweepNames = new List<string>();
 var positional = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--stride" && i + 1 < args.Length)
         stride = int.Parse(args[++i]);
+    else if (args[i] == "--static-pots")
+        dynamicPots = false;
+    else if (args[i] == "--sweep" && i + 1 < args.Length)
+        sweepNames.Add(args[++i]);
+    else if (args[i] == "--pot" && i + 1 < args.Length)
+    {
+        string setting = args[++i];
+        int equals = setting.LastIndexOf('=');
+        if (equals <= 0 || !double.TryParse(setting[(equals + 1)..], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double position))
+            return Usage($"Expected --pot <name>=<position>, not '{setting}'.");
+        potPositions[setting[..equals]] = position;
+    }
     else if (args[i] == "--lut")
         lut = true;
     else if (args[i] == "--lut-resolution" && i + 1 < args.Length)
@@ -41,9 +57,18 @@ try
 {
     double[] input = ReadMono(wavPath, out int sampleRate);
     Expression h = (Real)1 / (sampleRate * Oversample);
-    // Pots are baked in here: recording segments and black-box segments don't work with dynamic pots yet, because
-    // segments are defined on the full system rather than the reduced one the dynamic engines solve.
-    LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, dynamicPots: false, new ConsoleLog { Verbosity = MessageType.Error });
+    // Pots are runtime parameters by default; a segment takes as inputs only the pots that change its Newton solve.
+    if (sweepNames.Count > 0 && !dynamicPots)
+        return Usage("--sweep needs dynamic pots.");
+    LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, dynamicPots, new ConsoleLog { Verbosity = MessageType.Error }, potPositions);
+    foreach (string sweepName in sweepNames)
+    {
+        int index = loaded.Pots.ToList().FindIndex(pot => string.Equals(pot.Name, sweepName, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+            throw new ArgumentException($"No pot named '{sweepName}' to sweep. The pots are: {string.Join(", ", loaded.Pots.Select(pot => pot.Name))}.");
+        Sweep.Pots.Add((index, loaded.Pots[index]));
+    }
+    Sweep.Samples = input.Length;
     var circuit = loaded.Circuit;
     string name = circuit.Name;
     var inputs = circuit.Components.OfType<Input>().ToList();
@@ -77,6 +102,9 @@ try
     }
 
     var engine = Create();
+    if (loaded.Pots.Count > 0)
+        Console.WriteLine($"{loaded.Pots.Count} dynamic pot(s): {string.Join(", ", loaded.Pots.Select(pot => pot.Name))}"
+            + (Sweep.Pots.Count > 0 ? $"; sweeping {string.Join(", ", Sweep.Pots.Select(sp => sp.Pot.Name))} from 0 to 1 and back over the recording." : "."));
     if (engine.Segments.Count == 0)
     {
         Console.WriteLine($"{name} has no nonlinear terms, so there is no Newton solve to replace.");
@@ -86,7 +114,8 @@ try
     Console.WriteLine($"{name}: {engine.Segments.Count} segment(s) at {sampleRate} Hz x{Oversample}.");
     foreach (Segment segment in engine.Segments)
         Console.WriteLine($"  segment {segment.Index}: {segment.Ports.Length} port(s), {segment.Free.Length} free unknown(s), "
-            + $"{segment.Upstream.Length} upstream input(s), {segment.NonlinearTerms.Length} nonlinear term(s) -> {segment.InputCount} inputs, {segment.OutputCount} outputs");
+            + $"{segment.Upstream.Length} upstream input(s), {segment.NonlinearTerms.Length} nonlinear term(s), {segment.Parameters.Length} pot input(s) -> {segment.InputCount} inputs, {segment.OutputCount} outputs"
+            + (segment.Parameters.Length > 0 ? " (pots: " + string.Join(", ", segment.Parameters.Select((j, i) => $"{loaded.Pots[j].Name} {20 * Math.Log10(Math.Max(segment.ParameterSensitivity[i], 1e-300)):F0} dB")) + ")" : ""));
 
     // Record every step's statistics, and every stride-th step's data. Capped steps are always kept.
     Directory.CreateDirectory(outputDirectory);
@@ -98,7 +127,8 @@ try
     double solveShare = engine.SolveTicks / (double)Math.Max(engine.RunTicks, 1);
 
     var replay = Verify(Create, input, sampleRate, verifySeconds, nodes.Length, scales);
-    double stockDb = CompareWithStock(solution, inputSymbol, speakers, input, sampleRate, verifySeconds, Create, nodes.Length, scales);
+    // Stock LiveSPICE can't move a pot, so there's nothing to compare with while sweeping.
+    double stockDb = Sweep.Pots.Count > 0 ? double.NaN : CompareWithStock(solution, inputSymbol, speakers, input, sampleRate, verifySeconds, Create, nodes.Length, scales);
 
     long totalSteps = engine.IterationCounts.Count;
     double meanIterations = engine.IterationCounts.Average(b => b & 0x7F);
@@ -176,6 +206,7 @@ static double[] Run(CircuitInterpreter engine, double[] input, int nodeCount, do
         int count = Math.Min(BlockSize, input.Length - start);
         if (count != BlockSize)
             buffers = Enumerable.Range(0, nodeCount).Select(_ => new double[count]).ToArray();
+        Sweep.Apply(engine.ParameterValues, start);
         engine.Run(input.AsSpan(start, count).ToArray(), buffers);
         for (int n = 0; n < count; n++)
         {
@@ -335,6 +366,7 @@ static double[] RunCompiled(CompiledCircuit engine, double[] input, int nodeCoun
         int count = Math.Min(BlockSize, input.Length - start);
         if (count != BlockSize)
             buffers = Enumerable.Range(0, nodeCount).Select(_ => new double[count]).ToArray();
+        Sweep.Apply(engine.ParameterValues, start);
         engine.Run(input.AsSpan(start, count).ToArray(), buffers);
         for (int n = 0; n < count; n++)
         {
@@ -382,7 +414,10 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeSegments <schematic.schx> <input.wav> <output folder> [--stride N] [--verify-seconds S] [--lut] [--lut-resolution N]");
+    Console.Error.WriteLine("Usage: SpiceForgeSegments <schematic.schx> <input.wav> <output folder> [--stride N] [--verify-seconds S] [--lut] [--lut-resolution N] [--static-pots] [--pot <name>=<position>]... [--sweep <pot>]...");
+    Console.Error.WriteLine("  --static-pots       bake pots in at their positions instead of making them runtime parameters");
+    Console.Error.WriteLine("  --pot NAME=P        set a pot (or group) to wiper position P, from 0 to 1");
+    Console.Error.WriteLine("  --sweep NAME        sweep a pot from 0 to 1 and back over the recording, so segments it drives see its range");
     Console.Error.WriteLine("  --stride N          record every Nth internal step (default 8, one per sample); capped steps are always recorded");
     Console.Error.WriteLine("  --verify-seconds S  length of the replay check (default 2, 0 to skip)");
     Console.Error.WriteLine("  --lut               build a lookup table for each segment, render with them, and compare with Newton");
@@ -391,6 +426,26 @@ static int Usage(string? problem)
 }
 
 /// <summary>Writes segment data to .npy files and keeps statistics over every step.</summary>
+/// <summary>
+/// Pots swept from 0 to 1 and back, once over the recording, applied before each block of every run in this tool so
+/// they all see the same settings.
+/// </summary>
+static class Sweep
+{
+    public static readonly List<(int Index, PotParameter Pot)> Pots = new();
+    public static int Samples = 1;
+
+    public static void Apply(double[] parameters, int start)
+    {
+        if (Pots.Count == 0)
+            return;
+        double phase = 2.0 * start / Math.Max(Samples, 1);
+        double wipe = phase <= 1 ? phase : 2 - phase;
+        foreach (var (index, pot) in Pots)
+            parameters[index] = pot.ValueAt(Math.Clamp(wipe, 0, 1));
+    }
+}
+
 sealed class Recorder : ISegmentObserver, IDisposable
 {
     private readonly int stride;

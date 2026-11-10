@@ -31,9 +31,15 @@ public sealed class Segment
     /// <summary>Nonlinear terms this segment computes: those that read its ports and no later segment's.</summary>
     public required int[] NonlinearTerms { get; init; }
 
-    /// <summary>Runtime parameters (dynamic pots) this segment's nonlinear terms read, as indices into
-    /// ExtractedSystem.RuntimeParameters. They come last among the inputs.</summary>
+    /// <summary>Runtime parameters (dynamic pots) that change this segment's map from inputs to outputs, as indices into
+    /// ExtractedSystem.RuntimeParameters: on the reduced path, those that change its Newton coefficients. Pots that only
+    /// change the linear network around the solve change what the segment is fed, not the segment. They come last
+    /// among the inputs.</summary>
     public required int[] Parameters { get; init; }
+
+    /// <summary>For each of <see cref="Parameters"/>, the largest change it makes to the segment's Newton coefficients
+    /// across its travel, relative to their largest entry. A box may treat one that is negligible as fixed.</summary>
+    public double[] ParameterSensitivity { get; init; } = Array.Empty<double>();
 
     public required string[] InputNames { get; init; }
     public required string[] OutputNames { get; init; }

@@ -69,7 +69,7 @@ public sealed class CompiledCircuit
         history = plan.history;
         ParameterValues = plan.ParameterValues;
         this.plan = plan;
-        reduce = plan.reduction != null && segmentSolver == null;
+        reduce = plan.reduction != null;
         step = new Emitter(plan, system, inputSymbol, timeStep, iterationCap, solution, segmentSolver).Build();
     }
 
@@ -202,13 +202,13 @@ public sealed class CompiledCircuit
                     code.Add(LinqExpr.Assign(Element(y, i), LinearPart(i, sources)));
                 code.Return(LinqExpr.Constant(0));
             }
-            else if (segmentSolver != null)
-            {
-                EmitBlackBox(sources);
-            }
             else if (plan.reduction != null)
             {
                 EmitReduced(sources);
+            }
+            else if (segmentSolver != null)
+            {
+                EmitBlackBox(sources);
             }
             else
             {
@@ -514,18 +514,6 @@ public sealed class CompiledCircuit
                 constant[f] = Local(value);
             }
 
-            var w = new ParameterExpression[kn];
-            for (int i = 0; i < kn; i++)
-            {
-                LinqExpr previous = LinqExpr.Constant(0.0);
-                for (int j = 0; j < n; j++)
-                    if (Q[N[i]][j] != 0)
-                        previous = LinqExpr.Add(previous, LinqExpr.Multiply(Cell(Q, N[i], j), History(1, j)));
-                w[i] = Local(previous);
-            }
-            var current = tracked.ToDictionary(i => i, i => Local(History(1, i)));
-            ParameterExpression[] z = plan.free.Select(j => Local(History(1, j))).ToArray();
-
             // An unknown from the solve: y = yEff + Geff·qN + Nzeff·z.
             LinqExpr Rebuild(int i, LinqExpr?[] terms, IReadOnlyList<LinqExpr> frees)
             {
@@ -549,10 +537,29 @@ public sealed class CompiledCircuit
                 return value;
             }
 
+            if (segmentSolver != null)
+            {
+                EmitReducedBlackBox(open, constant, Rebuild);
+                return;
+            }
+
+            var w = new ParameterExpression[kn];
+            for (int i = 0; i < kn; i++)
+            {
+                LinqExpr previous = LinqExpr.Constant(0.0);
+                for (int j = 0; j < n; j++)
+                    if (Q[N[i]][j] != 0)
+                        previous = LinqExpr.Add(previous, LinqExpr.Multiply(Cell(Q, N[i], j), History(1, j)));
+                w[i] = Local(previous);
+            }
+            var current = tracked.ToDictionary(i => i, i => Local(History(1, i)));
+            ParameterExpression[] z = plan.free.Select(j => Local(History(1, j))).ToArray();
+
+            // The same coupled groups as the interpreter's reduced solve, so both solve each step identically.
             var augmented = Enumerable.Range(0, size).Select(_ => new double[CircuitInterpreter.RowLength(size)]).ToArray();
             var stepSolution = new double[size];
-            int[][] groups = size > 0 ? new[] { Enumerable.Range(0, size).ToArray() } : Array.Empty<int[]>();
-            var groupRows = new[] { Enumerable.Range(0, size).Select(_ => new double[CircuitInterpreter.RowLength(size)]).ToArray() };
+            int[][] groups = plan.reducedGroups;
+            var groupRows = groups.Select(g => g.Select(_ => new double[CircuitInterpreter.RowLength(g.Length)]).ToArray()).ToArray();
             ConstantExpression augmentedArray = LinqExpr.Constant(augmented);
 
             int[] pivots = CircuitInterpreter.PortPivots(system);
@@ -704,6 +711,52 @@ public sealed class CompiledCircuit
             foreach (int i in required.Union(tracked).OrderBy(i => i))
                 code.Add(LinqExpr.Assign(Element(y, i), current.TryGetValue(i, out ParameterExpression? done) ? done : Rebuild(i, finalQ, z)));
             code.Return(result);
+        }
+
+        // Black-box mode on the reduced path, as CircuitInterpreter.SolveWithSegments: each segment's solver gives its
+        // ports, free unknowns and nonlinear-term values in solve order, from the reduced inputs (open-circuit values of
+        // the reduced ports, constraint constants, upstream ports and the pots that change its coefficients), and every
+        // unknown anything reads follows from y = yEff + Geff·qN + Nzeff·z.
+        private void EmitReducedBlackBox(ParameterExpression[] open, ParameterExpression[] constant, Func<int, LinqExpr?[], IReadOnlyList<LinqExpr>, LinqExpr> rebuild)
+        {
+            LinearPortReduction r = plan.reduction!;
+            int[] N = r.N, TN = r.TN;
+            int dz = plan.dz;
+            var w = new LinqExpr?[plan.k];
+            var z = new LinqExpr[dz];
+            var q = new LinqExpr?[TN.Length];
+            if (system.RuntimeParameters.Length > 0)
+                LiveArray(plan.ParameterValues);
+            foreach (Segment segment in plan.Segments)
+            {
+                var inputs = new double[segment.InputCount];
+                var outputs = new double[segment.OutputCount];
+                ConstantExpression inputArray = LinqExpr.Constant(inputs), outputArray = LinqExpr.Constant(outputs);
+
+                int position = 0;
+                foreach (int p in segment.Ports)
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), open[Array.IndexOf(N, p)]));
+                foreach (int f in segment.Constraints)
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), constant[f]));
+                foreach (int p in segment.Upstream)
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), w[p]!));
+                foreach (int j in segment.Parameters)
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), Live(plan.ParameterValues, j)));
+
+                code.Add(LinqExpr.Call(SegmentCall, LinqExpr.Constant(segmentSolver, typeof(ISegmentSolver)), LinqExpr.Constant(segment), inputArray, outputArray));
+
+                position = 0;
+                foreach (int p in segment.Ports)
+                    w[p] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
+                foreach (int f in segment.Free)
+                    z[f] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
+                foreach (int c in segment.NonlinearTerms)
+                    q[Array.IndexOf(TN, c)] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
+            }
+
+            foreach (int i in required.OrderBy(i => i))
+                code.Add(LinqExpr.Assign(Element(y, i), rebuild(i, q, z)));
+            code.Return(LinqExpr.Constant(0));
         }
 
         // The linear part of an unknown a linear term reaches, reading its (possibly nonzero) coefficients live.
