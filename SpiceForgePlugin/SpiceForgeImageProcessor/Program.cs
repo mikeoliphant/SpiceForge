@@ -1,0 +1,75 @@
+﻿using System;
+using System.Drawing;
+using System.IO;
+using System.Reflection;
+
+namespace SpiceForgeImageProcessor
+{
+    class SpiceForgeImageProcessor : ImageSheetProcessor.ImageSheetProcessor
+    {
+        public void RenderImages(string destPath)
+        {
+            BeginRenderImages(destPath);
+            Render();
+
+            EndRenderImages();
+        }
+
+        public void Render()
+        {
+            MaxImageSheetSize = 2048;
+
+            BeginSpriteSheetGroup("UISheet");
+
+            string font = Path.Combine(SrcPath, "Inter_18pt-Bold.ttf");
+
+            AddFont("MainFont", font, 36);
+            AddFont("SmallFont", font, 30);
+
+            PushDirectory("UserInterface");
+
+            Add("SingleWhitePixel");
+
+            AddWithShadow("HoverTextOutline");
+
+            Add("DialBackground");
+            Add("DialPointer");
+
+            Add("PopupBackground");
+            Add("PluginBackground");
+            Add("ButtonPressed");
+            Add("ButtonUnpressed");
+
+            Add("LevelDisplay");
+            Add("LevelDisplayHorizontal");
+
+            Add("VerticalSlider");
+
+            AddSvg("FileOpen", 50);
+            AddSvg("FileEdit", 50);
+            AddSvg("Reload", 50);
+
+            PopDirectory();
+
+            EndSpriteSheetGroup();
+        }
+    }
+
+
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            var processor = new SpiceForgeImageProcessor();
+
+            string path = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), @"..\..\..\..");
+
+            processor.ForceRegen = false;
+
+            processor.SrcPath = Path.Combine(path, "SrcTextures");
+
+            processor.RenderImages(Path.Combine(path, @"SpiceForgeVst\Content\Textures"));
+        }
+
+    }
+}

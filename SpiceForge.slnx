@@ -4,12 +4,18 @@
     <File Path="DesignDocs/LessonsLearned.md" />
     <File Path="DesignDocs/PLAN.md" />
   </Folder>
+  <Folder Name="/SpiceForgePlugin/">
+    <Project Path="SpiceForgePlugin/Dependencies/UILayout/ImageSheetProcessor/ImageSheetProcessor.csproj" />
+    <Project Path="SpiceForgePlugin/Dependencies/UILayout/UILayout.MonoGame.WindowsDX/UILayout.MonoGame.WindowsDX.csproj" />
+    <Project Path="SpiceForgePlugin/SpiceForgeImageProcessor/SpiceForgeImageProcessor.csproj" />
+    <Project Path="SpiceForgePlugin/SpiceForgeVst/SpiceForgeVst.csproj" />
+  </Folder>
   <Project Path="Dependencies/LiveSPICE/Circuit/Circuit.csproj" />
   <Project Path="Dependencies/LiveSPICE/ComputerAlgebra/ComputerAlgebra/ComputerAlgebra.csproj" />
   <Project Path="Dependencies/LiveSPICE/Util/Util.csproj" />
   <Project Path="SpiceForge.ReferenceCapture/SpiceForge.ReferenceCapture.csproj" />
   <Project Path="SpiceForge.Validate/SpiceForge.Validate.csproj" />
+  <Project Path="SpiceForge/SpiceForge.csproj" Id="12d1f692-0f24-4201-acb6-3a17f1988831" />
   <Project Path="SpiceForgeRenderer/SpiceForgeRenderer.csproj" />
   <Project Path="SpiceForgeSegments/SpiceForgeSegments.csproj" />
-  <Project Path="SpiceForge/SpiceForge.csproj" Id="12d1f692-0f24-4201-acb6-3a17f1988831" />
 </Solution>
