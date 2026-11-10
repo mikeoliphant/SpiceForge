@@ -41,7 +41,12 @@ for (int i = 0; i < args.Length; i++)
     else if (args[i] == "--lut")
         lut = true;
     else if (args[i] == "--lut-resolution" && i + 1 < args.Length)
-        lutResolution = int.Parse(args[++i]);
+    {
+        // N for every axis, or N1xN2 per axis (largest variance first).
+        string[] parts = args[++i].Split('x');
+        lutResolution = int.Parse(parts[0]);
+        Sweep.Resolutions = parts.Select(int.Parse).ToArray();
+    }
     else if (args[i] == "--verify-seconds" && i + 1 < args.Length)
         verifySeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
     else if (args[i].StartsWith("--"))
@@ -274,14 +279,17 @@ static void TryLookupTables(Func<CircuitInterpreter> create, Func<int, CircuitIn
     foreach (Segment segment in builder.Segments)
     {
         int dimensions = recorder.Statistics[segment.Index].EffectiveDimension(1e-4);
-        int size = resolution > 0 ? resolution : dimensions <= 1 ? 4096 : 256;
-        LookupTable? table = LookupTable.Build(builder, segment, recorder.SampleInputs[segment.Index], recorder.SampleOutputs[segment.Index], size, out string reason);
+        // A pot axis gets 64 points (see LookupTable.Build), so a signal axis can stay fine even in two dimensions.
+        int size = resolution > 0 ? resolution : dimensions <= 1 || segment.Parameters.Length > 0 ? 4096 : 256;
+        LookupTable? table = LookupTable.Build(builder, segment, recorder.SampleInputs[segment.Index], recorder.SampleOutputs[segment.Index], size, out string reason,
+            resolutions: Sweep.Resolutions.Length > 1 ? Sweep.Resolutions : null);
         if (table == null)
         {
             Console.WriteLine($"Lookup table: segment {segment.Index} can't use one: {reason}");
             return;
         }
-        Console.WriteLine($"Lookup table: segment {segment.Index}: {table.Dimensions} dimension(s), {table.Resolution} points per dimension, "
+        Console.WriteLine($"Lookup table: segment {segment.Index}: {table.Dimensions} dimension(s), {string.Join(" x ", table.Sizes)} points "
+            + $"(axes mostly {string.Join(", ", table.AxisInputs.Select(i => segment.InputNames[i]))}), "
             + $"projection residual {table.ProjectionResidual:E1}, {table.FailedPoints} grid point(s) didn't converge.");
         tables.Add(table);
     }
@@ -434,6 +442,9 @@ static class Sweep
 {
     public static readonly List<(int Index, PotParameter Pot)> Pots = new();
     public static int Samples = 1;
+
+    /// <summary>Lookup-table resolution per axis, from --lut-resolution N1xN2.</summary>
+    public static int[] Resolutions = Array.Empty<int>();
 
     public static void Apply(double[] parameters, int start)
     {

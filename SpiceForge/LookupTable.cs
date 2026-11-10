@@ -19,6 +19,12 @@ public sealed class LookupTable
     public int Dimensions => axes.Length;
     public int Resolution => size.Length == 0 ? 0 : size[0];
 
+    /// <summary>Grid points along each axis, in axis order (largest variance first).</summary>
+    public IReadOnlyList<int> Sizes => size;
+
+    /// <summary>For each axis, the input that weighs most in it (its index in the segment's inputs).</summary>
+    public IReadOnlyList<int> AxisInputs => axes.Select(a => Array.IndexOf(a, a.MaxBy(Math.Abs))).ToArray();
+
     /// <summary>Largest distance from a sample input to the subspace, relative to the inputs' scale.</summary>
     public double ProjectionResidual { get; }
 
@@ -52,7 +58,7 @@ public sealed class LookupTable
     /// <param name="sampleOutputs">The outputs at those inputs, used as starting guesses.</param>
     public static LookupTable? Build(CircuitInterpreter solver, Segment segment, IReadOnlyList<double[]> sampleInputs,
         IReadOnlyList<double[]> sampleOutputs, int resolution, out string reason, int maxDimensions = 2,
-        double tolerance = 1e-9, double margin = 0.1)
+        double tolerance = 1e-9, double margin = 0.1, IReadOnlyList<int>? resolutions = null, int parameterResolution = 64)
     {
         int n = segment.InputCount;
         Pca pca = Pca.Of(sampleInputs, n);
@@ -99,7 +105,13 @@ public sealed class LookupTable
             high[a] += span * margin;
         }
 
-        int[] size = Enumerable.Repeat(dimensions == 0 ? 1 : resolution, dimensions).ToArray();
+        // One resolution for every axis, unless given per axis (in axis order, largest variance first). An axis that is
+        // mostly a pot needs far fewer points than one along the signal: the SD-1's segment responds smoothly to Drive
+        // and sharply to its signal (4096 x 64 points gave -109 dB, 64 x 4096 gave -43 dB).
+        int firstParameter = segment.InputCount - segment.Parameters.Length;
+        bool IsParameterAxis(double[] axis) => Array.IndexOf(axis, axis.MaxBy(Math.Abs)) >= firstParameter;
+        int[] size = Enumerable.Range(0, dimensions).Select(a => resolutions != null && a < resolutions.Count ? resolutions[a]
+            : IsParameterAxis(axes[a]) ? parameterResolution : resolution).ToArray();
         double[] step = Enumerable.Range(0, dimensions).Select(a => (high[a] - low[a]) / (size[a] - 1)).ToArray();
         int points = size.Aggregate(1, (p, s) => p * s);
         var values = new double[points][];

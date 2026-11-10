@@ -1032,6 +1032,9 @@ public sealed class CircuitInterpreter
     /// Writes the outputs, with the nonlinear-term values evaluated exactly at the solution. Returns whether it
     /// converged. This uses the interpreter's working state, so don't call it while the interpreter is running.
     /// </summary>
+    /// <summary>Largest change to a port voltage in one Newton step of <see cref="SolveSegment"/>, in volts.</summary>
+    public double MaxSegmentPortStep { get; set; } = 0.25;
+
     public bool SolveSegment(Segment segment, ReadOnlySpan<double> inputs, Span<double> outputs, ReadOnlySpan<double> guess,
         double tolerance = 1e-12, int maxIterations = 100)
     {
@@ -1116,10 +1119,16 @@ public sealed class CircuitInterpreter
             }
 
             Simulation.Solve(rows, size, size + 1);
-            converged = true;
+            // Offline, robustness matters more than speed: limit the step on the ports, as SPICE limits junction
+            // steps, so a far-off starting guess can't overflow the device exponentials.
+            double largest = 0;
+            for (int j = 0; j < ports; j++)
+                largest = Math.Max(largest, Math.Abs(rows[j][size]));
+            double scale = largest > MaxSegmentPortStep ? MaxSegmentPortStep / largest : 1;
+            converged = scale == 1;
             for (int j = 0; j < size; j++)
             {
-                double delta = rows[j][size];
+                double delta = rows[j][size] * scale;
                 if (double.IsNaN(delta) || double.IsInfinity(delta))
                     return false;
                 if (j < ports)

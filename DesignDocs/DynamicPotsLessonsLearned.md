@@ -193,6 +193,35 @@ generation:
 - **Ideal sources make exact cuts.** Part of why LiveSPICE's circuits don't split is that its op-amp macromodel has a
   50 Ω output. With ideal outputs, our strongly connected components should split stages exactly (untested).
 
+## One Newton path, and segments on it
+
+- **A baked circuit is a reduced circuit with nothing to eliminate.** Every circuit now runs the reduced path. With no
+  pot legs, its folded coefficients are the original ones, so its segments, recordings and lookup tables came out
+  identical to the old path's.
+- **Compile what doesn't vary as constants.** The reduction records which folded coefficients change between its
+  learning settings, and the compiled step inlines the rest. Without that, a baked circuit read every Newton
+  coefficient from an array and ran up to 10% slower. Both engines hold the invariant coefficients at their learned
+  values, so they still agree bit for bit.
+- **Tiered compilation can hide in a benchmark.** The TS-9 ran 25% slower through the reduced path with nearly
+  identical machine code. With tiering off, both paths were equal: the compiled step's `SolveLinearStep` helper was
+  still at tier 0, because on the reduced path the interpreter (run first) never calls it. Marking hot helpers
+  `AggressiveOptimization` fixes it.
+- **Don't share mutable arrays between stages.** The reduction kept the interpreter's `Z` itself, and clearing `Z`'s
+  roundoff entries for the port groups then changed what the reduction folded whenever a pot moved after
+  construction. It broke a dozen dynamic circuits, twice, before the reduction got its own copy. The tests had mostly
+  held pots still, which is why it hadn't shown earlier.
+- **A segment needs only the pots that change its solve.** Each pot is moved to either end, and a pot becomes a
+  segment input only if the segment's Newton coefficients change (with the change recorded as its sensitivity). On the
+  SD-1 that's Drive alone; the full-system segments took all three pots and five pot-leg ports.
+- **A pot input needs its range in the samples.** Recording with Drive held still gives a 1-D table that can't vary
+  Drive. `SpiceForgeSegments --sweep Drive` sweeps it during recording, and the SD-1's inputs then span exactly two
+  dimensions (signal × Drive): a 2-D table, 2× faster than dynamic Newton and stock LiveSPICE compiled.
+- **Give each table axis the resolution it needs.** At 256 × 256 the SD-1's table was −68 dB from a tightly converged
+  render, limited by interpolation. The signal axis is sharp and the Drive axis smooth: 4096 × 64 points gave −109 dB,
+  and 64 × 4096 gave −43 dB. Axes that are mostly a pot now get 64 points by default.
+- **Failed grid points can be harmless.** Thousands of points in the table's corners don't converge, because the
+  samples' bounding box includes signal and Drive combinations the circuit never reaches. No lookup landed there.
+
 ## Open issues
 
 - Live coefficient reads remain a cost: the Big Muff's inlined step is 5 µs faster than its live one. Keeping the
