@@ -8,7 +8,8 @@ using Expression = ComputerAlgebra.Expression;
 // Renders a WAV file through a LiveSPICE schematic. Each channel runs through its own copy of the circuit.
 // The input samples drive the schematic's Input component, and the output is the sum of its speakers,
 // both in LiveSPICE's normalized units, so a full-scale sample is the component's 0 dBFS voltage.
-// Pots are runtime parameters by default, held at their schematic positions; --static-pots bakes them in instead.
+// Pots are runtime parameters by default, held at their schematic positions or those given with --pot;
+// --static-pots bakes them in instead.
 
 const int Oversample = 8;
 const int Iterations = 8;
@@ -16,6 +17,7 @@ const int BlockSize = 4096;
 
 string? engine = "compiled";
 bool dynamicPots = true;
+var potPositions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
 var positional = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
@@ -23,6 +25,15 @@ for (int i = 0; i < args.Length; i++)
         engine = args[++i];
     else if (args[i] == "--static-pots")
         dynamicPots = false;
+    else if (args[i] == "--pot" && i + 1 < args.Length)
+    {
+        string setting = args[++i];
+        int equals = setting.LastIndexOf('=');
+        if (equals <= 0 || !double.TryParse(setting[(equals + 1)..], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double position))
+            return Usage($"Expected --pot <name>=<position>, not '{setting}'.");
+        potPositions[setting[..equals]] = position;
+    }
     else if (args[i].StartsWith("--"))
         return Usage($"Unknown option '{args[i]}'.");
     else
@@ -46,7 +57,7 @@ try
     Expression h = (Real)1 / (sampleRate * Oversample);
     // The stock engine is LiveSPICE's own, which only runs with the pots baked in.
     LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, dynamicPots && engine == "compiled",
-        new ConsoleLog { Verbosity = MessageType.Error });
+        new ConsoleLog { Verbosity = MessageType.Error }, potPositions);
     var circuit = loaded.Circuit;
 
     var inputs = circuit.Components.OfType<Input>().ToList();
@@ -64,6 +75,8 @@ try
     Processor[] processors = Enumerable.Range(0, channels).Select(_ => create()).ToArray();
     string pots = engine == "stock" ? "" : loaded.Pots.Count > 0 ? $", {loaded.Pots.Count} dynamic pot(s)" : dynamicPots ? "" : ", pots baked in";
     Console.WriteLine($"Built {circuit.Name} for {sampleRate} Hz, {channels} channel(s), {engine} engine{pots}, in {watch.Elapsed.TotalSeconds:F2} s.");
+    if (potPositions.Count > 0)
+        Console.WriteLine("Pots: " + string.Join(", ", potPositions.Select(p => $"{p.Key} {p.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}")) + ".");
 
     using var writer = new WaveFileWriter(outputPath, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
     var interleaved = new float[BlockSize * channels];
@@ -152,7 +165,8 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots]");
+    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]...");
+    Console.Error.WriteLine("  --pot sets a pot, or a group of ganged pots, by name to a wiper position from 0 to 1. Repeat it for more pots.");
     return 2;
 }
 
