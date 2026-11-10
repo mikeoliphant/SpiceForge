@@ -227,6 +227,29 @@ generation:
   sample-exact LiveSPICE checks (reference captures, coverage, pot settings, step traces) went in one change, with
   every remaining check at its old baseline. Each engine now has one Newton path plus black boxes.
 
+## Stage segmentation
+
+`idealopamp` swaps op-amp macromodels for ideal ones and compares the segments; `cut <schematic> <wav> <node>
+[--supply nodes]` splits a schematic at a node into an upstream half (driving) and a downstream half (driven by an
+ideal source following the cut node, on top of its DC bias), runs them chained at the oversampled rate, and measures
+the error against the uncut circuit, with no load or a linear copy of the downstream input network as the load.
+
+- **Ideal op-amps don't create splits here.** The pedals' op-amps are already ideal in most schematics (SD-1, TS-9),
+  and their single clipping stage is one coupled group by physics. Making the Rat's macromodel ideal only removes its
+  own rail diodes (7 ports to 5). The circuits with several nonlinear stages have no op-amps between them.
+- **Cut where the downstream device draws no current.** At the Rat's JFET buffer gate, a cut with no load model is
+  −150 dB from the uncut circuit, though our Newton treats both stages as one 7-port group (the JFET's gate-diode model
+  couples them, negligibly). At the JCM800's cathode follower output, feeding a passive tone stack, a linear load gives
+  −239 dB. A purely linear downstream is exact with the linear load.
+- **The linear load model works when the downstream devices draw negligible current.** At the Rat's clipping node it
+  copies the tone network up to the JFET gate: no load −39 dB, linear load −194 dB.
+- **Loaded device stages don't cut.** In the Big Muff, every cut between BJT stages is worse than the signal level:
+  base current is part of each stage's load, and a cut at Q2 also severs its collector-base feedback. In the JCM800,
+  grid cuts are −14 to −25 dB, because grid current at these levels is part of the overdrive. A load model would need
+  the downstream stage's input device itself (overlapping stages by one device), which isn't built.
+- **Supply networks join every stage.** Tube stages share a B+ decoupling chain, so no node separates them until the
+  supply network is copied into each half (`--supply`); that's a real but small approximation (no inter-stage sag).
+
 ## Open issues
 
 - Live coefficient reads remain a cost: the Big Muff's inlined step is 5 µs faster than its live one. Keeping the

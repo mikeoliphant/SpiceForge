@@ -41,6 +41,22 @@ if (args.Length > 0 && args[0] == "livespice")
     return LiveSpiceCheck.Run(testsDir, liveSpiceFilter, Value("--file"));
 }
 
+if (args.Length > 2 && args[0] == "cut")
+{
+    // cut <schematic> <wav> [node] [seconds] [--supply n1,n2]: without a node, lists the nodes.
+    int supplyAt = Array.IndexOf(args, "--supply");
+    if (supplyAt > 0 && supplyAt + 1 < args.Length)
+    {
+        CutCheck.SupplyNodes = args[supplyAt + 1].Split(',');
+        args = args.Take(supplyAt).Concat(args.Skip(supplyAt + 2)).ToArray();
+    }
+    return CutCheck.Run(args[1], args[2], args.Length > 3 ? args[3] : null,
+        args.Length > 4 ? double.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture) : 2);
+}
+
+if (args.Length > 0 && args[0] == "idealopamp")
+    return IdealOpAmpCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
+
 if (args.Length > 1 && args[0] == "potsensitivity")
     return PotSensitivity.Run(testsDir, args[1]);
 if (args.Length > 1 && args[0] == "profile")
