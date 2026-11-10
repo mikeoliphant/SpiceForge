@@ -10,7 +10,8 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="AudioPlugSharp" Version="0.6.10" />
+		<PackageReference Include="AudioPlugSharp" Version="0.7.13" />
+		<PackageReference Include="AudioPlugSharpVst3" Version="0.7.14" />
 		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="3.9.0" />
 		<PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4" />
 		<PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.4" />
@@ -21,11 +22,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<Folder Include="Content\Textures\" />
-	</ItemGroup>
-
-	<ItemGroup>
+	  <ProjectReference Include="..\..\SpiceForge\SpiceForge.csproj" />
 	  <ProjectReference Include="..\Dependencies\UILayout\UILayout.MonoGame.WindowsDX\UILayout.MonoGame.WindowsDX.csproj" />
 	</ItemGroup>
-
 </Project>
