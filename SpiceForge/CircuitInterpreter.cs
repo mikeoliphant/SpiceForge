@@ -50,6 +50,24 @@ public sealed class CircuitInterpreter
     internal readonly int[] convergence;
     internal readonly double[,] D;
 
+    // Linear-port reduction (see LinearPortReduction): ports read only by linear terms are eliminated from Newton.
+    internal readonly bool[] termLinear = Array.Empty<bool>();
+    internal readonly LinearPortReduction? reduction;
+    private readonly double[][] reducedRows = Array.Empty<double[]>();
+    private readonly double[] reducedOpen = Array.Empty<double>();
+    private readonly double[] reducedConstant = Array.Empty<double>();
+    private readonly double[] reducedResidual = Array.Empty<double>();
+    private readonly double[,] linearJacobian = new double[0, 0];
+
+    /// <summary>Ports eliminated from Newton because only linear terms read them, and how often the reduced system
+    /// has been recomputed (once per change of the runtime parameters).</summary>
+    public int EliminatedPorts => reduction?.L.Length ?? 0;
+    public long ReductionUpdates => reduction?.Updates ?? 0;
+
+    /// <summary>For profiling only: take the reduced path even when there are no linear ports to eliminate.</summary>
+    internal static bool ForceReductionForTesting { get; set; }
+
+
     // Runtime parameters (dynamic pots), by index in ExtractedSystem.RuntimeParameters.
     internal readonly int[] parameterSymbols = Array.Empty<int>();
 
@@ -172,6 +190,17 @@ public sealed class CircuitInterpreter
 
             // When every term is linear in the ports (only pot legs, say), one Newton step is exact.
             LinearOnly = expressions.Skip(m).All(partial => !partial.DependsOn(pivots));
+
+            // A term is linear when its derivatives don't depend on the ports and it is zero at zero, so q = J·w with
+            // J depending only on runtime parameters (pot legs, P·i).
+            var runtimeSymbols = new HashSet<Expression>(system.RuntimeParameters.Select(r => (Expression)r.Symbol));
+            termLinear = new bool[m];
+            for (int c = 0; c < m; c++)
+            {
+                bool constantSlope = Enumerable.Range(0, k).All(p => !expressions[m + c * k + p].DependsOn(pivots));
+                var zeros = SymbolScan.Collect(system.Nonlinear[c]).Where(s => !runtimeSymbols.Contains(s)).Select(s => Arrow.New(s, 0));
+                termLinear[c] = constantSlope && system.Nonlinear[c].Evaluate(zeros).EqualsZero();
+            }
         }
 
         DenseLu? lu = null;
@@ -241,6 +270,28 @@ public sealed class CircuitInterpreter
         zNext = new double[dz];
         cs = new double[dz];
 
+        reduction = matchLiveSpice || m == 0 ? null : BuildReduction();
+        if (reduction != null)
+        {
+            int size = reduction.N.Length + dz;
+            reducedRows = Enumerable.Range(0, size).Select(_ => new double[RowLength(size)]).ToArray();
+            reducedOpen = new double[reduction.N.Length];
+            reducedConstant = new double[dz];
+            reducedResidual = new double[reduction.L.Length];
+            linearJacobian = new double[reduction.TL.Length, reduction.L.Length];
+
+            // Learn which coefficients can be nonzero, at the initial values and a couple of other settings.
+            double[] initialValues = (double[])ParameterValues.Clone();
+            var random = new Random(5);
+            for (int sample = 0; sample < 3; sample++)
+            {
+                for (int j = 0; j < ParameterValues.Length; j++)
+                    ParameterValues[j] = sample < 2 ? -0.4 + 0.8 * random.NextDouble() : initialValues[j];
+                reduction.Update(ParameterValues, LinearJacobian);
+                reduction.Mark();
+            }
+        }
+
         // The constraint rows couple everything, so a split system is solved as one group.
         groups = dz > 0 ? new[] { Enumerable.Range(0, K).ToArray() } : BuildGroups(segment);
         stepSolution = new double[K];
@@ -282,6 +333,8 @@ public sealed class CircuitInterpreter
 
     public void Run(double[] inputSamples, double[][] outputBuffers)
     {
+        // Runtime parameters only change between calls, so the reduced coefficients only need checking here.
+        reduction?.Update(ParameterValues, LinearJacobian);
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var sums = new double[outputs.Length];
         for (int n = 0; n < inputSamples.Length; n++)
@@ -349,6 +402,8 @@ public sealed class CircuitInterpreter
             Array.Copy(yLinear, y, y.Length);
         else if (SegmentSolver != null)
             SolveWithSegments();
+        else if (reduction != null)
+            SolveReduced();
         else
         {
             SolveNewton();
@@ -896,6 +951,204 @@ public sealed class CircuitInterpreter
             outputs[position++] = q[c];
         return converged;
     }
+    private LinearPortReduction? BuildReduction()
+    {
+        bool[] linear = (bool[])termLinear.Clone();
+        bool changed = true;
+        bool[] inN = new bool[k];
+        while (changed)
+        {
+            changed = false;
+            Array.Clear(inN);
+            for (int c = 0; c < m; c++)
+                if (!linear[c])
+                    for (int p = 0; p < k; p++)
+                        inN[p] |= dependsOn[c, p];
+            // A linear term that reads a nonlinear port stays with the nonlinear terms.
+            for (int c = 0; c < m; c++)
+                if (linear[c] && Enumerable.Range(0, k).Any(p => dependsOn[c, p] && inN[p]))
+                {
+                    linear[c] = false;
+                    changed = true;
+                }
+        }
+
+        int[] n = Enumerable.Range(0, k).Where(p => inN[p]).ToArray();
+        int[] l = Enumerable.Range(0, k).Where(p => !inN[p]).ToArray();
+        if (l.Length == 0 && !ForceReductionForTesting)
+            return null;
+        int[] tn = Enumerable.Range(0, m).Where(c => !linear[c]).ToArray();
+        int[] tl = Enumerable.Range(0, m).Where(c => linear[c]).ToArray();
+        return new LinearPortReduction(n, l, tn, tl, Z, Qz, CP, Q, parameterGain, constant, sourceGain, G, Nz, CH, CC, CS);
+    }
+
+    /// <summary>Recomputes the reduced system if the runtime parameters changed. Compiled code calls this once per step.</summary>
+    internal void UpdateReduction() => reduction!.Update(ParameterValues, LinearJacobian);
+
+    private double[,] LinearJacobian()
+    {
+        EvaluateNonlinear();
+        for (int t = 0; t < reduction!.TL.Length; t++)
+            for (int j = 0; j < reduction.L.Length; j++)
+                linearJacobian[t, j] = jacobian[reduction.TL[t], reduction.L[j]];
+        return linearJacobian;
+    }
+
+    // Newton on the ports nonlinear terms read (and the free unknowns), with the linear ports folded into the
+    // coefficients (see LinearPortReduction). Run recomputes those coefficients when a parameter has changed.
+    private void SolveReduced()
+    {
+        if (SegmentObserver != null)
+            throw new NotSupportedException("Recording segments isn't supported with dynamic pots yet.");
+
+        LinearPortReduction r = reduction!;
+        int[] N = r.N, TN = r.TN;
+        int kn = N.Length, size = kn + dz;
+
+        // The unknowns' linear parts with the eliminated ports folded in, for the unknowns they reach.
+        for (int i = 0; i < y.Length; i++)
+        {
+            if (!r.Affected[i])
+                continue;
+            double value = r.Constant[i];
+            for (int j = 0; j < parameterCount; j++)
+                value += r.Gain[i][j] * values[j];
+            for (int x = 0; x < sourceValues.Length; x++)
+                value += r.Source[i][x] * sourceCoefficients[x] * sourceValues[x];
+            yLinear[i] = value;
+        }
+        for (int f = 0; f < dz; f++)
+        {
+            double value = r.ConstraintConstant[f];
+            for (int j = 0; j < parameterCount; j++)
+                value += r.ConstraintGain[f][j] * values[j];
+            for (int x = 0; x < sourceValues.Length; x++)
+                value += r.ConstraintSource[f][x] * sourceCoefficients[x] * sourceValues[x];
+            reducedConstant[f] = value;
+        }
+
+        double[] previous = history[0];
+        Array.Copy(previous, y, y.Length);
+        Multiply(Q, previous, w);
+        Multiply(Q, yLinear, voc);
+        for (int f = 0; f < dz; f++)
+            z[f] = previous[free[f]];
+
+        for (int iteration = 1; ; iteration++)
+        {
+            if (TN.Length > 0)
+                EvaluateNonlinear();
+
+            for (int i = 0; i < kn; i++)
+            {
+                double[] row = reducedRows[i];
+                Array.Clear(row);
+                row[i] = 1;
+                double rhs = voc[N[i]];
+                for (int c = 0; c < TN.Length; c++)
+                {
+                    double zc = r.Zr[i][c];
+                    if (zc == 0)
+                        continue;
+                    int term = TN[c];
+                    double linear = q[term];
+                    for (int j = 0; j < kn; j++)
+                    {
+                        double slope = jacobian[term, N[j]];
+                        row[j] -= zc * slope;
+                        linear -= slope * w[N[j]];
+                    }
+                    rhs += zc * linear;
+                }
+                for (int g = 0; g < dz; g++)
+                    row[kn + g] = -r.Qzr[i][g];
+                row[size] = rhs;
+            }
+            for (int f = 0; f < dz; f++)
+            {
+                double[] row = reducedRows[kn + f];
+                Array.Clear(row);
+                double rhs = -reducedConstant[f];
+                for (int c = 0; c < TN.Length; c++)
+                {
+                    double weight = r.CPr[f][c];
+                    if (weight == 0)
+                        continue;
+                    int term = TN[c];
+                    double linear = q[term];
+                    for (int j = 0; j < kn; j++)
+                    {
+                        double slope = jacobian[term, N[j]];
+                        row[j] += weight * slope;
+                        linear -= slope * w[N[j]];
+                    }
+                    rhs -= weight * linear;
+                }
+                for (int g = 0; g < dz; g++)
+                    row[kn + g] = r.Czr[f][g];
+                row[size] = rhs;
+            }
+            if (size > 0)
+                Eliminate(reducedRows, size, size + 1);
+
+            for (int c = 0; c < TN.Length; c++)
+            {
+                int term = TN[c];
+                double value = q[term];
+                for (int j = 0; j < kn; j++)
+                    value += jacobian[term, N[j]] * (reducedRows[j][size] - w[N[j]]);
+                linearizedQ[term] = value;
+            }
+            for (int g = 0; g < dz; g++)
+                zNext[g] = reducedRows[kn + g][size];
+
+            bool done = true;
+            foreach (int j in convergence)
+            {
+                double next = CombineReduced(j);
+                done &= Math.Abs(next - y[j]) < Math.Abs(y[j]) * RelativeTolerance + AbsoluteTolerance;
+            }
+            if (TN.Length == 0)
+                done = true;
+
+            Array.Copy(y, yBeforeUpdate, y.Length);
+            for (int i = 0; i < y.Length; i++)
+                y[i] = CombineReduced(i);
+            for (int j = 0; j < kn; j++)
+                w[N[j]] = reducedRows[j][size];
+            for (int g = 0; g < dz; g++)
+                z[g] = zNext[g];
+
+            if (done || iteration == iterationCap)
+            {
+                IterationCounts.Add((byte)(done ? iteration : iteration | CapFlag));
+                return;
+            }
+        }
+    }
+
+    // An unknown from the reduced solve: y = yEff + Geff·qN + Nzeff·z, with yEff already in yLinear.
+    private double CombineReduced(int i)
+    {
+        LinearPortReduction r = reduction!;
+        double value = yLinear[i];
+        if (r.Affected[i])
+        {
+            for (int c = 0; c < r.TN.Length; c++)
+                value += r.TermGain[i][c] * linearizedQ[r.TN[c]];
+            for (int g = 0; g < dz; g++)
+                value += r.FreeGain[i][g] * zNext[g];
+        }
+        else
+        {
+            for (int c = 0; c < r.TN.Length; c++)
+                value += G[i, r.TN[c]] * linearizedQ[r.TN[c]];
+            for (int g = 0; g < dz; g++)
+                value += Nz[i, g] * zNext[g];
+        }
+        return value;
+    }
+
     private double Combine(int i)
     {
         double value = yLinear[i];

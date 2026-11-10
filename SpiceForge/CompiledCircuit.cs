@@ -17,6 +17,8 @@ public sealed class CompiledCircuit
     private delegate int StepFunction(double time, double input, double inputPrevious, double[][] history, double[] y);
 
     private readonly StepFunction step;
+    private readonly CircuitInterpreter plan;
+    private readonly bool reduce;
     private readonly int[] outputs;
     private readonly int oversample;
     private readonly double substep;
@@ -34,6 +36,13 @@ public sealed class CompiledCircuit
     /// <summary>Current values of the runtime parameters (dynamic pots), in the order of ExtractedSystem.RuntimeParameters.
     /// The compiled code reads this array directly, so changes take effect on the next step without recompiling.</summary>
     public double[] ParameterValues { get; }
+
+    /// <summary>For profiling only: compile live coefficients as constants at their current values, so later
+    /// parameter changes have no effect.</summary>
+    internal static bool InlineLiveForTesting { get; set; }
+
+    /// <summary>For profiling only: the expression tree of the most recently compiled step function.</summary>
+    internal static System.Linq.Expressions.LambdaExpression? LastStepForTesting { get; set; }
 
     public CompiledCircuit(
         ExtractedSystem system,
@@ -59,11 +68,16 @@ public sealed class CompiledCircuit
         y = new double[system.Unknowns.Length];
         history = plan.history;
         ParameterValues = plan.ParameterValues;
+        this.plan = plan;
+        reduce = plan.reduction != null && segmentSolver == null;
         step = new Emitter(plan, system, inputSymbol, timeStep, iterationCap, solution, segmentSolver).Build();
     }
 
     public void Run(double[] inputSamples, double[][] outputBuffers)
     {
+        // Runtime parameters only change between calls, so the reduced coefficients only need checking here.
+        if (reduce)
+            plan.UpdateReduction();
         var sums = new double[outputs.Length];
         for (int n = 0; n < inputSamples.Length; n++)
         {
@@ -184,12 +198,18 @@ public sealed class CompiledCircuit
             {
                 EmitBlackBox(sources);
             }
+            else if (plan.reduction != null)
+            {
+                EmitReduced(sources);
+            }
             else
             {
                 EmitNewton(sources);
             }
 
-            return code.Build<StepFunction>().Compile();
+            var lambda = code.Build<StepFunction>();
+            LastStepForTesting = lambda;
+            return lambda.Compile();
         }
 
         // Finds the unknowns anything reads: outputs and state, then whatever computing those needs.
@@ -214,15 +234,18 @@ public sealed class CompiledCircuit
 
             if (plan.m > 0)
             {
+                // The reduced step iterates only the ports nonlinear terms read; the eliminated ones (pot legs, say)
+                // and unknowns LiveSPICE's solution doesn't have are computed only if something reads them.
+                LinearPortReduction? reduction = plan.reduction;
                 foreach (int j in plan.free)
                     Require(j);
                 for (int i = 0; i < n; i++)
-                    if (!arrowFor.ContainsKey(i))
+                    if (reduction == null && !arrowFor.ContainsKey(i))
                     {
                         Require(i);
                         rows.Add(i);
                     }
-                for (int r = 0; r < plan.k; r++)
+                foreach (int r in reduction?.N ?? Enumerable.Range(0, plan.k).ToArray())
                     for (int j = 0; j < n; j++)
                         if (Q[r][j] != 0)
                         {
@@ -380,7 +403,302 @@ public sealed class CompiledCircuit
         private LinqExpr? ParameterRead(Expression symbol)
         {
             int index = Array.FindIndex(system.RuntimeParameters, r => r.Symbol.Equals(symbol));
-            return index < 0 ? null : LinqExpr.ArrayIndex(LinqExpr.Constant(plan.ParameterValues), LinqExpr.Constant(index));
+            return index < 0 ? null : Live(plan.ParameterValues, index);
+        }
+
+        private static readonly MethodInfo UpdateReduction = typeof(CircuitInterpreter).GetMethod(
+            nameof(CircuitInterpreter.UpdateReduction), BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        // An array constant in a compiled lambda is a closure lookup and a cast on every use, so each live array, and each
+        // row of it, is loaded into a local once per step and reused. Rows are cached on first use: call Hoist for the ones
+        // used inside the Newton loop before emitting it, so their locals are assigned outside it.
+        private readonly Dictionary<object, ParameterExpression> liveArrays = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<(object, int), ParameterExpression> liveRows = new();
+
+        private ParameterExpression LiveArray<T>(T array) where T : class
+        {
+            if (!liveArrays.TryGetValue(array, out ParameterExpression? local))
+            {
+                local = code.Decl<T>("live" + liveArrays.Count);
+                code.Add(LinqExpr.Assign(local, LinqExpr.Constant(array)));
+                liveArrays[array] = local;
+            }
+            return local;
+        }
+
+        private ParameterExpression LiveRow(double[][] matrix, int row)
+        {
+            if (!liveRows.TryGetValue((matrix, row), out ParameterExpression? local))
+            {
+                local = code.Decl<double[]>("liveRow" + liveRows.Count);
+                code.Add(LinqExpr.Assign(local, LinqExpr.ArrayIndex(LiveArray(matrix), LinqExpr.Constant(row))));
+                liveRows[(matrix, row)] = local;
+            }
+            return local;
+        }
+
+        private void Hoist(double[][] matrix)
+        {
+            if (InlineLiveForTesting) return;
+            for (int row = 0; row < matrix.Length; row++)
+                LiveRow(matrix, row);
+        }
+
+        private LinqExpr Live(double[][] matrix, int row, int column) => InlineLiveForTesting
+            ? LinqExpr.Constant(matrix[row][column])
+            : LinqExpr.ArrayIndex(LiveRow(matrix, row), LinqExpr.Constant(column));
+
+        private LinqExpr Live(double[] vector, int index) => InlineLiveForTesting
+            ? LinqExpr.Constant(vector[index])
+            : LinqExpr.ArrayIndex(LiveArray(vector), LinqExpr.Constant(index));
+
+        // The reduced Newton solve, as CircuitInterpreter.SolveReduced: Newton on the ports nonlinear terms read and the
+        // free unknowns, with the linear ports folded into the coefficients whenever a parameter changes. The step has
+        // the same structure as the static circuit's; unknowns a linear term reaches read their coefficients (only the
+        // ones that can be nonzero) from live arrays, and everything else keeps its inlined constants.
+        private void EmitReduced(ParameterExpression[] sources)
+        {
+            LinearPortReduction r = plan.reduction!;
+            int n = system.Unknowns.Length, m = plan.m, dz = plan.dz;
+            int[] N = r.N, TN = r.TN;
+            int kn = N.Length, size = kn + dz;
+            int[] tracked = plan.convergence.Distinct().ToArray();
+
+            var needed = new SortedSet<int>(tracked);
+            needed.UnionWith(required);
+            foreach (int p in N)
+                for (int j = 0; j < n; j++)
+                    if (Q[p][j] != 0)
+                        needed.Add(j);
+            var linear = new Dictionary<int, ParameterExpression>();
+            foreach (int i in needed)
+                linear[i] = Local(r.Affected[i] ? LiveLinearPart(i, sources, r) : LinearPart(i, sources));
+
+            var open = new ParameterExpression[kn];
+            for (int i = 0; i < kn; i++)
+            {
+                LinqExpr sum = LinqExpr.Constant(0.0);
+                for (int j = 0; j < n; j++)
+                    if (Q[N[i]][j] != 0)
+                        sum = LinqExpr.Add(sum, LinqExpr.Multiply(Cell(Q, N[i], j), linear[j]));
+                open[i] = Local(sum);
+            }
+
+            var constant = new ParameterExpression[dz];
+            for (int f = 0; f < dz; f++)
+            {
+                LinqExpr value = Live(r.ConstraintConstant, f);
+                for (int j = 0; j < plan.parameterCount; j++)
+                    if (r.ConstraintGainUsed[f][j])
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(Live(r.ConstraintGain, f, j), code[plan.Symbols[j]]));
+                for (int x = 0; x < sources.Length; x++)
+                    if (r.ConstraintSourceUsed[f][x])
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(
+                            LinqExpr.Multiply(Live(r.ConstraintSource, f, x), LinqExpr.Constant(plan.sourceCoefficients[x])), sources[x]));
+                constant[f] = Local(value);
+            }
+
+            var w = new ParameterExpression[kn];
+            for (int i = 0; i < kn; i++)
+            {
+                LinqExpr previous = LinqExpr.Constant(0.0);
+                for (int j = 0; j < n; j++)
+                    if (Q[N[i]][j] != 0)
+                        previous = LinqExpr.Add(previous, LinqExpr.Multiply(Cell(Q, N[i], j), History(1, j)));
+                w[i] = Local(previous);
+            }
+            var current = tracked.ToDictionary(i => i, i => Local(History(1, i)));
+            ParameterExpression[] z = plan.free.Select(j => Local(History(1, j))).ToArray();
+
+            // An unknown from the solve: y = yEff + Geff·qN + Nzeff·z.
+            LinqExpr Rebuild(int i, LinqExpr?[] terms, IReadOnlyList<LinqExpr> frees)
+            {
+                LinqExpr value = linear[i];
+                for (int c = 0; c < TN.Length; c++)
+                {
+                    LinqExpr? weight = r.Affected[i]
+                        ? (r.TermGainUsed[i][c] ? Live(r.TermGain, i, c) : null)
+                        : (G[i][TN[c]] != 0 ? Cell(G, i, TN[c]) : null);
+                    if (weight != null)
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(weight, terms[c]!));
+                }
+                for (int g = 0; g < dz; g++)
+                {
+                    LinqExpr? weight = r.Affected[i]
+                        ? (r.FreeGainUsed[i][g] ? Live(r.FreeGain, i, g) : null)
+                        : (Nz[i][g] != 0 ? Cell(Nz, i, g) : null);
+                    if (weight != null)
+                        value = LinqExpr.Add(value, LinqExpr.Multiply(weight, frees[g]));
+                }
+                return value;
+            }
+
+            var augmented = Enumerable.Range(0, size).Select(_ => new double[CircuitInterpreter.RowLength(size)]).ToArray();
+            var stepSolution = new double[size];
+            int[][] groups = size > 0 ? new[] { Enumerable.Range(0, size).ToArray() } : Array.Empty<int[]>();
+            var groupRows = new[] { Enumerable.Range(0, size).Select(_ => new double[CircuitInterpreter.RowLength(size)]).ToArray() };
+            ConstantExpression augmentedArray = LinqExpr.Constant(augmented);
+
+            int[] pivots = CircuitInterpreter.PortPivots(system);
+            Expression[] pivotSymbols = pivots.Select(j => system.Unknowns[j]).ToArray();
+
+            // Rows the Newton loop and the final rebuild read, loaded before the loop.
+            Hoist(r.Zr);
+            Hoist(r.Qzr);
+            Hoist(r.CPr);
+            Hoist(r.Czr);
+            foreach (int i in tracked.Union(required).Where(i => r.Affected[i]))
+            {
+                LiveRow(r.TermGain, i);
+                LiveRow(r.FreeGain, i);
+            }
+            if (system.RuntimeParameters.Length > 0)
+                LiveArray(plan.ParameterValues);
+
+            ParameterExpression iteration = code.DeclInit<int>("iteration", 0);
+            ParameterExpression result = code.DeclInit<int>("result", 0);
+            var finalQ = new LinqExpr?[TN.Length];
+
+            code.DoWhile((LinqExpr exit) =>
+            {
+                code.Add(LinqExpr.PreIncrementAssign(iteration));
+
+                // Nonlinear terms see each nonlinear port through its pivot unknown, everything else at zero.
+                for (int i = 0; i < kn; i++)
+                    code.Map(Scope.Local, pivotSymbols[N[i]], w[i]);
+                foreach (Expression symbol in TN.SelectMany(c => SymbolScan.Collect(system.Nonlinear[c])).Distinct())
+                    if (!N.Any(p => pivotSymbols[p].Equals(symbol)))
+                        code.Map(Scope.Local, symbol, ParameterRead(symbol) ?? LinqExpr.Constant(0.0));
+
+                var q = new ParameterExpression[TN.Length];
+                var jacobian = new LinqExpr?[TN.Length, kn];
+                for (int c = 0; c < TN.Length; c++)
+                {
+                    Expression term = system.Nonlinear[TN[c]];
+                    Dictionary<Expression, Expression> gradient = term.Gradient(N.Select(p => pivotSymbols[p]));
+                    q[c] = Local(ToDouble(code.Compile(term)));
+                    for (int j = 0; j < kn; j++)
+                        if (plan.dependsOn[TN[c], N[j]])
+                            jacobian[c, j] = Local(ToDouble(code.Compile(gradient[pivotSymbols[N[j]]])));
+                }
+
+                for (int i = 0; i < kn; i++)
+                {
+                    ParameterExpression row = code.Decl<double[]>("row" + i);
+                    code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(i))));
+                    for (int j = 0; j <= size; j++)
+                        code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(j)), LinqExpr.Constant(j == i ? 1.0 : 0.0)));
+                    LinqExpr rhs = open[i];
+                    for (int c = 0; c < TN.Length; c++)
+                    {
+                        if (!r.ZrUsed[i][c])
+                            continue;
+                        LinqExpr zc = Live(r.Zr, i, c);
+                        LinqExpr linearPart = q[c];
+                        for (int j = 0; j < kn; j++)
+                        {
+                            if (jacobian[c, j] is not LinqExpr slope)
+                                continue;
+                            IndexExpression target = LinqExpr.ArrayAccess(row, LinqExpr.Constant(j));
+                            code.Add(LinqExpr.Assign(target, LinqExpr.Subtract(target, LinqExpr.Multiply(zc, slope))));
+                            linearPart = LinqExpr.Subtract(linearPart, LinqExpr.Multiply(slope, w[j]));
+                        }
+                        rhs = LinqExpr.Add(rhs, LinqExpr.Multiply(zc, linearPart));
+                    }
+                    for (int g = 0; g < dz; g++)
+                        if (r.QzrUsed[i][g])
+                            code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(kn + g)), LinqExpr.Negate(Live(r.Qzr, i, g))));
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(size)), rhs));
+                }
+                for (int f = 0; f < dz; f++)
+                {
+                    ParameterExpression row = code.Decl<double[]>("constraint" + f);
+                    code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(kn + f))));
+                    for (int j = 0; j <= size; j++)
+                        code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(j)), LinqExpr.Constant(0.0)));
+                    LinqExpr rhs = LinqExpr.Negate(constant[f]);
+                    for (int c = 0; c < TN.Length; c++)
+                    {
+                        if (!r.CPrUsed[f][c])
+                            continue;
+                        LinqExpr weight = Live(r.CPr, f, c);
+                        LinqExpr linearPart = q[c];
+                        for (int j = 0; j < kn; j++)
+                        {
+                            if (jacobian[c, j] is not LinqExpr slope)
+                                continue;
+                            IndexExpression target = LinqExpr.ArrayAccess(row, LinqExpr.Constant(j));
+                            code.Add(LinqExpr.Assign(target, LinqExpr.Add(target, LinqExpr.Multiply(weight, slope))));
+                            linearPart = LinqExpr.Subtract(linearPart, LinqExpr.Multiply(slope, w[j]));
+                        }
+                        rhs = LinqExpr.Subtract(rhs, LinqExpr.Multiply(weight, linearPart));
+                    }
+                    for (int g = 0; g < dz; g++)
+                        if (r.CzrUsed[f][g])
+                            code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(kn + g)), Live(r.Czr, f, g)));
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(size)), rhs));
+                }
+
+                if (size > 0)
+                    code.Add(LinqExpr.Call(SolveStep, augmentedArray, LinqExpr.Constant(stepSolution),
+                        LinqExpr.Constant(groups), LinqExpr.Constant(groupRows), LinqExpr.Constant(size)));
+
+                ParameterExpression[] next = Enumerable.Range(0, kn)
+                    .Select(j => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(j)))).ToArray();
+                ParameterExpression[] zNext = Enumerable.Range(0, dz)
+                    .Select(g => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(kn + g)))).ToArray();
+
+                var linearized = new LinqExpr?[TN.Length];
+                for (int c = 0; c < TN.Length; c++)
+                {
+                    LinqExpr value = q[c];
+                    for (int j = 0; j < kn; j++)
+                        if (jacobian[c, j] is LinqExpr slope)
+                            value = LinqExpr.Add(value, LinqExpr.Multiply(slope, LinqExpr.Subtract(next[j], w[j])));
+                    linearized[c] = Local(value);
+                    finalQ[c] = linearized[c];
+                }
+
+                ParameterExpression done = code.DeclInit<bool>("done", true);
+                foreach (int j in tracked)
+                {
+                    ParameterExpression nextY = Local(Rebuild(j, linearized, zNext));
+                    code.Add(LinqExpr.AndAssign(done, LinqExpr.LessThan(
+                        LinqExpr.Call(Abs, LinqExpr.Subtract(nextY, current[j])),
+                        LinqExpr.Add(LinqExpr.Multiply(LinqExpr.Call(Abs, current[j]), LinqExpr.Constant(plan.RelativeTolerance)), LinqExpr.Constant(plan.AbsoluteTolerance)))));
+                    code.Add(LinqExpr.Assign(current[j], nextY));
+                }
+                if (TN.Length == 0)
+                    code.Add(LinqExpr.Assign(done, LinqExpr.Constant(true)));
+
+                for (int j = 0; j < kn; j++)
+                    code.Add(LinqExpr.Assign(w[j], next[j]));
+                for (int g = 0; g < dz; g++)
+                    code.Add(LinqExpr.Assign(z[g], zNext[g]));
+
+                code.Add(LinqExpr.IfThen(done, LinqExpr.Block(LinqExpr.Assign(result, iteration), exit)));
+                code.Add(LinqExpr.IfThen(LinqExpr.Equal(iteration, LinqExpr.Constant(iterationCap)),
+                    LinqExpr.Block(LinqExpr.Assign(result, LinqExpr.Or(iteration, LinqExpr.Constant(0x80))), exit)));
+            }, LinqExpr.Constant(true));
+
+            // Every unknown anything reads, from the final linearized terms and free unknowns.
+            foreach (int i in required.Union(tracked).OrderBy(i => i))
+                code.Add(LinqExpr.Assign(Element(y, i), Rebuild(i, finalQ, z)));
+            code.Return(result);
+        }
+
+        // The linear part of an unknown a linear term reaches, reading its (possibly nonzero) coefficients live.
+        private LinqExpr LiveLinearPart(int i, ParameterExpression[] sources, LinearPortReduction r)
+        {
+            LinqExpr value = Live(r.Constant, i);
+            for (int j = 0; j < plan.parameterCount; j++)
+                if (r.GainUsed[i][j])
+                    value = LinqExpr.Add(value, LinqExpr.Multiply(Live(r.Gain, i, j), code[plan.Symbols[j]]));
+            for (int x = 0; x < sources.Length; x++)
+                if (r.SourceUsed[i][x])
+                    value = LinqExpr.Add(value, LinqExpr.Multiply(
+                        LinqExpr.Multiply(Live(r.Source, i, x), LinqExpr.Constant(plan.sourceCoefficients[x])), sources[x]));
+            return value;
         }
 
         private static readonly MethodInfo SegmentCall = typeof(Emitter).GetMethod(nameof(CallSegment), BindingFlags.Static | BindingFlags.NonPublic)!;

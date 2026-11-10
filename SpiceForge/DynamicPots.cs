@@ -5,10 +5,11 @@ using Expression = ComputerAlgebra.Expression;
 namespace SpiceForge;
 
 /// <summary>
-/// A pot whose position can change while the circuit runs, without re-solving anything. Its value is the tapered
-/// wiper fraction P, between 0 and 1, and each pot leg obeys v = R·P·i (or R·(1 - P)·i) with its current as an
-/// unknown. P only ever multiplies a current, so it never ends up in a denominator, a leg at 0 Ω is an exact short,
-/// and E doesn't depend on P at all: the engine treats each leg as one more port, with P read at runtime.
+/// A pot whose position can change while the circuit runs, without re-solving anything. Its tapered wiper fraction P
+/// is split around a nominal position P0: the parameter is the offset δ = P - P0, and each pot leg obeys
+/// v = R·P0·i + R·δ·i (or R·(1 - P0)·i - R·δ·i), with its current as an unknown. So E holds the circuit with its pots at
+/// P0, which is nonsingular whenever the circuit is, and δ only ever multiplies a current: it never ends up in a
+/// denominator, and a leg at 0 Ω is still an exact short. The engine treats each leg as one more port, with δ read at runtime.
 /// </summary>
 public sealed class PotParameter
 {
@@ -17,7 +18,7 @@ public sealed class PotParameter
     /// <summary>The component this parameter belongs to (the replacement pot in the circuit).</summary>
     public required Component Component { get; init; }
 
-    /// <summary>The symbol for P in the circuit's equations.</summary>
+    /// <summary>The symbol for the parameter, δ = P - P0, in the circuit's equations.</summary>
     public required Variable Symbol { get; init; }
 
     public required SweepType Sweep { get; init; }
@@ -25,8 +26,11 @@ public sealed class PotParameter
     /// <summary>The wiper position from the schematic.</summary>
     public required double InitialWipe { get; init; }
 
-    /// <summary>The parameter value for a wiper position, between 0 and 1, with the pot's taper applied.</summary>
-    public double ValueAt(double wipe) => VariableResistor.AdjustWipe(wipe, Sweep);
+    /// <summary>The nominal tapered position the legs are split around; the parameter is the offset from it.</summary>
+    public const double Nominal = 0.5;
+
+    /// <summary>The parameter value for a wiper position between 0 and 1: the tapered position, minus <see cref="Nominal"/>.</summary>
+    public double ValueAt(double wipe) => VariableResistor.AdjustWipe(wipe, Sweep) - Nominal;
 
     public double InitialValue => ValueAt(InitialWipe);
 }
@@ -108,7 +112,7 @@ public static class DynamicPots
     }
 }
 
-/// <summary>A potentiometer whose tapered position is the parameter <c>P</c>.</summary>
+/// <summary>A potentiometer whose tapered position, as an offset from the nominal position, is the parameter.</summary>
 public sealed class DynamicPotentiometer : Potentiometer
 {
     public Variable Parameter { get; }
@@ -118,12 +122,12 @@ public sealed class DynamicPotentiometer : Potentiometer
     public override void Analyze(Analysis Mna)
     {
         Expression r = Resistance;
-        DynamicPots.Leg(Mna, Name + "c", Cathode, Wiper, r * Parameter);
-        DynamicPots.Leg(Mna, Name + "a", Anode, Wiper, r * (1 - Parameter));
+        DynamicPots.Leg(Mna, Name + "c", Cathode, Wiper, r * PotParameter.Nominal + r * Parameter);
+        DynamicPots.Leg(Mna, Name + "a", Anode, Wiper, r * (1 - PotParameter.Nominal) - r * Parameter);
     }
 }
 
-/// <summary>A variable resistor whose tapered position is the parameter <c>P</c>.</summary>
+/// <summary>A variable resistor whose tapered position, as an offset from the nominal position, is the parameter.</summary>
 public sealed class DynamicVariableResistor : VariableResistor
 {
     public Variable Parameter { get; }
@@ -133,6 +137,6 @@ public sealed class DynamicVariableResistor : VariableResistor
     public override void Analyze(Analysis Mna)
     {
         Expression r = Resistance;
-        DynamicPots.Leg(Mna, Name, Anode, Cathode, r * Parameter);
+        DynamicPots.Leg(Mna, Name, Anode, Cathode, r * PotParameter.Nominal + r * Parameter);
     }
 }

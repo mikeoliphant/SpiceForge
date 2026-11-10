@@ -119,8 +119,17 @@ public static class Extractor
                     }
                     else
                     {
-                        (Real c, Expression body) = SplitCoefficient(entry.Key * entry.Value);
-                        AddNonlinear(row, c, body);
+                        // A coefficient such as R·(P0 + δ) splits: its constant part goes in E, the rest are terms.
+                        foreach (Expression part in Sum.TermsOf(entry.Value.Expand()))
+                        {
+                            if (TryConstant(part, out Real b))
+                            {
+                                exactE[row, j] += b;
+                                continue;
+                            }
+                            (Real c, Expression body) = SplitCoefficient(entry.Key * part);
+                            AddNonlinear(row, c, body);
+                        }
                     }
                     continue;
                 }

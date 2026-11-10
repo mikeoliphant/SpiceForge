@@ -163,10 +163,64 @@ internal static class DynamicPotCheck
             staticCompiled.Run(input.AsSpan(start, SweepBlock).ToArray(), scratch);
         double staticUs = watch.Elapsed.TotalMilliseconds * 1000 / SweepSamples;
 
+        // Profiling: the same circuit with every live coefficient compiled as a constant, and repeated timings.
+        double Best(Func<CompiledCircuit> make)
+        {
+            double best = double.MaxValue;
+            for (int pass = 0; pass < 3; pass++)
+            {
+                var engineUnderTest = make();
+                double[][] buffers = built.Outputs.Select(_ => new double[SweepBlock]).ToArray();
+                var timer = Stopwatch.StartNew();
+                for (int start = 0; start < SweepSamples; start += SweepBlock)
+                    engineUnderTest.Run(input.AsSpan(start, SweepBlock).ToArray(), buffers);
+                best = Math.Min(best, timer.Elapsed.TotalMilliseconds * 1000 / SweepSamples);
+            }
+            return best;
+        }
+        double liveBest = Best(() => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
+        CompiledCircuit.InlineLiveForTesting = true;
+        double inlinedBest = Best(() => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
+        CompiledCircuit.InlineLiveForTesting = false;
+        double bakedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
+        CircuitInterpreter.ForceReductionForTesting = true;
+        double bakedReducedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
+        CircuitInterpreter.ForceReductionForTesting = false;
+        Console.WriteLine($"  best of 3, pots still: baked {bakedBest:F2} us, dynamic {liveBest:F2} us, dynamic with live coefficients inlined {inlinedBest:F2} us");
+        Console.WriteLine($"  best of 3: baked through the reduced path {bakedReducedBest:F2} us");
+        // The same compiled dynamic engine with its pots held still, so it never recomputes its reduction.
+        var still = new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution);
+        double[][] stillBuffers = built.Outputs.Select(_ => new double[SweepBlock]).ToArray();
+        watch.Restart();
+        for (int start = 0; start < SweepSamples; start += SweepBlock)
+            still.Run(input.AsSpan(start, SweepBlock).ToArray(), stillBuffers);
+        double stillUs = watch.Elapsed.TotalMilliseconds * 1000 / SweepSamples;
+        static int NonZero(double[,] matrix) { int count = 0; foreach (double x in matrix) if (x != 0) count++; return count; }
+        var bakedPlan = new CircuitInterpreter(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution);
+        Console.WriteLine($"  inputs per step {baked.System.Parameters.Length} baked / {built.System.Parameters.Length} dynamic; gain nonzeros {NonZero(bakedPlan.parameterGain)} / {NonZero(engine.parameterGain)} of {bakedPlan.parameterGain.Length} / {engine.parameterGain.Length}");
+        if (engine.reduction is LinearPortReduction red)
+        {
+            int affected = red.Affected.Count(x => x), live = red.GainUsed.Where((row, i) => red.Affected[i]).Sum(row => row.Count(x => x));
+            int bakedRow = 0;
+            for (int i = 0; i < baked.System.Unknowns.Length; i++)
+            {
+                int j = Array.IndexOf(built.System.Unknowns, baked.System.Unknowns[i]);
+                if (j >= 0 && red.Affected[j])
+                    for (int c = 0; c < bakedPlan.parameterGain.GetLength(1); c++)
+                        if (bakedPlan.parameterGain[i, c] != 0) bakedRow++;
+            }
+            Console.WriteLine($"  affected unknowns {affected} of {red.Affected.Length}; their live gains {live} vs {bakedRow} nonzero baked gains for the same unknowns; "
+                + $"term gains {red.TermGainUsed.Sum(row => row.Count(x => x))}; nonlinear ports {red.N.Length}, eliminated {red.L.Length}; free unknowns baked {bakedPlan.dz}, dynamic {engine.dz}; nonlinear terms {red.TN.Length} (baked {bakedPlan.m})");
+        }
+        Console.WriteLine($"  sizes: unknowns {baked.System.Unknowns.Length} baked / {built.System.Unknowns.Length} dynamic; ports {baked.System.Ports} / {built.System.Ports} "
+            + $"({engine.EliminatedPorts} eliminated); terms {baked.System.Nonlinear.Length} / {built.System.Nonlinear.Length}; "
+            + $"compiled with pots still {stillUs:F2} us/sample; reductions recomputed during the sweep {engine.ReductionUpdates}.");
         double[][] Split(double[] all) => Enumerable.Range(0, built.Outputs.Length).Select(o => all.AsSpan(o * SweepSamples, SweepSamples).ToArray()).ToArray();
         bool finite = ours.All(double.IsFinite);
         double vsTight = ReferenceCheck.WorstErrorDb(Split(reference), Split(ours));
-        bool same = ours.Zip(jit, (x, y) => BitConverter.DoubleToInt64Bits(x) == BitConverter.DoubleToInt64Bits(y)).All(s => s);
+        // The compiled reduction folds the eliminated ports into its coefficients, so it rounds differently.
+        double jitDb = ReferenceCheck.WorstErrorDb(Split(ours), Split(jit));
+        bool same = jitDb <= -100;
         int capped = engine.IterationCounts.Count(x => (x & 0x80) != 0);
         double meanIterations = engine.IterationCounts.Count == 0 ? 0 : engine.IterationCounts.Average(x => x & 0x7F);
 
@@ -184,7 +238,7 @@ internal static class DynamicPotCheck
         }
         bool ok = finite && same;
         Console.WriteLine($"  sweep of {pots} pot(s) over {SweepSamples / (double)SampleRate:F1} s: {(finite ? "stable" : "NOT FINITE")}, vs tightly converged sweep {vsTight:F1} dB, "
-            + $"{meanIterations:F2} iterations per step, {capped} capped; JIT {(same ? "identical" : "DIFFERENT")}; "
+            + $"{meanIterations:F2} iterations per step, {capped} capped; JIT vs interpreter {jitDb:F1} dB; "
             + $"compiled {dynamicUs:F2} us/sample dynamic vs {staticUs:F2} static; linear-only {engine.LinearOnly}.");
         return ok ? 0 : 1;
     }

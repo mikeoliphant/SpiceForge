@@ -20,6 +20,9 @@ if (args.Length > 0 && args[0] == "jit")
 if (args.Length > 0 && args[0] == "coverage")
     return CoverageCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
+if (args.Length > 1 && args[0] == "profile")
+    return StepProfile.Run(testsDir, args[1]);
+
 if (args.Length > 0 && args[0] == "dynamic")
 {
     if (args.Contains("--long")) DynamicPotCheck.Samples = 96000;
@@ -214,6 +217,9 @@ static string Truncate(string s, int length) => s.Length <= length ? s : s.Subst
 
 static string FindRepoRoot()
 {
+    string? configured = Environment.GetEnvironmentVariable("SPICEFORGE_REPO");
+    if (configured != null)
+        return configured;
     for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
         if (File.Exists(Path.Combine(dir.FullName, "SpiceForge.slnx")))
             return dir.FullName;
