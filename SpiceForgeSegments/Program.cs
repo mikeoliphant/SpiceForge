@@ -40,8 +40,12 @@ string schematicPath = positional[0], wavPath = positional[1], outputDirectory =
 try
 {
     double[] input = ReadMono(wavPath, out int sampleRate);
-    var circuit = Schematic.Load(schematicPath, new ConsoleLog { Verbosity = MessageType.Error }).Build();
-    string name = Path.GetFileNameWithoutExtension(schematicPath);
+    Expression h = (Real)1 / (sampleRate * Oversample);
+    // Pots are baked in here: recording segments and black-box segments don't work with dynamic pots yet, because
+    // segments are defined on the full system rather than the reduced one the dynamic engines solve.
+    LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, dynamicPots: false, new ConsoleLog { Verbosity = MessageType.Error });
+    var circuit = loaded.Circuit;
+    string name = circuit.Name;
     var inputs = circuit.Components.OfType<Input>().ToList();
     if (inputs.Count != 1)
         throw new InvalidOperationException($"The schematic needs exactly one Input component, and it has {inputs.Count}.");
@@ -52,10 +56,8 @@ try
     Expression[] nodes = speakers.SelectMany(s => new[] { s.Anode.V, s.Cathode.V }).ToArray();
     double[] scales = speakers.Select(s => 1 / (double)s.V0dBFS).ToArray();
 
-    Expression h = (Real)1 / (sampleRate * Oversample);
-    Analysis analysis = circuit.Analyze();
-    TransientSolution solution = TransientSolution.Solve(analysis, h);
-    ExtractedSystem system = Extractor.Extract(analysis, h);
+    TransientSolution solution = loaded.Solution;
+    ExtractedSystem system = loaded.System;
     // The default exact rebuild is the same as black-box mode, so the data matches what a box will see.
     CircuitInterpreter Create() => new(system, inputSymbol, nodes, h, Oversample, Iterations, solution);
     CircuitInterpreter CreateWithCap(int cap) => new(system, inputSymbol, nodes, h, Oversample, cap, solution);

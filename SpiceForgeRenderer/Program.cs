@@ -8,17 +8,21 @@ using Expression = ComputerAlgebra.Expression;
 // Renders a WAV file through a LiveSPICE schematic. Each channel runs through its own copy of the circuit.
 // The input samples drive the schematic's Input component, and the output is the sum of its speakers,
 // both in LiveSPICE's normalized units, so a full-scale sample is the component's 0 dBFS voltage.
+// Pots are runtime parameters by default, held at their schematic positions; --static-pots bakes them in instead.
 
 const int Oversample = 8;
 const int Iterations = 8;
 const int BlockSize = 4096;
 
 string? engine = "compiled";
+bool dynamicPots = true;
 var positional = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--engine" && i + 1 < args.Length)
         engine = args[++i];
+    else if (args[i] == "--static-pots")
+        dynamicPots = false;
     else if (args[i].StartsWith("--"))
         return Usage($"Unknown option '{args[i]}'.");
     else
@@ -39,8 +43,11 @@ try
     ISampleProvider samples = reader.ToSampleProvider();
 
     var watch = System.Diagnostics.Stopwatch.StartNew();
-    var circuit = Schematic.Load(schematicPath, new ConsoleLog { Verbosity = MessageType.Error }).Build();
-    circuit.Name = Path.GetFileNameWithoutExtension(schematicPath);
+    Expression h = (Real)1 / (sampleRate * Oversample);
+    // The stock engine is LiveSPICE's own, which only runs with the pots baked in.
+    LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, dynamicPots && engine == "compiled",
+        new ConsoleLog { Verbosity = MessageType.Error });
+    var circuit = loaded.Circuit;
 
     var inputs = circuit.Components.OfType<Input>().ToList();
     if (inputs.Count != 1)
@@ -51,15 +58,12 @@ try
     if (speakers.Count == 0)
         throw new InvalidOperationException("The schematic has no Speaker component to take the output from.");
 
-    Expression h = (Real)1 / (sampleRate * Oversample);
-    Analysis analysis = circuit.Analyze();
-    TransientSolution solution = TransientSolution.Solve(analysis, h);
-
     Func<Processor> create = engine == "stock"
-        ? StockFactory(solution, input, speakers)
-        : CompiledFactory(analysis, solution, h, input, speakers);
+        ? StockFactory(loaded.Solution, input, speakers)
+        : CompiledFactory(loaded.System, loaded.Solution, h, input, speakers);
     Processor[] processors = Enumerable.Range(0, channels).Select(_ => create()).ToArray();
-    Console.WriteLine($"Built {circuit.Name} for {sampleRate} Hz, {channels} channel(s), {engine} engine, in {watch.Elapsed.TotalSeconds:F2} s.");
+    string pots = engine == "stock" ? "" : loaded.Pots.Count > 0 ? $", {loaded.Pots.Count} dynamic pot(s)" : dynamicPots ? "" : ", pots baked in";
+    Console.WriteLine($"Built {circuit.Name} for {sampleRate} Hz, {channels} channel(s), {engine} engine{pots}, in {watch.Elapsed.TotalSeconds:F2} s.");
 
     using var writer = new WaveFileWriter(outputPath, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
     var interleaved = new float[BlockSize * channels];
@@ -105,9 +109,8 @@ catch (Exception ex)
 }
 
 // Runs the port-reduced compiled engine, reading each speaker's two nodes and combining them.
-static Func<Processor> CompiledFactory(Analysis analysis, TransientSolution solution, Expression h, Expression input, List<Speaker> speakers)
+static Func<Processor> CompiledFactory(ExtractedSystem system, TransientSolution solution, Expression h, Expression input, List<Speaker> speakers)
 {
-    ExtractedSystem system = Extractor.Extract(analysis, h);
     Expression[] nodes = speakers.SelectMany(s => new[] { s.Anode.V, s.Cathode.V }).ToArray();
     foreach (Expression node in nodes)
         if (!system.Unknowns.Contains(node) && !node.EqualsZero())
@@ -149,7 +152,7 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock]");
+    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots]");
     return 2;
 }
 
