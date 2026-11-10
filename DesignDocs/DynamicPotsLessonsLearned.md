@@ -136,6 +136,50 @@ Blues Breaker 3.9 vs 3.3, Rat 10.3 vs 9.6, Big Muff 24.2 vs 20.2.
 - **Know which failures are already there.** The Unstable folder (Fuzz Face, Orange Squeezer, Triode stage) fails
   with pots baked in too, and the Rat's high-drive settings hit the iteration cap either way. Compare against
   earlier runs before calling something a regression.
+- **Know what each reference can and can't catch.** The tightly converged reference is our own engine with a far
+  stricter stopping rule. It shares our extraction and discretization, so it only measures Newton stopping error:
+  a bug in `Extractor` or in the BDF2 history would show up in it too. LiveSPICE's own `Simulation` is the only
+  independent check of that front end. Sample-exact matching (`matchLiveSpice`) isn't needed for that, though; a
+  tightly converged LiveSPICE (the instrumented copy, with the pull request 284 fix) at fixed pot settings would do.
+- **A regression oracle should test the path that ships.** Matched mode only runs with pots baked, on the normal
+  Newton path. Once dynamic pots are the default, it no longer exercises production code.
+
+## Making dynamic pots the default
+
+- **Put loading in one place first.** Thirteen call sites each loaded, solved and extracted a schematic their own
+  way, so "dynamic by default" had no single place to live. `CircuitLoader.Load` is now that place, with
+  `dynamicPots: false` to bake pots in.
+- **LiveSPICE's solve still needs a baked copy.** The engines use its solution for the stopping rule and DC start,
+  and LiveSPICE can't solve with symbolic pots, so the loader builds the circuit twice. The stock engine always
+  runs baked.
+- **Default only where it works, and say why elsewhere.** Segment recording and black-box segments don't support
+  dynamic pots, so `SpiceForgeSegments` bakes them explicitly, with a comment saying so. Making it dynamic would
+  have broken it silently.
+- **A dynamic default needs a way to set positions.** Without `--pot`, the renderer's dynamic pots sat at their
+  schematic settings, costing 10–20% for nothing. Pot positions are applied at load, by name or group, so the
+  dynamic, static and stock engines all see the same setting.
+- **Check equivalence on real renders.** Dynamic and baked renders agree to −140 dB or better (the resolution of
+  32-bit float output) on five circuits, including the SD-1 with a pot at an end stop.
+
+## What netlist_codegen does differently
+
+`netlist_codegen` (the original inspiration for the N-port approach) makes every component value a runtime
+parameter, recomputing all coefficients once per block from closed-form symbolic expressions. Its resistors are
+conductances, so it has LiveSPICE's end-stop hazard, not our formulation. What's worth learning from it is code
+generation:
+
+- **It models register pressure.** Its CPU profiles include register counts, and it estimates peak live values to
+  choose between per-block affine coefficients and per-sample expressions, and between Cramer's rule and an
+  unrolled LU. Our two largest speedups this branch were register-pressure problems found by hand.
+- **It inlines the Newton step solve.** The k×k pivoted LU is unrolled with constant subscripts in locals. Ours calls
+  `SolveStep` on arrays in memory every iteration. Not yet tried.
+- **It extrapolates Newton's starting guess and limits junction steps** (SPICE's pnjlim). We start from the
+  previous sample, which was only needed to match LiveSPICE. Not yet tried.
+- **Its segmentation is manual.** Automatic clusters are undirected union-find, coarser than our strongly
+  connected components. Real stage splits come only from `* sub-circuit:` directives, which drop the loading
+  across the cut and are exact only at ideal-source nodes. Its own tests cut only at ideal op-amp outputs.
+- **Ideal sources make exact cuts.** Part of why LiveSPICE's circuits don't split is that its op-amp macromodel has a
+  50 Ω output. With ideal outputs, our strongly connected components should split stages exactly (untested).
 
 ## Open issues
 
@@ -143,3 +187,9 @@ Blues Breaker 3.9 vs 3.3, Rat 10.3 vs 9.6, Big Muff 24.2 vs 20.2.
   solved pot-leg block factored, as LiveSPICE pull request 282 does, might reduce the live set further.
 - The SD-1's remaining overhead is its live coefficient reads, about 0.3 µs (2.36 live vs 2.05 inlined).
 - The Phase 90's sweep has many capped steps that aren't explained yet.
+- Segmentation isn't connected to the reduced path: no port-group scheduling, no segment recording, and black-box
+  segments are built from the full system with the pot legs inside. On the test circuits this changes no results,
+  since none currently splits, but it blocks lookup tables and stage cuts with dynamic pots.
+- Matched mode, and so the normal Newton path, exists only for comparing against LiveSPICE. Replacing it with a
+  tightly converged LiveSPICE reference would leave one Newton path.
+- Pots can be set per render but not automated over time.

@@ -1,8 +1,8 @@
 <Solution>
-  <Folder Name="/Solution Items/">
-    <File Path="DynamicPotsLessonsLearned.md" />
-    <File Path="LessonsLearned.md" />
-    <File Path="PLAN.md" />
+  <Folder Name="/DesignDocs/">
+    <File Path="DesignDocs/DynamicPotsLessonsLearned.md" />
+    <File Path="DesignDocs/LessonsLearned.md" />
+    <File Path="DesignDocs/PLAN.md" />
   </Folder>
   <Project Path="Dependencies/LiveSPICE/Circuit/Circuit.csproj" />
   <Project Path="Dependencies/LiveSPICE/ComputerAlgebra/ComputerAlgebra/ComputerAlgebra.csproj" />
