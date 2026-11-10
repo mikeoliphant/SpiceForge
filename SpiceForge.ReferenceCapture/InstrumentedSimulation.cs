@@ -1,5 +1,8 @@
 // Derived from LiveSPICE Circuit/Simulation/Simulation.cs. Identical numerics, plus one NewtonRecorder call
 // per Newton iteration. Program.cs verifies its output is bit-identical to the stock Simulation.
+// Three opt-in changes turn it into a tightly converged, independent reference (see SpiceForge.Validate's livespice
+// mode): Newton's stopping tolerances, the iteration cap (Iterations), and FixStalePostNewtonValues, the fix from
+// LiveSPICE pull request 284. With their defaults, the numerics stay exactly stock.
 using Circuit;
 using ComputerAlgebra;
 using ComputerAlgebra.LinqCompiler;
@@ -70,6 +73,22 @@ namespace SpiceForge.ReferenceCapture
         /// Maximum number of iterations allowed for the simulation to converge.
         /// </summary>
         public int Iterations { get { return iterations; } set { iterations = value; recorder.Begin(newtonSystems.Count, value); InvalidateProcess(); } }
+
+        private double relativeTolerance = 1e-4, absoluteTolerance = 1e-6;
+        /// <summary>
+        /// Newton's stopping rule: |dv| &lt; |v|·RelativeTolerance + AbsoluteTolerance. The defaults are stock LiveSPICE's.
+        /// </summary>
+        public double RelativeTolerance { get { return relativeTolerance; } set { relativeTolerance = value; InvalidateProcess(); } }
+        public double AbsoluteTolerance { get { return absoluteTolerance; } set { absoluteTolerance = value; InvalidateProcess(); } }
+
+        private bool fixStale = false;
+        /// <summary>
+        /// The fix from LiveSPICE pull request 284. Stock LiveSPICE's CodeGen caches every subexpression and never clears
+        /// the cache after a Newton loop, so the solutions computed after it reuse values from before the final update.
+        /// When set, the cache is cleared after each Newton loop (one SyncPoint), so they use the converged values.
+        /// Off by default, which is stock behaviour.
+        /// </summary>
+        public bool FixStalePostNewtonValues { get { return fixStale; } set { fixStale = value; InvalidateProcess(); } }
 
         /// <summary>
         /// The sampling rate of this simulation, the sampling rate of the transient solution divided by the oversampling factor.
@@ -330,7 +349,7 @@ namespace SpiceForge.ReferenceCapture
                                         LinqExpr dv = code[NewtonIteration.Delta(i)];
 
                                         // done &= (|dv| < |v|*epsilon)
-                                        code.Add(LinqExpr.AndAssign(done, LinqExpr.LessThan(Abs(dv), MultiplyAdd(Abs(v), LinqExpr.Constant(1e-4), LinqExpr.Constant(1e-6)))));
+                                        code.Add(LinqExpr.AndAssign(done, LinqExpr.LessThan(Abs(dv), MultiplyAdd(Abs(v), LinqExpr.Constant(relativeTolerance), LinqExpr.Constant(absoluteTolerance)))));
                                         // v += dv
                                         code.Add(LinqExpr.AddAssign(v, dv));
                                     }
@@ -341,6 +360,10 @@ namespace SpiceForge.ReferenceCapture
                                     // --it;
                                     code.Add(LinqExpr.PreDecrementAssign(it));
                                 }, LinqExpr.GreaterThan(it, Zero));
+
+                                // LiveSPICE pull request 284: later expressions use the converged values, not cached ones.
+                                if (fixStale)
+                                    code.SyncPoint();
 
                                 //// bool failed = false
                                 //LinqExpr failed = Decl(code, code, "failed", LinqExpr.Constant(false));

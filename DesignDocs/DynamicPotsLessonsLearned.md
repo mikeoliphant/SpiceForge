@@ -140,9 +140,21 @@ Blues Breaker 3.9 vs 3.3, Rat 10.3 vs 9.6, Big Muff 24.2 vs 20.2.
   stricter stopping rule. It shares our extraction and discretization, so it only measures Newton stopping error:
   a bug in `Extractor` or in the BDF2 history would show up in it too. LiveSPICE's own `Simulation` is the only
   independent check of that front end. Sample-exact matching (`matchLiveSpice`) isn't needed for that, though; a
-  tightly converged LiveSPICE (the instrumented copy, with the pull request 284 fix) at fixed pot settings would do.
+  tightly converged LiveSPICE at fixed pot settings does it (see below).
 - **A regression oracle should test the path that ships.** Matched mode only runs with pots baked, on the normal
   Newton path. Once dynamic pots are the default, it no longer exercises production code.
+
+- **Converge both sides, and an independent reference becomes precise.** `livespice` mode runs LiveSPICE's own
+  solver (the instrumented copy, with the pull request 284 fix, 1e-10 tolerance and up to 100 iterations) against
+  our dynamic engine at the same tolerance, at four pot settings including both end stops. Every circuit in
+  `Circuits` and `Examples` agrees to −147 dB or better, most to −170 to −250 dB. Even the Rat agrees to −170 dB:
+  once neither side has stopping error or the stale-values bug, its sensitivity no longer matters.
+- **Keep the reference's changes opt-in and verifiable.** The copy's tolerances and the fix default to stock, and the
+  capture tool still confirms it is bit-identical to stock `Simulation` with those defaults. The project references
+  only LiveSPICE, so the reference can't reach our code.
+- **An independent reference finds robustness gaps, not just bugs.** On the Fuzz Face, our Newton hits the 100-iteration
+  cap on hundreds of steps where LiveSPICE's caps on at most 10, with a clean noise control. Our own tight reference
+  couldn't have shown that, since it runs the same Newton.
 
 ## Making dynamic pots the default
 
@@ -190,6 +202,9 @@ generation:
 - Segmentation isn't connected to the reduced path: no port-group scheduling, no segment recording, and black-box
   segments are built from the full system with the pot legs inside. On the test circuits this changes no results,
   since none currently splits, but it blocks lookup tables and stage cuts with dynamic pots.
-- Matched mode, and so the normal Newton path, exists only for comparing against LiveSPICE. Replacing it with a
-  tightly converged LiveSPICE reference would leave one Newton path.
+- Matched mode, and so the normal Newton path, now exists only for sample-exact comparison with stock LiveSPICE.
+  With the tightly converged LiveSPICE reference in place, both can go, leaving one Newton path, once segmentation
+  has moved to the reduced path.
+- Our port-reduced Newton is less robust than LiveSPICE's on the Fuzz Face (hundreds of capped steps against at most
+  10). Junction limiting, as netlist_codegen does, is a candidate fix.
 - Pots can be set per render but not automated over time.

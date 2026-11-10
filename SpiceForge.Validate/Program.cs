@@ -27,6 +27,23 @@ if (args.Length > 0 && args[0] == "jit")
 if (args.Length > 0 && args[0] == "coverage")
     return CoverageCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
+if (args.Length > 0 && args[0] == "livespice")
+{
+    // livespice [filter] [--jobs N] [--threshold dB]: against a tightly converged LiveSPICE, with PR 284 fixed.
+    string? Value(string flag)
+    {
+        int index = Array.IndexOf(args, flag);
+        return index > 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+    if (Value("--jobs") is string jobs)
+        LiveSpiceCheck.Jobs = jobs == "auto" ? Environment.ProcessorCount : int.Parse(jobs);
+    if (Value("--threshold") is string threshold)
+        LiveSpiceCheck.ThresholdDb = double.Parse(threshold, System.Globalization.CultureInfo.InvariantCulture);
+    string[] valued = { "--jobs", "--file", "--threshold" };
+    string? liveSpiceFilter = args.Skip(1).Where((a, i) => !a.StartsWith("--") && !valued.Contains(args[i])).FirstOrDefault();
+    return LiveSpiceCheck.Run(testsDir, liveSpiceFilter, Value("--file"));
+}
+
 if (args.Length > 1 && args[0] == "potsensitivity")
     return PotSensitivity.Run(testsDir, args[1]);
 if (args.Length > 1 && args[0] == "profile")
