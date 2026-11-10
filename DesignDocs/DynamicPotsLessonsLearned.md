@@ -273,10 +273,15 @@ the error against the uncut circuit, with no load or a linear copy of the downst
 
 ## Open issues
 
-- Live coefficient reads remain a cost: the Big Muff's inlined step is 5 µs faster than its live one. Keeping the
-  solved pot-leg block factored, as LiveSPICE pull request 282 does, might reduce the live set further.
-- The SD-1's remaining overhead is its live coefficient reads, about 0.3 µs (2.36 live vs 2.05 inlined).
-- The Phase 90's sweep has many capped steps that aren't explained yet.
-- Our port-reduced Newton is less robust than LiveSPICE's on the Fuzz Face (hundreds of capped steps against at most
-  10). Junction limiting, as netlist_codegen does, is a candidate fix.
+- Live coefficient reads remain a cost on large circuits: the Big Muff's dynamic step is about 3 µs slower than baked
+  (18.5 against 15.7). Keeping the solved pot-leg block factored, as LiveSPICE pull request 282 does, might reduce the
+  live set further.
+- Stage cuts across loaded devices (BJT bases, conducting tube grids) need a load model that includes the downstream
+  stage's input device; `cut` has only no load and a linear load.
+- Our Newton is less robust than LiveSPICE's on the Fuzz Face (hundreds of capped steps against at most 10), even with
+  the extrapolated guess and restart. Junction limiting, as netlist_codegen does, is a candidate fix. The Phase 90's
+  sweep also has capped steps that aren't explained.
+- Lookup tables over a pot need recordings that sweep it (`--sweep`), and are built in the table's bounding box, so
+  thousands of corner points the circuit never reaches don't converge (harmlessly, so far).
 - Pots can be set per render but not automated over time.
+- The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.
