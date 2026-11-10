@@ -16,7 +16,8 @@ internal static class DynamicPotCheck
     private const int Oversample = 8;
     private const int IterationCap = 8;
     public static int Samples = 4800;
-    private const int SweepSamples = 96000;
+    public static int SweepSamples = 24000;
+    public static bool Timing;
     public static int SweepBlock = 64;
     public static int SweepCap = IterationCap;
 
@@ -32,17 +33,52 @@ internal static class DynamicPotCheck
         ("0.9/0.1", new[] { 0.9, 0.1 }),
     };
 
-    public static int Run(string testsDir, string? filter)
+    /// <summary>
+    /// A small set covering the main structures, for checking while iterating: one diode pair, free unknowns, a large
+    /// circuit, high gain, op amps with several pots, and a linear-only circuit.
+    /// </summary>
+    public static readonly string[] QuickSet =
     {
-        var files = new[] { "Circuits", "Examples", "Unstable" }
+        "Ibanez Tube Screamer TS-9",
+        "Boss Super Overdrive SD-1",
+        "Marshall Blues Breaker",
+        "Big Muff Pi",
+        "Pro Co Rat",
+        "59 Bassman Tone Stack",
+    };
+
+    /// <summary>Runs these circuits only (--quick).</summary>
+    public static bool Quick;
+
+    /// <summary>Circuits to run at once, each in its own process (--jobs N).</summary>
+    public static int Jobs = 1;
+
+    /// <summary>Arguments a child needs to run the same checks (everything but the circuit selection and --jobs).</summary>
+    public static string[] ChildArguments = Array.Empty<string>();
+
+    public static int Run(string testsDir, string? filter, string? exactFile = null)
+    {
+        var files = exactFile != null ? new List<string> { exactFile } : new[] { "Circuits", "Examples", "Unstable" }
             .SelectMany(folder => Directory.GetFiles(Path.Combine(testsDir, folder), "*.schx").OrderBy(p => p, StringComparer.Ordinal))
-            .Where(p => filter == null || p.Contains(filter, StringComparison.OrdinalIgnoreCase));
+            .Where(p => filter == null || p.Contains(filter, StringComparison.OrdinalIgnoreCase))
+            .Where(p => !Quick || QuickSet.Contains(Path.GetFileNameWithoutExtension(p)))
+            .ToList();
+
+        if (Jobs > 1 && files.Count > 1)
+        {
+            var watch = Stopwatch.StartNew();
+            int problems = ParallelRunner.Run(files.Select(f => new[] { "dynamic", "--file", f }.Concat(ChildArguments).ToArray()).ToList(), Jobs);
+            Console.WriteLine($"{problems} problem(s).");
+            Phases.Report(Console.Out);
+            Console.WriteLine($"{files.Count} circuits in {watch.Elapsed.TotalSeconds:F1} s with {Jobs} jobs.");
+            return problems == 0 ? 0 : 1;
+        }
 
         int failures = 0;
         foreach (string file in files)
         {
             string name = Path.GetRelativePath(testsDir, file).Replace('\\', '/').Replace(".schx", "");
-            var probe = Schematic.Load(file, new NullLog()).Build();
+            var probe = Phases.Time("load schematic", () => Schematic.Load(file, new NullLog()).Build());
             if (!probe.Components.OfType<IPotControl>().Any())
                 continue;
 
@@ -59,6 +95,7 @@ internal static class DynamicPotCheck
             }
         }
         Console.WriteLine($"{failures} problem(s).");
+        Phases.Report(Console.Out);
         return failures == 0 ? 0 : 1;
     }
 
@@ -66,13 +103,13 @@ internal static class DynamicPotCheck
 
     private sealed record Built(Circuit.Circuit Circuit, ExtractedSystem System, TransientSolution Solution, Expression Input, Expression[] Outputs, IReadOnlyList<PotParameter> Pots);
 
-    // Loads the circuit with its pots at a setting. Dynamic: pots become runtime parameters (LiveSPICE's solution, which
-    // the engine only uses for its stopping rule, comes from the same circuit with pots baked in). Static: baked in.
-    private static Built Load(string file, double[]? wipes, bool dynamic)
+    // Loads the circuit with its pots at a setting, twice: baked in, and with pots as runtime parameters. Both share
+    // LiveSPICE's solution of the baked circuit (the dynamic engine only uses it for its stopping rule).
+    private static (Built Baked, Built Dynamic) Load(string file, double[]? wipes)
     {
         Circuit.Circuit Make()
         {
-            var circuit = Schematic.Load(file, new NullLog()).Build();
+            var circuit = Phases.Time("load schematic", () => Schematic.Load(file, new NullLog()).Build());
             var pots = circuit.Components.OfType<IPotControl>().ToList();
             if (wipes != null)
                 for (int i = 0; i < pots.Count; i++)
@@ -80,14 +117,19 @@ internal static class DynamicPotCheck
             return circuit;
         }
 
+        Built Finish(Circuit.Circuit circuit, TransientSolution solution, IReadOnlyList<PotParameter> parameters)
+        {
+            ExtractedSystem system = Phases.Time("extract", () => Extractor.Extract(circuit.Analyze(), h, parameters));
+            Expression input = circuit.Components.Where(i => i is Input).Select(i => Component.DependentVariable(i.Name, Component.t)).DefaultIfEmpty("V[t]").Single();
+            Expression[] outputs = circuit.Nodes.Select(i => i.V).ToArray();
+            return new Built(circuit, system, solution, input, outputs, parameters);
+        }
+
         Circuit.Circuit baked = Make();
-        TransientSolution solution = TransientSolution.Solve(baked.Analyze(), h);
-        Circuit.Circuit circuit = dynamic ? Make() : baked;
-        IReadOnlyList<PotParameter> parameters = dynamic ? DynamicPots.Replace(circuit) : Array.Empty<PotParameter>();
-        ExtractedSystem system = Extractor.Extract(circuit.Analyze(), h, parameters);
-        Expression input = circuit.Components.Where(i => i is Input).Select(i => Component.DependentVariable(i.Name, Component.t)).DefaultIfEmpty("V[t]").Single();
-        Expression[] outputs = circuit.Nodes.Select(i => i.V).ToArray();
-        return new Built(circuit, system, solution, input, outputs, parameters);
+        TransientSolution solution = Phases.Time("LiveSPICE solve", () => TransientSolution.Solve(baked.Analyze(), h));
+        Circuit.Circuit dynamic = Make();
+        IReadOnlyList<PotParameter> parameters = DynamicPots.Replace(dynamic);
+        return (Finish(baked, solution, Array.Empty<PotParameter>()), Finish(dynamic, solution, parameters));
     }
 
     private static int CheckSettings(string file)
@@ -96,17 +138,15 @@ internal static class DynamicPotCheck
         Console.WriteLine($"  {"setting",-14}{"in",5}{"dynamic vs baked dB",21}{"iters baked",13}{"iters dynamic",15}{"capped b/d",12}  status");
         foreach (var setting in Settings)
         {
-            Built baked = Load(file, setting.Wipes, dynamic: false);
-            Built dynamic = Load(file, setting.Wipes, dynamic: true);
+            (Built baked, Built dynamic) = Load(file, setting.Wipes);
             foreach (double amplitude in new[] { 0.5, 5.0 })
             {
                 double[] input = Harmonics(Samples, amplitude);
-                var a = new CircuitInterpreter(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution);
-                var b = new CircuitInterpreter(dynamic.System, dynamic.Input, dynamic.Outputs, h, Oversample, IterationCap, dynamic.Solution);
+                var a = Phases.Time("build interpreter", () => new CircuitInterpreter(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
+                var b = Phases.Time("build interpreter", () => new CircuitInterpreter(dynamic.System, dynamic.Input, dynamic.Outputs, h, Oversample, IterationCap, dynamic.Solution));
                 double[][] outA = baked.Outputs.Select(_ => new double[Samples]).ToArray();
                 double[][] outB = dynamic.Outputs.Select(_ => new double[Samples]).ToArray();
-                a.Run(input, outA);
-                b.Run(input, outB);
+                Phases.Time("settings: simulate", () => { a.Run(input, outA); b.Run(input, outB); });
                 double db = ReferenceCheck.WorstErrorDb(outA, outB);
                 bool ok = db <= -100;
                 if (!ok)
@@ -120,7 +160,7 @@ internal static class DynamicPotCheck
     // Sweeps every pot end to end and back while running, updating every SweepBlock samples.
     private static int CheckSweep(string file)
     {
-        Built built = Load(file, null, dynamic: true);
+        (Built baked, Built built) = Load(file, null);
         double[] input = Harmonics(SweepSamples, 1.0);
         int pots = built.Pots.Count;
         double Wipe(int n, int pot) { double phase = (n / (double)SweepSamples + pot / (double)Math.Max(pots, 1)) % 1; return phase < 0.5 ? 2 * phase : 2 - 2 * phase; }
@@ -140,61 +180,74 @@ internal static class DynamicPotCheck
             return result;
         }
 
-        var engine = new CircuitInterpreter(built.System, built.Input, built.Outputs, h, Oversample, SweepCap, built.Solution);
-        double[] ours = Run((b, x, s, c) => engine.Run(x.AsSpan(s, c).ToArray(), b), engine.ParameterValues);
+        var engine = Phases.Time("build interpreter", () => new CircuitInterpreter(built.System, built.Input, built.Outputs, h, Oversample, SweepCap, built.Solution));
+        double[] ours = Phases.Time("sweep: interpreter", () => Run((b, x, s, c) => engine.Run(x.AsSpan(s, c).ToArray(), b), engine.ParameterValues));
 
-        var tight = new CircuitInterpreter(built.System, built.Input, built.Outputs, h, Oversample, 100, built.Solution)
+        // A tightly converged sweep to compare against. It only changes with the circuit and the sweep, so it is cached
+        // on disk (--refresh recomputes it).
+        double[] reference = Phases.Time("sweep: tight reference", () => ReferenceCache.GetOrCreate(file, $"sweep {SweepSamples} {SweepBlock}", () =>
         {
-            RelativeTolerance = 1e-10,
-            AbsoluteTolerance = 1e-12,
-        };
-        double[] reference = Run((b, x, s, c) => tight.Run(x.AsSpan(s, c).ToArray(), b), tight.ParameterValues);
+            var tight = new CircuitInterpreter(built.System, built.Input, built.Outputs, h, Oversample, 100, built.Solution)
+            {
+                RelativeTolerance = 1e-10,
+                AbsoluteTolerance = 1e-12,
+            };
+            return Run((b, x, s, c) => tight.Run(x.AsSpan(s, c).ToArray(), b), tight.ParameterValues);
+        }));
 
-        var compiled = new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution);
+        var compiled = Phases.Time("JIT compile", () => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
         var watch = Stopwatch.StartNew();
         double[] jit = Run((b, x, s, c) => compiled.Run(x.AsSpan(s, c).ToArray(), b), compiled.ParameterValues);
         double dynamicUs = watch.Elapsed.TotalMilliseconds * 1000 / SweepSamples;
+        Phases.Add("sweep: compiled", watch.Elapsed);
 
-        Built baked = Load(file, null, dynamic: false);
-        var staticCompiled = new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution);
+        var staticCompiled = Phases.Time("JIT compile", () => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
         double[][] scratch = baked.Outputs.Select(_ => new double[SweepBlock]).ToArray();
         watch.Restart();
         for (int start = 0; start < SweepSamples; start += SweepBlock)
             staticCompiled.Run(input.AsSpan(start, SweepBlock).ToArray(), scratch);
         double staticUs = watch.Elapsed.TotalMilliseconds * 1000 / SweepSamples;
-
-        // Profiling: the same circuit with every live coefficient compiled as a constant, and repeated timings.
-        double Best(Func<CompiledCircuit> make)
+        Phases.Add("sweep: compiled", watch.Elapsed);
+        string stillNote = "";
+        if (Timing)
         {
-            double best = double.MaxValue;
-            for (int pass = 0; pass < 3; pass++)
+            var timingWatch = Stopwatch.StartNew();
+
+            // Profiling: the same circuit with every live coefficient compiled as a constant, and repeated timings.
+            double Best(Func<CompiledCircuit> make)
             {
-                var engineUnderTest = make();
-                double[][] buffers = built.Outputs.Select(_ => new double[SweepBlock]).ToArray();
-                var timer = Stopwatch.StartNew();
-                for (int start = 0; start < SweepSamples; start += SweepBlock)
-                    engineUnderTest.Run(input.AsSpan(start, SweepBlock).ToArray(), buffers);
-                best = Math.Min(best, timer.Elapsed.TotalMilliseconds * 1000 / SweepSamples);
+                double best = double.MaxValue;
+                for (int pass = 0; pass < 3; pass++)
+                {
+                    var engineUnderTest = make();
+                    double[][] buffers = built.Outputs.Select(_ => new double[SweepBlock]).ToArray();
+                    var timer = Stopwatch.StartNew();
+                    for (int start = 0; start < SweepSamples; start += SweepBlock)
+                        engineUnderTest.Run(input.AsSpan(start, SweepBlock).ToArray(), buffers);
+                    best = Math.Min(best, timer.Elapsed.TotalMilliseconds * 1000 / SweepSamples);
+                }
+                return best;
             }
-            return best;
+            double liveBest = Best(() => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
+            CompiledCircuit.InlineLiveForTesting = true;
+            double inlinedBest = Best(() => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
+            CompiledCircuit.InlineLiveForTesting = false;
+            double bakedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
+            CircuitInterpreter.ForceReductionForTesting = true;
+            double bakedReducedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
+            CircuitInterpreter.ForceReductionForTesting = false;
+            Console.WriteLine($"  best of 3, pots still: baked {bakedBest:F2} us, dynamic {liveBest:F2} us, dynamic with live coefficients inlined {inlinedBest:F2} us");
+            Console.WriteLine($"  best of 3: baked through the reduced path {bakedReducedBest:F2} us");
+            // The same compiled dynamic engine with its pots held still, so it never recomputes its reduction.
+            var still = new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution);
+            double[][] stillBuffers = built.Outputs.Select(_ => new double[SweepBlock]).ToArray();
+            watch.Restart();
+            for (int start = 0; start < SweepSamples; start += SweepBlock)
+                still.Run(input.AsSpan(start, SweepBlock).ToArray(), stillBuffers);
+            double stillUs = watch.Elapsed.TotalMilliseconds * 1000 / SweepSamples;
+            Phases.Add("timing (best of 3 etc.)", timingWatch.Elapsed);
+            stillNote = $"; compiled with pots still {stillUs:F2} us/sample";
         }
-        double liveBest = Best(() => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
-        CompiledCircuit.InlineLiveForTesting = true;
-        double inlinedBest = Best(() => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
-        CompiledCircuit.InlineLiveForTesting = false;
-        double bakedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
-        CircuitInterpreter.ForceReductionForTesting = true;
-        double bakedReducedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
-        CircuitInterpreter.ForceReductionForTesting = false;
-        Console.WriteLine($"  best of 3, pots still: baked {bakedBest:F2} us, dynamic {liveBest:F2} us, dynamic with live coefficients inlined {inlinedBest:F2} us");
-        Console.WriteLine($"  best of 3: baked through the reduced path {bakedReducedBest:F2} us");
-        // The same compiled dynamic engine with its pots held still, so it never recomputes its reduction.
-        var still = new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution);
-        double[][] stillBuffers = built.Outputs.Select(_ => new double[SweepBlock]).ToArray();
-        watch.Restart();
-        for (int start = 0; start < SweepSamples; start += SweepBlock)
-            still.Run(input.AsSpan(start, SweepBlock).ToArray(), stillBuffers);
-        double stillUs = watch.Elapsed.TotalMilliseconds * 1000 / SweepSamples;
         static int NonZero(double[,] matrix) { int count = 0; foreach (double x in matrix) if (x != 0) count++; return count; }
         var bakedPlan = new CircuitInterpreter(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution);
         Console.WriteLine($"  inputs per step {baked.System.Parameters.Length} baked / {built.System.Parameters.Length} dynamic; gain nonzeros {NonZero(bakedPlan.parameterGain)} / {NonZero(engine.parameterGain)} of {bakedPlan.parameterGain.Length} / {engine.parameterGain.Length}");
@@ -214,7 +267,7 @@ internal static class DynamicPotCheck
         }
         Console.WriteLine($"  sizes: unknowns {baked.System.Unknowns.Length} baked / {built.System.Unknowns.Length} dynamic; ports {baked.System.Ports} / {built.System.Ports} "
             + $"({engine.EliminatedPorts} eliminated); terms {baked.System.Nonlinear.Length} / {built.System.Nonlinear.Length}; "
-            + $"compiled with pots still {stillUs:F2} us/sample; reductions recomputed during the sweep {engine.ReductionUpdates}.");
+            + $"reductions recomputed during the sweep {engine.ReductionUpdates}{stillNote}.");
         double[][] Split(double[] all) => Enumerable.Range(0, built.Outputs.Length).Select(o => all.AsSpan(o * SweepSamples, SweepSamples).ToArray()).ToArray();
         bool finite = ours.All(double.IsFinite);
         double vsTight = ReferenceCheck.WorstErrorDb(Split(reference), Split(ours));

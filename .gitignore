@@ -363,3 +363,6 @@ MigrationBackup/
 FodyWeavers.xsd
 # Regenerable reference captures (manifest.json is tracked)
 Reference/data/
+
+# Cached validation references (SpiceForge.Validate)
+.validate-cache/

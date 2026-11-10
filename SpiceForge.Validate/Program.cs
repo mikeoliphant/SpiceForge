@@ -9,6 +9,13 @@ const int Oversample = 8;
 const int Samples = 200;
 const double Tolerance = 1e-6;
 
+// A child process started by ParallelRunner: same arguments, prefixed with --child.
+if (args.Length > 0 && args[0] == "--child")
+{
+    ParallelRunner.IsChild = true;
+    args = args[1..];
+}
+
 string repo = FindRepoRoot();
 string testsDir = Path.Combine(repo, "Dependencies", "LiveSPICE", "Tests");
 if (args.Length > 0 && args[0] == "segment")
@@ -25,12 +32,46 @@ if (args.Length > 1 && args[0] == "profile")
 
 if (args.Length > 0 && args[0] == "dynamic")
 {
-    if (args.Contains("--long")) DynamicPotCheck.Samples = 96000;
-    int blockIndex = Array.IndexOf(args, "--block");
-    if (blockIndex > 0) DynamicPotCheck.SweepBlock = int.Parse(args[blockIndex + 1]);
-    int capIndex = Array.IndexOf(args, "--cap");
-    if (capIndex > 0) DynamicPotCheck.SweepCap = int.Parse(args[capIndex + 1]);
-    return DynamicPotCheck.Run(testsDir, args.Length > 1 && !args[1].StartsWith("--") ? args[1] : null);
+    // dynamic [filter] [--quick] [--jobs N] [--long] [--timing] [--refresh] [--block N] [--cap N]
+    var passOn = new List<string>();
+    string? Value(string flag)
+    {
+        int index = Array.IndexOf(args, flag);
+        return index > 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+    bool Flag(string flag, bool passToChildren = true)
+    {
+        bool set = args.Contains(flag);
+        if (set && passToChildren)
+            passOn.Add(flag);
+        return set;
+    }
+    if (Flag("--long"))
+    {
+        DynamicPotCheck.Samples = 96000;
+        DynamicPotCheck.SweepSamples = 96000;
+    }
+    DynamicPotCheck.Timing = Flag("--timing");
+    ReferenceCache.Refresh = Flag("--refresh");
+    ReferenceCache.Directory = Path.Combine(repo, ".validate-cache");
+    DynamicPotCheck.Quick = Flag("--quick", passToChildren: false);
+    if (Value("--block") is string block)
+    {
+        DynamicPotCheck.SweepBlock = int.Parse(block);
+        passOn.AddRange(new[] { "--block", block });
+    }
+    if (Value("--cap") is string cap)
+    {
+        DynamicPotCheck.SweepCap = int.Parse(cap);
+        passOn.AddRange(new[] { "--cap", cap });
+    }
+    if (Value("--jobs") is string jobs)
+        DynamicPotCheck.Jobs = jobs == "auto" ? Environment.ProcessorCount : int.Parse(jobs);
+    DynamicPotCheck.ChildArguments = passOn.ToArray();
+
+    string[] valued = { "--block", "--cap", "--jobs", "--file" };
+    string? dynamicFilter = args.Skip(1).Where((a, i) => !a.StartsWith("--") && !valued.Contains(args[i])).FirstOrDefault();
+    return DynamicPotCheck.Run(testsDir, dynamicFilter, Value("--file"));
 }
 
 if (args.Length > 3 && args[0] == "accuracy")
