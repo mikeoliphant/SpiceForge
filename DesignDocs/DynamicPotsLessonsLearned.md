@@ -263,6 +263,14 @@ the error against the uncut circuit, with no load or a linear copy of the downst
 - **It doesn't fix every robustness gap.** The Fuzz Face still caps where LiveSPICE's Newton doesn't, and it and the
   Orange Squeezer run slower with the restart firing.
 
+## Inlining the Newton step solve
+
+- **Unroll small solves into locals.** Newton systems of up to 8 unknowns are now solved by one small C# routine
+  (Gaussian elimination with row swaps), which compiled steps emit unrolled on local variables instead of calling a
+  solver on arrays; the interpreter calls the routine itself, so both still agree to the bit. The SD-1 went from 1.87
+  to 1.43 µs baked, and the JIT benchmark's median speed against stock from 0.73× to 0.91×.
+- **Not too large.** Unrolling up to 12 made the Big Muff's 10-port solve slower (15.7 to 18.0 µs baked).
+
 ## Open issues
 
 - Live coefficient reads remain a cost: the Big Muff's inlined step is 5 µs faster than its live one. Keeping the

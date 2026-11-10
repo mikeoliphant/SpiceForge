@@ -457,6 +457,16 @@ public sealed class CompiledCircuit
             ParameterExpression iteration = code.DeclInit<int>("iteration", 0);
             ParameterExpression result = code.DeclInit<int>("result", 0);
             bool extrapolate = plan.ExtrapolateGuess && plan.history.Length > 1;
+            // Small systems are solved in locals, unrolled, instead of by a call on arrays (see CircuitInterpreter.SolveSmall).
+            bool inline = size > 0 && size <= CircuitInterpreter.InlineSolveLimit;
+            ParameterExpression[,]? cells = null;
+            if (inline)
+            {
+                cells = new ParameterExpression[size, size + 1];
+                for (int i = 0; i < size; i++)
+                    for (int j = 0; j <= size; j++)
+                        cells[i, j] = code.Decl<double>($"a{i}_{j}");
+            }
             ParameterExpression spent = code.DeclInit<int>("spent", 0);
             ParameterExpression restarted = code.DeclInit<bool>("restarted", !extrapolate);
             var finalQ = new LinqExpr?[TN.Length];
@@ -484,12 +494,17 @@ public sealed class CompiledCircuit
                             jacobian[c, j] = Local(ToDouble(code.Compile(gradient[pivotSymbols[N[j]]])));
                 }
 
+                LinqExpr AugmentedCell(ParameterExpression? row, int i, int j) => inline ? cells![i, j] : LinqExpr.ArrayAccess(row!, LinqExpr.Constant(j));
                 for (int i = 0; i < kn; i++)
                 {
-                    ParameterExpression row = code.Decl<double[]>("row" + i);
-                    code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(i))));
+                    ParameterExpression? row = null;
+                    if (!inline)
+                    {
+                        row = code.Decl<double[]>("row" + i);
+                        code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(i))));
+                    }
                     for (int j = 0; j <= size; j++)
-                        code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(j)), LinqExpr.Constant(j == i ? 1.0 : 0.0)));
+                        code.Add(LinqExpr.Assign(AugmentedCell(row, i, j), LinqExpr.Constant(j == i ? 1.0 : 0.0)));
                     LinqExpr rhs = open[i];
                     for (int c = 0; c < TN.Length; c++)
                     {
@@ -501,7 +516,7 @@ public sealed class CompiledCircuit
                         {
                             if (jacobian[c, j] is not LinqExpr slope)
                                 continue;
-                            IndexExpression target = LinqExpr.ArrayAccess(row, LinqExpr.Constant(j));
+                            LinqExpr target = AugmentedCell(row, i, j);
                             code.Add(LinqExpr.Assign(target, LinqExpr.Subtract(target, LinqExpr.Multiply(zc, slope))));
                             linearPart = LinqExpr.Subtract(linearPart, LinqExpr.Multiply(slope, w[j]));
                         }
@@ -509,15 +524,19 @@ public sealed class CompiledCircuit
                     }
                     for (int g = 0; g < dz; g++)
                         if (r.QzrUsed[i][g])
-                            code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(kn + g)), LinqExpr.Negate(Live(r.Qzr, i, g))));
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(size)), rhs));
+                            code.Add(LinqExpr.Assign(AugmentedCell(row, i, kn + g), LinqExpr.Negate(Live(r.Qzr, i, g))));
+                    code.Add(LinqExpr.Assign(AugmentedCell(row, i, size), rhs));
                 }
                 for (int f = 0; f < dz; f++)
                 {
-                    ParameterExpression row = code.Decl<double[]>("constraint" + f);
-                    code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(kn + f))));
+                    ParameterExpression? row = null;
+                    if (!inline)
+                    {
+                        row = code.Decl<double[]>("constraint" + f);
+                        code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(kn + f))));
+                    }
                     for (int j = 0; j <= size; j++)
-                        code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(j)), LinqExpr.Constant(0.0)));
+                        code.Add(LinqExpr.Assign(AugmentedCell(row, kn + f, j), LinqExpr.Constant(0.0)));
                     LinqExpr rhs = LinqExpr.Negate(constant[f]);
                     for (int c = 0; c < TN.Length; c++)
                     {
@@ -529,7 +548,7 @@ public sealed class CompiledCircuit
                         {
                             if (jacobian[c, j] is not LinqExpr slope)
                                 continue;
-                            IndexExpression target = LinqExpr.ArrayAccess(row, LinqExpr.Constant(j));
+                            LinqExpr target = AugmentedCell(row, kn + f, j);
                             code.Add(LinqExpr.Assign(target, LinqExpr.Add(target, LinqExpr.Multiply(weight, slope))));
                             linearPart = LinqExpr.Subtract(linearPart, LinqExpr.Multiply(slope, w[j]));
                         }
@@ -537,18 +556,27 @@ public sealed class CompiledCircuit
                     }
                     for (int g = 0; g < dz; g++)
                         if (r.CzrUsed[f][g])
-                            code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(kn + g)), Live(r.Czr, f, g)));
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(size)), rhs));
+                            code.Add(LinqExpr.Assign(AugmentedCell(row, kn + f, kn + g), Live(r.Czr, f, g)));
+                    code.Add(LinqExpr.Assign(AugmentedCell(row, kn + f, size), rhs));
                 }
 
-                if (size > 0)
-                    code.Add(LinqExpr.Call(SolveStep, augmentedArray, LinqExpr.Constant(stepSolution),
-                        LinqExpr.Constant(groups), LinqExpr.Constant(groupRows), LinqExpr.Constant(size)));
-
-                ParameterExpression[] next = Enumerable.Range(0, kn)
-                    .Select(j => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(j)))).ToArray();
-                ParameterExpression[] zNext = Enumerable.Range(0, dz)
-                    .Select(g => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(kn + g)))).ToArray();
+                ParameterExpression[] next, zNext;
+                if (inline)
+                {
+                    ParameterExpression[] x = EmitSolveSmall(cells!, size);
+                    next = x.Take(kn).ToArray();
+                    zNext = x.Skip(kn).ToArray();
+                }
+                else
+                {
+                    if (size > 0)
+                        code.Add(LinqExpr.Call(SolveStep, augmentedArray, LinqExpr.Constant(stepSolution),
+                            LinqExpr.Constant(groups), LinqExpr.Constant(groupRows), LinqExpr.Constant(size)));
+                    next = Enumerable.Range(0, kn)
+                        .Select(j => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(j)))).ToArray();
+                    zNext = Enumerable.Range(0, dz)
+                        .Select(g => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(kn + g)))).ToArray();
+                }
 
                 var linearized = new LinqExpr?[TN.Length];
                 for (int c = 0; c < TN.Length; c++)
@@ -617,6 +645,41 @@ public sealed class CompiledCircuit
             foreach (int i in required.Union(tracked).OrderBy(i => i))
                 code.Add(LinqExpr.Assign(Element(y, i), current.TryGetValue(i, out ParameterExpression? done) ? done : Rebuild(i, finalQ, z)));
             code.Return(result);
+        }
+
+        // CircuitInterpreter.SolveSmall, unrolled on locals: the same operations in the same order.
+        private ParameterExpression[] EmitSolveSmall(ParameterExpression[,] a, int size)
+        {
+            ParameterExpression swap = code.Decl<double>("swap");
+            for (int j = 0; j < size; j++)
+            {
+                for (int i = j + 1; i < size; i++)
+                {
+                    var exchange = new List<LinqExpr>();
+                    for (int k = j; k <= size; k++)
+                    {
+                        exchange.Add(LinqExpr.Assign(swap, a[j, k]));
+                        exchange.Add(LinqExpr.Assign(a[j, k], a[i, k]));
+                        exchange.Add(LinqExpr.Assign(a[i, k], swap));
+                    }
+                    code.Add(LinqExpr.IfThen(LinqExpr.GreaterThan(LinqExpr.Call(Abs, a[i, j]), LinqExpr.Call(Abs, a[j, j])), LinqExpr.Block(exchange)));
+                }
+                for (int i = j + 1; i < size; i++)
+                {
+                    ParameterExpression factor = Local(LinqExpr.Divide(a[i, j], a[j, j]));
+                    for (int k = j + 1; k <= size; k++)
+                        code.Add(LinqExpr.Assign(a[i, k], LinqExpr.Subtract(a[i, k], LinqExpr.Multiply(factor, a[j, k]))));
+                }
+            }
+            var x = new ParameterExpression[size];
+            for (int j = size - 1; j >= 0; j--)
+            {
+                LinqExpr value = a[j, size];
+                for (int k = j + 1; k < size; k++)
+                    value = LinqExpr.Subtract(value, LinqExpr.Multiply(a[j, k], x[k]));
+                x[j] = Local(LinqExpr.Divide(value, a[j, j]));
+            }
+            return x;
         }
 
         // Black-box mode on the reduced path, as CircuitInterpreter.SolveWithSegments: each segment's solver gives its

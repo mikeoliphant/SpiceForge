@@ -393,6 +393,38 @@ public sealed class CircuitInterpreter
 
     internal static int RowLength(int size) => size + 1 + (System.Numerics.Vector.IsHardwareAccelerated ? System.Numerics.Vector<double>.Count - 1 : 0);
 
+    /// <summary>Newton systems up to this size are solved by <see cref="SolveSmall"/>, which compiled steps unroll into
+    /// local variables instead of calling a solver on arrays.</summary>
+    internal const int InlineSolveLimit = 8;
+
+    /// <summary>
+    /// Solves the augmented system rows[0..size) (each size + 1 wide) into solution, by Gaussian elimination: for each
+    /// column, any lower row with a larger entry there is swapped up (in order), then the rows below are eliminated, then
+    /// back substitution. Compiled steps emit exactly these operations, unrolled, so both engines agree to the bit.
+    /// </summary>
+    internal static void SolveSmall(double[][] rows, double[] solution, int size)
+    {
+        for (int j = 0; j < size; j++)
+        {
+            for (int i = j + 1; i < size; i++)
+                if (Math.Abs(rows[i][j]) > Math.Abs(rows[j][j]))
+                    (rows[i], rows[j]) = (rows[j], rows[i]);
+            for (int i = j + 1; i < size; i++)
+            {
+                double factor = rows[i][j] / rows[j][j];
+                for (int k = j + 1; k <= size; k++)
+                    rows[i][k] -= factor * rows[j][k];
+            }
+        }
+        for (int j = size - 1; j >= 0; j--)
+        {
+            double value = rows[j][size];
+            for (int k = j + 1; k < size; k++)
+                value -= rows[j][k] * solution[k];
+            solution[j] = value / rows[j][j];
+        }
+    }
+
     // Compiled steps call this every Newton iteration. Without AggressiveOptimization it starts at tier 0 and stays there
     // until tiering catches up, which made short runs through the compiled reduced path 25% slower on the TS-9.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
@@ -1064,7 +1096,9 @@ public sealed class CircuitInterpreter
                     row[kn + g] = r.Czr[f][g];
                 row[size] = rhs;
             }
-            if (size > 0)
+            if (size > 0 && size <= InlineSolveLimit)
+                SolveSmall(reducedRows, reducedSolution, size);
+            else if (size > 0)
                 SolveLinearStep(reducedRows, reducedSolution, reducedGroups, reducedGroupRows, size);
 
             for (int c = 0; c < TN.Length; c++)
