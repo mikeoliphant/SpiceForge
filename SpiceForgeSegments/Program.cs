@@ -150,7 +150,7 @@ try
         meanIterations,
         cappedSteps = engine.IterationCounts.Count(b => (b & 0x80) != 0),
         solveShareOfRuntime = solveShare,
-        reconstruction = "Unknowns are rebuilt exactly from the segment outputs, as in black-box mode, rather than through LiveSPICE's post-Newton evaluation.",
+        reconstruction = "Unknowns are rebuilt exactly from the segment outputs, as after a Newton solve.",
         contract = "Each step, a segment's outputs are a fixed function of its inputs. Segments run in order; " +
                    "upstream inputs are the outputs of earlier segments on the same step. All circuit state stays outside the boxes.",
         replay,
@@ -226,8 +226,7 @@ static double[] Run(CircuitInterpreter engine, double[] input, int nodeCount, do
 
 // Records the first few seconds at full resolution, then reruns them with each segment replaced by a box that
 // plays those recorded outputs back. If the recorded inputs and outputs are everything a box needs, the circuit
-// reproduces its own output. Black-box mode rebuilds the other unknowns exactly from the box outputs, rather
-// than through LiveSPICE's post-Newton evaluation, so this measures that difference too.
+// reproduces its own output.
 static (double seconds, double outputErrorDb, double inputErrorDb) Verify(Func<CircuitInterpreter> create, double[] input, int sampleRate, double seconds, int nodeCount, double[] scales)
 {
     int samples = Math.Min(input.Length, (int)(seconds * sampleRate));

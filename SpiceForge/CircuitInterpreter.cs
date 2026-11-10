@@ -258,7 +258,7 @@ public sealed class CircuitInterpreter
 
         // Entries of Z that exact arithmetic would make zero come out as roundoff, and are cleared for the port groups.
         // With nothing to eliminate, the reduction's coefficients are Z itself, so they're cleared before it is built,
-        // as the normal Newton path always did. With pot legs to fold in, the reduction is built from Z as it is: a
+        // as the old normal Newton path did. With pot legs to fold in, the reduction is built from Z as it is: a
         // cleared entry can still matter once folded (a high-gain circuit amplifies it), and clearing them broke
         // circuits such as the Rockerverb and the Fender 5e3.
         bool clear = segment && dz == 0;
@@ -763,7 +763,7 @@ public sealed class CircuitInterpreter
     }
 
     // Black-box mode: each segment's solver gives its ports, free unknowns and nonlinear-term values, in solve order,
-    // and every unknown then follows from y = yLinear + G·q + Nz·z. LiveSPICE's post-Newton evaluation doesn't apply.
+    // and every unknown then follows from y = yLinear + G·q + Nz·z, exactly as after a Newton solve.
     private void SolveWithSegments()
     {
         if (UnownedTerms > 0)
@@ -789,16 +789,10 @@ public sealed class CircuitInterpreter
         step++;
     }
 
-    /// <summary>
-    /// By default every unknown follows from the solve, y = yLinear + G·q + Nz·z, with q the nonlinear-term values
-    /// Newton settled on. That is also how black-box mode works. (Rebuilding from q, not from the ports through q(w),
-    /// matters: in high-gain circuits G is large, and q(w) at a converged but inexact w is not accurate enough.)
-    /// When set, the unknowns outside LiveSPICE's Newton system are instead computed the way LiveSPICE's compiled code
-    /// does, reusing subexpressions cached before the last Newton update. That reproduces LiveSPICE's output sample for
-    /// sample, and its error: against a tightly converged reference, it is up to tens of dB less accurate on some
-    /// circuits. See LiveSPICE pull request 284.
-    /// </summary>
-    public bool MatchLiveSpice { get; }
+    // Every unknown follows from the solve, y = yLinear + G·q + Nz·z, with q the nonlinear-term values Newton settled
+    // on, as in black-box mode. (Rebuilding from q, not from the ports through q(w), matters: in high-gain circuits G is
+    // large, and q(w) at a converged but inexact w is not accurate enough. LiveSPICE instead reuses values cached before
+    // the last Newton update, which costs it up to tens of dB on some circuits; see LiveSPICE pull request 284.)
 
     /// <summary>
     /// Start Newton from the line through the last two steps, 2·y[n-1] - y[n-2], instead of from the previous step
