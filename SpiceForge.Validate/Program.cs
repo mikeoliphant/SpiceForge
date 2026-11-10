@@ -1,4 +1,4 @@
-using Circuit;
+﻿using Circuit;
 using ComputerAlgebra;
 using SpiceForge;
 using Util;
@@ -27,6 +27,8 @@ if (args.Length > 0 && args[0] == "jit")
 if (args.Length > 0 && args[0] == "coverage")
     return CoverageCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
+if (args.Length > 1 && args[0] == "potsensitivity")
+    return PotSensitivity.Run(testsDir, args[1]);
 if (args.Length > 1 && args[0] == "profile")
     return StepProfile.Run(testsDir, args[1]);
 
