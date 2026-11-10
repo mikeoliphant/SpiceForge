@@ -98,11 +98,11 @@ internal static class LiveSpiceCheck
             {
                 double[] signal = Harmonics(Samples, amplitude);
                 (double[][] reference, int theirCapped) = RunLiveSpice(solution, input, nodes, signal);
-                (double[][] noisy, _) = RunLiveSpice(solution, input, nodes, TraceCheck.WithNoise(signal, 1e-14));
+                (double[][] noisy, _) = RunLiveSpice(solution, input, nodes, Signals.WithNoise(signal, 1e-14));
                 (double[][] result, int ourCapped) = RunOurs(ours, input, nodes, h, signal);
 
-                double errorDb = ReferenceCheck.WorstErrorDb(reference, result);
-                double controlDb = ReferenceCheck.WorstErrorDb(reference, noisy);
+                double errorDb = Signals.WorstErrorDb(reference, result);
+                double controlDb = Signals.WorstErrorDb(reference, noisy);
                 bool finite = result.All(o => o.All(double.IsFinite)) && reference.All(o => o.All(double.IsFinite));
                 string status = !finite ? "NOT FINITE"
                     : errorDb <= ThresholdDb ? "ok"
@@ -163,7 +163,7 @@ internal static class LiveSpiceCheck
     {
         var x = new double[samples];
         for (int n = 0; n < samples; n++)
-            x[n] = ReferenceCheck.Harmonics(n / (double)SampleRate, amplitude, 82, 2);
+            x[n] = Signals.Harmonics(n / (double)SampleRate, amplitude, 82, 2);
         return x;
     }
 }

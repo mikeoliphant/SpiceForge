@@ -52,12 +52,9 @@ public sealed class CompiledCircuit
         int oversample,
         int iterationCap,
         TransientSolution solution,
-        bool matchLiveSpice = false,
         ISegmentSolver? segmentSolver = null)
     {
-        if (segmentSolver != null && matchLiveSpice)
-            throw new ArgumentException("Black boxes can't reproduce LiveSPICE's post-Newton evaluation.", nameof(segmentSolver));
-        var plan = new CircuitInterpreter(system, inputSymbol, outputSymbols, timeStep, oversample, iterationCap, solution, matchLiveSpice: matchLiveSpice);
+        var plan = new CircuitInterpreter(system, inputSymbol, outputSymbols, timeStep, oversample, iterationCap, solution);
         outputs = plan.outputs;
         this.oversample = oversample;
         substep = plan.substep;
@@ -129,7 +126,6 @@ public sealed class CompiledCircuit
         private ParameterExpression[] historyRows = Array.Empty<ParameterExpression>();
         private readonly HashSet<int> required = new();
         private SortedSet<int> linearRows = new();
-        private Arrow[] keptArrows = Array.Empty<Arrow>();
         private readonly int[] outputs;
 
         public Emitter(CircuitInterpreter plan, ExtractedSystem system, Expression inputSymbol, Expression timeStep, int iterationCap, TransientSolution solution, ISegmentSolver? segmentSolver)
@@ -202,17 +198,9 @@ public sealed class CompiledCircuit
                     code.Add(LinqExpr.Assign(Element(y, i), LinearPart(i, sources)));
                 code.Return(LinqExpr.Constant(0));
             }
-            else if (plan.reduction != null)
-            {
-                EmitReduced(sources);
-            }
-            else if (segmentSolver != null)
-            {
-                EmitBlackBox(sources);
-            }
             else
             {
-                EmitNewton(sources);
+                EmitReduced(sources);
             }
 
             var lambda = code.Build<StepFunction>();
@@ -224,11 +212,6 @@ public sealed class CompiledCircuit
         private void ComputeRequired()
         {
             int n = system.Unknowns.Length;
-            Arrow[] arrows = solution.Solutions.OfType<LinearSolutions>().SelectMany(s => s.Solutions).ToArray();
-            var arrowFor = new Dictionary<int, Arrow>();
-            foreach (Arrow arrow in arrows)
-                arrowFor[Array.IndexOf(system.Unknowns, arrow.Left)] = arrow;
-
             var rows = new SortedSet<int>();
             var work = new Stack<int>();
             void Require(int unknown)
@@ -243,17 +226,10 @@ public sealed class CompiledCircuit
             if (plan.m > 0)
             {
                 // The reduced step iterates only the ports nonlinear terms read; the eliminated ones (pot legs, say)
-                // and unknowns LiveSPICE's solution doesn't have are computed only if something reads them.
-                LinearPortReduction? reduction = plan.reduction;
+                // are computed only if something reads them.
                 foreach (int j in plan.free)
                     Require(j);
-                for (int i = 0; i < n; i++)
-                    if (reduction == null && !arrowFor.ContainsKey(i))
-                    {
-                        Require(i);
-                        rows.Add(i);
-                    }
-                foreach (int r in reduction?.N ?? Enumerable.Range(0, plan.k).ToArray())
+                foreach (int r in plan.reduction!.N)
                     for (int j = 0; j < n; j++)
                         if (Q[r][j] != 0)
                         {
@@ -265,29 +241,13 @@ public sealed class CompiledCircuit
             while (work.Count > 0)
             {
                 int i = work.Pop();
-                if (plan.m == 0 || !plan.MatchLiveSpice)
-                    rows.Add(i);
+                rows.Add(i);
 
                 if (rows.Contains(i))
                     for (int j = 0; j < plan.parameterCount; j++)
                         if (parameterGain[i][j] != 0 && plan.bindings[j].Kind == CircuitInterpreter.Kind.History)
                             Require(plan.bindings[j].Unknown);
 
-                if (plan.m > 0 && plan.MatchLiveSpice && arrowFor.TryGetValue(i, out Arrow? arrow))
-                {
-                    foreach (Expression symbol in SymbolScan.Collect(arrow.Right))
-                    {
-                        int unknown = Array.IndexOf(system.Unknowns, symbol);
-                        if (unknown >= 0)
-                        {
-                            Require(unknown);
-                            continue;
-                        }
-                        CircuitInterpreter.Binding binding = CircuitInterpreter.Bind(symbol, system.Unknowns, inputSymbol, timeStep);
-                        if (binding.Kind == CircuitInterpreter.Kind.History)
-                            Require(binding.Unknown);
-                    }
-                }
             }
 
             // Rows added late can bring in more state.
@@ -300,13 +260,11 @@ public sealed class CompiledCircuit
                         if (parameterGain[i][j] != 0 && plan.bindings[j].Kind == CircuitInterpreter.Kind.History && required.Add(plan.bindings[j].Unknown))
                         {
                             changed = true;
-                            if (plan.m == 0 || !plan.MatchLiveSpice)
-                                rows.Add(plan.bindings[j].Unknown);
+                            rows.Add(plan.bindings[j].Unknown);
                         }
             }
 
             linearRows = rows;
-            keptArrows = plan.MatchLiveSpice ? arrows.Where(a => required.Contains(Array.IndexOf(system.Unknowns, a.Left))).ToArray() : Array.Empty<Arrow>();
         }
 
         private LinqExpr LinearPart(int i, ParameterExpression[] sources)
@@ -321,90 +279,6 @@ public sealed class CompiledCircuit
                         LinqExpr.Multiply(Cell(sourceGain, i, x), LinqExpr.Constant(plan.sourceCoefficients[x])),
                         sources[x]));
             return value;
-        }
-
-        // Black-box mode, as CircuitInterpreter.SolveWithSegments: each segment's solver gives its ports, free unknowns
-        // and nonlinear-term values in solve order, and every unknown anything reads follows from y = yLinear + G·q + Nz·z.
-        private void EmitBlackBox(ParameterExpression[] sources)
-        {
-            int n = system.Unknowns.Length, k = plan.k, m = plan.m, dz = plan.dz;
-
-            var linearNeeded = new SortedSet<int>(required);
-            for (int r = 0; r < k; r++)
-                for (int j = 0; j < n; j++)
-                    if (Q[r][j] != 0)
-                        linearNeeded.Add(j);
-            var yLinear = new Dictionary<int, ParameterExpression>();
-            foreach (int i in linearNeeded)
-                yLinear[i] = Local(LinearPart(i, sources));
-
-            var voc = new LinqExpr[k];
-            for (int r = 0; r < k; r++)
-            {
-                LinqExpr open = LinqExpr.Constant(0.0);
-                for (int j = 0; j < n; j++)
-                    if (Q[r][j] != 0)
-                        open = LinqExpr.Add(open, LinqExpr.Multiply(Cell(Q, r, j), yLinear[j]));
-                voc[r] = Local(open);
-            }
-
-            var cs = new LinqExpr[dz];
-            for (int f = 0; f < dz; f++)
-            {
-                LinqExpr value = LinqExpr.Constant(plan.CC[f]);
-                for (int j = 0; j < plan.parameterCount; j++)
-                    if (CH[f][j] != 0)
-                        value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(CH, f, j), code[plan.Symbols[j]]));
-                for (int x = 0; x < sources.Length; x++)
-                    if (CS[f][x] != 0)
-                        value = LinqExpr.Add(value, LinqExpr.Multiply(
-                            LinqExpr.Multiply(Cell(CS, f, x), LinqExpr.Constant(plan.sourceCoefficients[x])), sources[x]));
-                cs[f] = Local(value);
-            }
-
-            var w = new LinqExpr?[k];
-            var z = new LinqExpr?[dz];
-            var q = new LinqExpr?[m];
-            foreach (Segment segment in plan.Segments)
-            {
-                var inputs = new double[segment.InputCount];
-                var outputs = new double[segment.OutputCount];
-                ConstantExpression inputArray = LinqExpr.Constant(inputs), outputArray = LinqExpr.Constant(outputs);
-
-                int position = 0;
-                foreach (int p in segment.Ports)
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), voc[p]));
-                foreach (int f in segment.Constraints)
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), cs[f]));
-                foreach (int p in segment.Upstream)
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), w[p]!));
-                foreach (int j in segment.Parameters)
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)),
-                        LinqExpr.ArrayIndex(LinqExpr.Constant(plan.ParameterValues), LinqExpr.Constant(j))));
-
-                code.Add(LinqExpr.Call(SegmentCall, LinqExpr.Constant(segmentSolver, typeof(ISegmentSolver)), LinqExpr.Constant(segment), inputArray, outputArray));
-
-                position = 0;
-                foreach (int p in segment.Ports)
-                    w[p] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
-                foreach (int f in segment.Free)
-                    z[f] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
-                foreach (int c in segment.NonlinearTerms)
-                    q[c] = Local(LinqExpr.ArrayIndex(outputArray, LinqExpr.Constant(position++)));
-            }
-
-            foreach (int i in required.OrderBy(i => i))
-            {
-                LinqExpr value = yLinear[i];
-                for (int c = 0; c < m; c++)
-                    if (G[i][c] != 0)
-                        value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(G, i, c), q[c]!));
-                for (int f = 0; f < dz; f++)
-                    if (Nz[i][f] != 0)
-                        value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(Nz, i, f), z[f]!));
-                code.Add(LinqExpr.Assign(Element(y, i), value));
-            }
-            code.Return(LinqExpr.Constant(0));
         }
 
         // A runtime parameter reads the live parameter array; anything else is null.
@@ -477,7 +351,7 @@ public sealed class CompiledCircuit
             int[] tracked = plan.convergence.Distinct().ToArray();
 
             // Before the loop, only the linear parts the loop reads: the unknowns the stopping rule tracks and those the
-            // ports read. The rest are computed after the loop, where they're used, as EmitNewton does. Computing them
+            // ports read. The rest are computed after the loop, where they're used. Computing them
             // all up front keeps every one live across the loop, which costs register spills on every term.
             var needed = new SortedSet<int>(tracked);
             foreach (int p in N)
@@ -777,381 +651,6 @@ public sealed class CompiledCircuit
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
         private static void CallSegment(ISegmentSolver solver, Segment segment, double[] inputs, double[] outputs) => solver.Solve(segment, inputs, outputs);
-
-        private void EmitNewton(ParameterExpression[] sources)
-        {
-            int n = system.Unknowns.Length, k = plan.k, m = plan.m, dz = plan.dz, K = plan.K;
-            // A Newton system with no equations only holds a free unknown at its previous value.
-            List<NewtonIteration> newtonSets = solution.Solutions.OfType<NewtonIteration>().Where(s => s.Equations.Any()).ToList();
-            if (plan.MatchLiveSpice && newtonSets.Count != 1)
-                throw new NotSupportedException("Circuits with several LiveSPICE Newton systems aren't supported.");
-
-            var assigned = new HashSet<Expression>(solution.Solutions.OfType<LinearSolutions>().SelectMany(s => s.Solutions).Select(a => a.Left));
-            int[] active = Enumerable.Range(0, n).Where(i => !assigned.Contains(system.Unknowns[i])).ToArray();
-
-            // yLinear is only needed for the unknowns Newton updates and the unknowns the ports read.
-            var linearNeeded = new SortedSet<int>(active);
-            for (int r = 0; r < k; r++)
-                for (int j = 0; j < n; j++)
-                    if (Q[r][j] != 0)
-                        linearNeeded.Add(j);
-            var yLinear = new Dictionary<int, ParameterExpression>();
-            foreach (int i in linearNeeded)
-                yLinear[i] = Local(LinearPart(i, sources));
-
-            var w = new ParameterExpression[k];
-            var voc = new ParameterExpression[k];
-            for (int r = 0; r < k; r++)
-            {
-                LinqExpr previous = LinqExpr.Constant(0.0), open = LinqExpr.Constant(0.0);
-                for (int j = 0; j < n; j++)
-                {
-                    if (Q[r][j] == 0)
-                        continue;
-                    previous = LinqExpr.Add(previous, LinqExpr.Multiply(Cell(Q, r, j), History(1, j)));
-                    open = LinqExpr.Add(open, LinqExpr.Multiply(Cell(Q, r, j), yLinear[j]));
-                }
-                w[r] = Local(previous);
-                voc[r] = Local(open);
-            }
-
-            var current = active.ToDictionary(i => i, i => Local(History(1, i)));
-
-            // Free unknowns and constraints, when E is singular (see SingularSplit).
-            ParameterExpression[] z = plan.free.Select(j => Local(History(1, j))).ToArray();
-            var cs = new ParameterExpression[dz];
-            for (int f = 0; f < dz; f++)
-            {
-                LinqExpr value = LinqExpr.Constant(plan.CC[f]);
-                for (int j = 0; j < plan.parameterCount; j++)
-                    if (CH[f][j] != 0)
-                        value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(CH, f, j), code[plan.Symbols[j]]));
-                for (int x = 0; x < sources.Length; x++)
-                    if (CS[f][x] != 0)
-                        value = LinqExpr.Add(value, LinqExpr.Multiply(
-                            LinqExpr.Multiply(Cell(CS, f, x), LinqExpr.Constant(plan.sourceCoefficients[x])), sources[x]));
-                cs[f] = Local(value);
-            }
-
-            var augmented = Enumerable.Range(0, K).Select(_ => new double[CircuitInterpreter.RowLength(K)]).ToArray();
-            var stepSolution = new double[K];
-            ConstantExpression augmentedArray = LinqExpr.Constant(augmented);
-
-            int[] pivots = CircuitInterpreter.PortPivots(system);
-            Expression[] pivotSymbols = pivots.Select(j => system.Unknowns[j]).ToArray();
-
-            var before = active.ToDictionary(i => i, i => code.Decl<double>("before" + i));
-            ParameterExpression iteration = code.DeclInit<int>("iteration", 0);
-            var finalLinearized = new ParameterExpression[m];
-            ParameterExpression result = code.DeclInit<int>("result", 0);
-
-            code.DoWhile((LinqExpr exit) =>
-            {
-                code.Add(LinqExpr.PreIncrementAssign(iteration));
-
-                // The nonlinear terms see each port through its pivot unknown, with other unknowns at zero.
-                for (int p = 0; p < k; p++)
-                    code.Map(Scope.Local, pivotSymbols[p], w[p]);
-                foreach (Expression symbol in system.Nonlinear.SelectMany(SymbolScan.Collect).Distinct())
-                    if (!pivotSymbols.Contains(symbol))
-                        code.Map(Scope.Local, symbol, ParameterRead(symbol) ?? LinqExpr.Constant(0.0));
-
-                var q = new ParameterExpression[m];
-                var jacobian = new LinqExpr?[m, k];
-                for (int c = 0; c < m; c++)
-                {
-                    Dictionary<Expression, Expression> gradient = system.Nonlinear[c].Gradient(pivotSymbols);
-                    LinqExpr value = ToDouble(code.Compile(system.Nonlinear[c]));
-                    for (int p = 0; p < k; p++)
-                    {
-                        if (D[c][p] != 0)
-                            value = LinqExpr.Subtract(value, LinqExpr.Multiply(Cell(D, c, p), w[p]));
-
-                        if (plan.dependsOn[c, p] || D[c][p] != 0)
-                        {
-                            LinqExpr partial = plan.dependsOn[c, p] ? ToDouble(code.Compile(gradient[pivotSymbols[p]])) : LinqExpr.Constant(0.0);
-                            if (D[c][p] != 0)
-                                partial = LinqExpr.Subtract(partial, Cell(D, c, p));
-                            jacobian[c, p] = Local(partial);
-                        }
-                    }
-                    q[c] = Local(value);
-                }
-
-                for (int r = 0; r < k; r++)
-                {
-                    ParameterExpression row = code.Decl<double[]>("row" + r);
-                    code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(r))));
-                    for (int p = 0; p <= K; p++)
-                        code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(p)), LinqExpr.Constant(p == r ? 1.0 : 0.0)));
-
-                    LinqExpr rhs = voc[r];
-                    for (int c = 0; c < m; c++)
-                    {
-                        if (Z[r][c] == 0)
-                            continue;
-                        LinqExpr linear = q[c];
-                        for (int p = 0; p < k; p++)
-                        {
-                            if (jacobian[c, p] is not LinqExpr partial)
-                                continue;
-                            IndexExpression target = LinqExpr.ArrayAccess(row, LinqExpr.Constant(p));
-                            code.Add(LinqExpr.Assign(target, LinqExpr.Subtract(target, LinqExpr.Multiply(Cell(Z, r, c), partial))));
-                            linear = LinqExpr.Subtract(linear, LinqExpr.Multiply(partial, w[p]));
-                        }
-                        rhs = LinqExpr.Add(rhs, LinqExpr.Multiply(Cell(Z, r, c), linear));
-                    }
-                    for (int f = 0; f < dz; f++)
-                        if (Qz[r][f] != 0)
-                            code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(k + f)), LinqExpr.Constant(-Qz[r][f])));
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(K)), rhs));
-                }
-
-                for (int f = 0; f < dz; f++)
-                {
-                    ParameterExpression row = code.Decl<double[]>("constraint" + f);
-                    code.Add(LinqExpr.Assign(row, LinqExpr.ArrayIndex(augmentedArray, LinqExpr.Constant(k + f))));
-                    for (int p = 0; p <= K; p++)
-                        code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(p)), LinqExpr.Constant(0.0)));
-
-                    LinqExpr rhs = LinqExpr.Negate(cs[f]);
-                    for (int c = 0; c < m; c++)
-                    {
-                        if (CP[f][c] == 0)
-                            continue;
-                        LinqExpr linear = q[c];
-                        for (int p = 0; p < k; p++)
-                        {
-                            if (jacobian[c, p] is not LinqExpr partial)
-                                continue;
-                            IndexExpression target = LinqExpr.ArrayAccess(row, LinqExpr.Constant(p));
-                            code.Add(LinqExpr.Assign(target, LinqExpr.Add(target, LinqExpr.Multiply(Cell(CP, f, c), partial))));
-                            linear = LinqExpr.Subtract(linear, LinqExpr.Multiply(partial, w[p]));
-                        }
-                        rhs = LinqExpr.Subtract(rhs, LinqExpr.Multiply(Cell(CP, f, c), linear));
-                    }
-                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(row, LinqExpr.Constant(K)), rhs));
-                }
-                code.Add(LinqExpr.Call(SolveStep, augmentedArray, LinqExpr.Constant(stepSolution),
-                    LinqExpr.Constant(plan.groups), LinqExpr.Constant(plan.groupRows), LinqExpr.Constant(K)));
-
-                ParameterExpression[] zNext = Enumerable.Range(0, dz)
-                    .Select(f => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(k + f))))
-                    .ToArray();
-
-                ParameterExpression[] next = Enumerable.Range(0, k)
-                    .Select(p => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(p))))
-                    .ToArray();
-
-                var linearized = new ParameterExpression[m];
-                for (int c = 0; c < m; c++)
-                {
-                    LinqExpr value = q[c];
-                    for (int p = 0; p < k; p++)
-                        if (jacobian[c, p] is LinqExpr partial)
-                            value = LinqExpr.Add(value, LinqExpr.Multiply(partial, LinqExpr.Subtract(next[p], w[p])));
-                    linearized[c] = Local(value);
-                    finalLinearized[c] = linearized[c];
-                }
-
-                var nextY = new Dictionary<int, ParameterExpression>();
-                foreach (int i in active)
-                {
-                    LinqExpr value = yLinear[i];
-                    for (int c = 0; c < m; c++)
-                        if (G[i][c] != 0)
-                            value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(G, i, c), linearized[c]));
-                    for (int f = 0; f < dz; f++)
-                        if (Nz[i][f] != 0)
-                            value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(Nz, i, f), zNext[f]));
-                    nextY[i] = Local(value);
-                }
-
-                ParameterExpression done = code.DeclInit<bool>("done", true);
-                if (plan.LinearOnly)
-                    code.Add(LinqExpr.Assign(done, LinqExpr.Constant(true)));
-                foreach (int j in plan.convergence)
-                {
-                    code.Add(LinqExpr.AndAssign(done, LinqExpr.LessThan(
-                        LinqExpr.Call(Abs, LinqExpr.Subtract(nextY[j], current[j])),
-                        LinqExpr.Add(LinqExpr.Multiply(LinqExpr.Call(Abs, current[j]), LinqExpr.Constant(1e-4)), LinqExpr.Constant(1e-6)))));
-                }
-
-                foreach (int i in active)
-                {
-                    code.Add(LinqExpr.Assign(before[i], current[i]));
-                    code.Add(LinqExpr.Assign(current[i], nextY[i]));
-                }
-                for (int p = 0; p < k; p++)
-                    code.Add(LinqExpr.Assign(w[p], next[p]));
-                for (int f = 0; f < dz; f++)
-                    code.Add(LinqExpr.Assign(z[f], zNext[f]));
-
-                code.Add(LinqExpr.IfThen(done, LinqExpr.Block(LinqExpr.Assign(result, iteration), exit)));
-                code.Add(LinqExpr.IfThen(LinqExpr.Equal(iteration, LinqExpr.Constant(iterationCap)),
-                    LinqExpr.Block(LinqExpr.Assign(result, LinqExpr.Or(iteration, LinqExpr.Constant(0x80))), exit)));
-            }, LinqExpr.Constant(true));
-
-            foreach (int i in active)
-                code.Add(LinqExpr.Assign(Element(y, i), current[i]));
-
-            if (plan.MatchLiveSpice)
-            {
-                EmitFinalSolutions(newtonSets[0], before);
-            }
-            else
-            {
-                // Every other unknown anything reads follows from the solve: y = yLinear + G·q + Nz·z.
-                var activeSet = new HashSet<int>(active);
-                foreach (int i in required.Where(i => !activeSet.Contains(i)).OrderBy(i => i))
-                {
-                    LinqExpr value = LinearPart(i, sources);
-                    for (int c = 0; c < m; c++)
-                        if (G[i][c] != 0)
-                            value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(G, i, c), finalLinearized[c]));
-                    for (int f = 0; f < dz; f++)
-                        if (Nz[i][f] != 0)
-                            value = LinqExpr.Add(value, LinqExpr.Multiply(Cell(Nz, i, f), z[f]));
-                    code.Add(LinqExpr.Assign(Element(y, i), value));
-                }
-            }
-            code.Return(result);
-        }
-
-        // Unknowns outside the Newton system, as Simulation computes them. Its subexpression cache carries
-        // values from the last Newton iteration, from before the final update, into these expressions. Only
-        // the cached values these expressions actually read need computing.
-        private void EmitFinalSolutions(NewtonIteration newtonSet, Dictionary<int, ParameterExpression> before)
-        {
-            code.SyncPoint();
-
-            Arrow[] arrows = keptArrows;
-            HashSet<Expression> cached = CachedByNewton(newtonSet);
-            var stale = new List<Expression>();
-            var seen = new HashSet<Expression>();
-            foreach (Arrow arrow in arrows)
-                FindCached(arrow.Right, cached, stale, seen);
-
-            Expression[] newtonUnknowns = newtonSet.Unknowns.ToArray();
-            var excluded = new HashSet<Expression>(newtonUnknowns.Concat(arrows.Select(a => a.Left)));
-            foreach (Expression symbol in arrows.Select(a => a.Right).Concat(stale).SelectMany(SymbolScan.Collect).Distinct())
-            {
-                if (excluded.Contains(symbol) || code.LookUp(symbol) != null)
-                    continue;
-                int unknown = Array.IndexOf(system.Unknowns, symbol);
-                CircuitInterpreter.Binding binding = unknown >= 0
-                    ? new CircuitInterpreter.Binding(CircuitInterpreter.Kind.Current, unknown, 0)
-                    : CircuitInterpreter.Bind(symbol, system.Unknowns, inputSymbol, timeStep);
-                code.DeclInit(symbol, Read(binding));
-            }
-
-            foreach (Expression unknown in newtonUnknowns)
-            {
-                int index = Array.IndexOf(system.Unknowns, unknown);
-                code.DeclInit(unknown, index >= 0 && before.TryGetValue(index, out ParameterExpression? value) ? value : LinqExpr.Constant(0.0));
-            }
-
-            foreach (Expression expression in stale)
-                code.Compile(expression);
-
-            foreach (Expression unknown in newtonUnknowns)
-            {
-                int index = Array.IndexOf(system.Unknowns, unknown);
-                if (index >= 0)
-                    code.Add(LinqExpr.Assign(code[unknown], Element(y, index)));
-            }
-
-            foreach (Arrow arrow in arrows)
-            {
-                code.DeclInit(arrow.Left, ToDouble(code.Compile(arrow.Right)));
-                int target = Array.IndexOf(system.Unknowns, arrow.Left);
-                if (target >= 0)
-                    code.Add(LinqExpr.Assign(Element(y, target), code[arrow.Left]));
-            }
-        }
-
-        // Compiles the Newton system with a throwaway CodeGen to learn exactly which subexpressions Simulation caches.
-        private static HashSet<Expression> CachedByNewton(NewtonIteration newtonSet)
-        {
-            var scratch = new CodeGen();
-            var expressions = new List<Expression>();
-            Expression[] deltas = newtonSet.UnknownDeltas.ToArray();
-            foreach (LinearCombination equation in newtonSet.Equations)
-            {
-                foreach (Expression delta in deltas)
-                    expressions.Add(equation[delta]);
-                expressions.Add(equation[1]);
-            }
-            if (newtonSet.KnownDeltas != null)
-                expressions.AddRange(newtonSet.KnownDeltas.Select(a => a.Right));
-
-            var declared = new HashSet<Expression>(newtonSet.Deltas);
-            foreach (Expression delta in declared)
-                scratch.DeclInit(delta, LinqExpr.Constant(0.0));
-            foreach (Expression symbol in expressions.SelectMany(SymbolScan.Collect).Distinct())
-                if (declared.Add(symbol))
-                    scratch.DeclInit(symbol, LinqExpr.Constant(0.0));
-
-            foreach (Expression expression in expressions)
-                scratch.Compile(expression);
-
-            var field = typeof(CodeGen).GetField("intermediates", BindingFlags.Instance | BindingFlags.NonPublic)!;
-            var intermediates = (Dictionary<Expression, LinqExpr>)field.GetValue(scratch)!;
-            return new HashSet<Expression>(intermediates.Keys);
-        }
-
-        // Walks an expression the way CompileExpression does, stopping at anything found in the cache.
-        private static void FindCached(Expression e, HashSet<Expression> cached, List<Expression> found, HashSet<Expression> seen)
-        {
-            if (cached.Contains(e))
-            {
-                if (seen.Add(e))
-                    found.Add(e);
-                return;
-            }
-
-            void Visit(Expression x) => FindCached(x, cached, found, seen);
-
-            switch (e)
-            {
-                case Sum sum:
-                    bool first = true;
-                    foreach (Expression term in sum.Terms)
-                    {
-                        Visit(!first && IsNegative(term) ? -term : term);
-                        first = false;
-                    }
-                    break;
-                case Product product:
-                    foreach (Expression term in product.Terms.Where(t => !t.Equals(-1)))
-                        Visit(term);
-                    break;
-                case Call call:
-                    foreach (Expression argument in call.Arguments)
-                        Visit(argument);
-                    break;
-                case Power power:
-                    if (power.Right.Equals(0.5) || power.Right.Equals(-0.5))
-                    {
-                        Visit(Call.Sqrt(power.Left));
-                        break;
-                    }
-                    Visit(power.Left);
-                    if (!power.Right.Equals(2) && !power.Right.Equals(-1) && !power.Right.Equals(-2))
-                        Visit(power.Right);
-                    break;
-                case Binary binary:
-                    Visit(binary.Left);
-                    Visit(binary.Right);
-                    break;
-                case Unary unary:
-                    Visit(unary.Operand);
-                    break;
-            }
-        }
-
-        private static bool IsNegative(Expression x) =>
-            Product.TermsOf(x).FirstOrDefault(i => i is Constant) is Constant c && c.Value < 0;
 
         private LinqExpr Read(CircuitInterpreter.Binding b) => b.Kind switch
         {

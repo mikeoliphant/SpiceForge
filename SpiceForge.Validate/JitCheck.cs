@@ -54,7 +54,7 @@ internal static class JitCheck
 
                 var inputBuffer = new double[Samples];
                 for (int n = 0; n < Samples; n++)
-                    inputBuffer[n] = ReferenceCheck.Harmonics(n / (double)SampleRate, Amplitude, 82, 2);
+                    inputBuffer[n] = Signals.Harmonics(n / (double)SampleRate, Amplitude, 82, 2);
 
                 var build = Stopwatch.StartNew();
                 var compiled = new CompiledCircuit(system, input, outputs, h, Oversample, IterationCap, solution);
@@ -66,7 +66,7 @@ internal static class JitCheck
                 interpreter.Run(inputBuffer, expected);
                 compiled.Run(inputBuffer, actual);
 
-                double db = ReferenceCheck.WorstErrorDb(expected, actual);
+                double db = Signals.WorstErrorDb(expected, actual);
                 bool sameIterations = interpreter.IterationCounts.SequenceEqual(compiled.IterationCounts);
                 bool ok = sameIterations && db <= ThresholdDb;
                 if (ok) passed++; else failed++;
@@ -80,7 +80,7 @@ internal static class JitCheck
                 var stock = new Simulation(solution) { Oversample = Oversample, Iterations = IterationCap, Input = new[] { input }, Output = benchmarkOutput };
                 stock.Run(inputBuffer, expected);
                 single.Run(inputBuffer, actual);
-                double singleDb = ReferenceCheck.WorstErrorDb(expected, actual);
+                double singleDb = Signals.WorstErrorDb(expected, actual);
                 stock.Run(inputBuffer, expected);
 
                 double stockUs = Measure(() => stock.Run(inputBuffer, expected));

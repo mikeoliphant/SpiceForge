@@ -48,9 +48,9 @@ internal static class AccuracyCheck
             return result;
         }
 
-        (double[] Output, int Capped) Ours(int cap, bool exact, double relative, double absolute)
+        (double[] Output, int Capped) Ours(int cap, double relative, double absolute)
         {
-            var engine = new CircuitInterpreter(system, inputSymbol, nodes, h, Oversample, cap, solution, matchLiveSpice: !exact)
+            var engine = new CircuitInterpreter(system, inputSymbol, nodes, h, Oversample, cap, solution)
             {
                 RelativeTolerance = relative,
                 AbsoluteTolerance = absolute,
@@ -72,15 +72,12 @@ internal static class AccuracyCheck
             return (result, engine.IterationCounts.Count(b => (b & 0x80) != 0));
         }
 
-        var tight = Ours(TightCap, true, TightRelative, TightAbsolute);
-        var tightMatched = Ours(TightCap, false, TightRelative, TightAbsolute);
+        var tight = Ours(TightCap, TightRelative, TightAbsolute);
         var engines = new List<(string Name, double[] Output, string Note)>
         {
             ("stock LiveSPICE", Stock(input), ""),
-            ("stock + 1e-14 input noise", Stock(TraceCheck.WithNoise(input, 1e-14)), "sensitivity"),
-            ("matched (LiveSPICE-faithful)", Ours(IterationCap, false, 1e-4, 1e-6).Output, ""),
-            ("recording (exact rebuild)", Ours(IterationCap, true, 1e-4, 1e-6).Output, ""),
-            ("tight, LiveSPICE-faithful rebuild", tightMatched.Output, "checks the reference"),
+            ("stock + 1e-14 input noise", Stock(Signals.WithNoise(input, 1e-14)), "sensitivity"),
+            ("ours, normal tolerance", Ours(IterationCap, 1e-4, 1e-6).Output, ""),
         };
 
         Console.WriteLine($"{Path.GetFileNameWithoutExtension(schematic)}, {input.Length / (double)rate:F1} s. Reference: tolerance {TightRelative:E0} relative + {TightAbsolute:E0}, cap {TightCap}, exact rebuild; {tight.Capped} capped steps.");

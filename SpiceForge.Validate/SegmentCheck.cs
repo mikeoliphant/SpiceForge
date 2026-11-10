@@ -58,10 +58,10 @@ internal static class SegmentCheck
                 {
                     var inputBuffer = new double[Samples];
                     for (int n = 0; n < Samples; n++)
-                        inputBuffer[n] = ReferenceCheck.Harmonics(n / (double)SampleRate, amplitude, 82, 2);
+                        inputBuffer[n] = Signals.Harmonics(n / (double)SampleRate, amplitude, 82, 2);
 
-                    var joint = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, segment: false, matchLiveSpice: true);
-                    var split = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, segment: true, matchLiveSpice: true);
+                    var joint = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, segment: false);
+                    var split = new CircuitInterpreter(system, input, outputs, h, Oversample, IterationCap, solution, segment: true);
 
                     double[][] jointOut = outputs.Select(_ => new double[Samples]).ToArray();
                     double[][] splitOut = outputs.Select(_ => new double[Samples]).ToArray();
@@ -72,7 +72,7 @@ internal static class SegmentCheck
                     split.Run(inputBuffer, splitOut);
                     double splitUs = watch.Elapsed.TotalMilliseconds * 1000 / Samples;
 
-                    double db = ReferenceCheck.WorstErrorDb(jointOut, splitOut);
+                    double db = Signals.WorstErrorDb(jointOut, splitOut);
                     bool sameIterations = joint.IterationCounts.SequenceEqual(split.IterationCounts);
                     bool identical = jointOut.Zip(splitOut, (a, b) => a.Zip(b, (x, y) => BitConverter.DoubleToInt64Bits(x) == BitConverter.DoubleToInt64Bits(y)).All(s => s)).All(s => s);
                     bool ok = sameIterations && db <= ThresholdDb;

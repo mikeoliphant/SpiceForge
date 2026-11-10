@@ -68,9 +68,7 @@ public sealed class CircuitInterpreter
     public int EliminatedPorts => reduction?.L.Length ?? 0;
     public long ReductionUpdates => reduction?.Updates ?? 0;
 
-    /// <summary>For profiling only: take the normal Newton path when there are no linear ports to eliminate, as before
-    /// every circuit went through the reduced path.</summary>
-    internal static bool NormalPathForTesting { get; set; }
+
 
 
     // Runtime parameters (dynamic pots), by index in ExtractedSystem.RuntimeParameters.
@@ -95,19 +93,9 @@ public sealed class CircuitInterpreter
     internal readonly double[,] CP;
     internal readonly double[] z;
     internal readonly double[] zNext;
-    internal readonly double[] cs;
     internal readonly Binding[] finalBindings = Array.Empty<Binding>();
-    internal readonly double[] finalInputs = Array.Empty<double>();
     internal readonly double[] finalResults = Array.Empty<double>();
-    internal readonly int[] finalTargets = Array.Empty<int>();
-    internal readonly FinalSolutionEvaluator? finalEvaluator;
-    internal readonly int[] finalNewton = Array.Empty<int>();
-    internal readonly double[] yBeforeUpdate;
-    internal readonly double[][] augmented;
     internal readonly bool[,] dependsOn;
-    internal readonly double[] stepSolution;
-    internal readonly int[][] groups;
-    internal readonly double[][][] groupRows;
 
     internal readonly double[] y;
     internal readonly double[] yLinear;
@@ -124,7 +112,7 @@ public sealed class CircuitInterpreter
     public double ConditionNumber { get; }
 
     /// <summary>Sizes of the coupled port groups, in solve order.</summary>
-    public int[] GroupSizes => (reduction != null ? reducedGroups : groups).Select(g => g.Length).ToArray();
+    public int[] GroupSizes => reducedGroups.Select(g => g.Length).ToArray();
 
     /// <summary>Strongly connected blocks of ports and states together.</summary>
     public int StateBlocks { get; }
@@ -136,8 +124,6 @@ public sealed class CircuitInterpreter
     public List<byte> IterationCounts { get; } = new();
 
     /// <param name="solution">LiveSPICE's solution of the circuit. It decides which unknowns the stopping rule tests.</param>
-    /// <param name="matchLiveSpice">Reproduce LiveSPICE's output sample for sample, including its use of stale cached
-    /// values after the Newton loop (see <see cref="MatchLiveSpice"/>). Off by default.</param>
     public CircuitInterpreter(
         ExtractedSystem system,
         Expression inputSymbol,
@@ -146,12 +132,8 @@ public sealed class CircuitInterpreter
         int oversample,
         int iterationCap,
         TransientSolution solution,
-        bool segment = true,
-        bool matchLiveSpice = false)
+        bool segment = true)
     {
-        MatchLiveSpice = matchLiveSpice;
-        if (matchLiveSpice && system.RuntimeParameters.Length > 0)
-            throw new ArgumentException("Runtime parameters can't be combined with matching LiveSPICE.", nameof(matchLiveSpice));
         ParameterValues = system.RuntimeParameters.Select(p => p.InitialValue).ToArray();
         this.oversample = oversample;
         this.iterationCap = iterationCap;
@@ -273,7 +255,6 @@ public sealed class CircuitInterpreter
         CP = split?.CP ?? new double[0, m];
         z = new double[dz];
         zNext = new double[dz];
-        cs = new double[dz];
 
         // Entries of Z that exact arithmetic would make zero come out as roundoff, and are cleared for the port groups.
         // With nothing to eliminate, the reduction's coefficients are Z itself, so they're cleared before it is built,
@@ -281,7 +262,7 @@ public sealed class CircuitInterpreter
         // cleared entry can still matter once folded (a high-gain circuit amplifies it), and clearing them broke
         // circuits such as the Rockerverb and the Fender 5e3.
         bool clear = segment && dz == 0;
-        reduction = matchLiveSpice || m == 0 ? null : BuildReduction(clear);
+        reduction = m == 0 ? null : BuildReduction(clear);
         if (reduction != null)
         {
             int size = reduction.N.Length + dz;
@@ -313,33 +294,11 @@ public sealed class CircuitInterpreter
             reducedSolution = new double[size];
         }
 
-        // The constraint rows couple everything, so a split system is solved as one group.
-        groups = dz > 0 ? new[] { Enumerable.Range(0, K).ToArray() } : BuildGroups(segment);
-        stepSolution = new double[K];
-        groupRows = groups.Select(g => g.Select(_ => new double[RowLength(g.Length)]).ToArray()).ToArray();
         StateBlocks = CountStateBlocks();
-        Segments = reduction != null ? BuildReducedSegments(system) : BuildSegments(system);
+        Segments = reduction != null ? BuildReducedSegments(system) : Array.Empty<Segment>();
 
         convergence = solution.Solutions.OfType<NewtonIteration>().SelectMany(s => s.Unknowns)
             .Select(u => Array.IndexOf(system.Unknowns, u)).Where(j => j >= 0).ToArray();
-
-        if (m > 0 && matchLiveSpice)
-        {
-            finalEvaluator = new FinalSolutionEvaluator(solution);
-            finalBindings = finalEvaluator.Symbols.Select(s =>
-            {
-                int unknown = Array.IndexOf(system.Unknowns, s);
-                return unknown >= 0 ? new Binding(Kind.Current, unknown, 0) : Bind(s, system.Unknowns, inputSymbol, timeStep);
-            }).ToArray();
-            maxDelay = Math.Max(maxDelay, finalBindings.Where(b => b.Kind == Kind.History).Select(b => b.Delay).DefaultIfEmpty(0).Max());
-            finalNewton = finalEvaluator.NewtonUnknowns.Select(u => Array.IndexOf(system.Unknowns, u)).ToArray();
-            finalInputs = new double[finalBindings.Length + 2 * finalNewton.Length];
-            finalResults = new double[finalEvaluator.Assigned.Length];
-            finalTargets = finalEvaluator.Assigned.Select(a => Array.IndexOf(system.Unknowns, a)).ToArray();
-        }
-        yBeforeUpdate = new double[n];
-
-        augmented = Enumerable.Range(0, K).Select(_ => new double[RowLength(K)]).ToArray();
 
         y = new double[n];
         yLinear = new double[n];
@@ -408,146 +367,20 @@ public sealed class CircuitInterpreter
             yLinear[i] = value;
         }
 
-        for (int f = 0; f < dz; f++)
-        {
-            double value = CC[f];
-            for (int j = 0; j < parameterCount; j++)
-                value += CH[f, j] * values[j];
-            for (int x = 0; x < sourceValues.Length; x++)
-                value += CS[f, x] * sourceCoefficients[x] * sourceValues[x];
-            cs[f] = value;
-        }
-
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         if (m == 0)
             Array.Copy(yLinear, y, y.Length);
         else if (SegmentSolver != null)
             SolveWithSegments();
-        else if (reduction != null)
-            SolveReduced();
         else
-        {
-            SolveNewton();
-        }
+            SolveReduced();
         SolveTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
-
-        if (finalEvaluator != null && SegmentSolver == null)
-        {
-            int position = 0;
-            for (int i = 0; i < finalBindings.Length; i++)
-                finalInputs[position++] = Read(finalBindings[i]);
-            for (int i = 0; i < finalNewton.Length; i++)
-                finalInputs[position++] = finalNewton[i] >= 0 ? yBeforeUpdate[finalNewton[i]] : 0;
-            for (int i = 0; i < finalNewton.Length; i++)
-                finalInputs[position++] = finalNewton[i] >= 0 ? y[finalNewton[i]] : 0;
-            finalEvaluator.Evaluate(finalInputs, finalResults);
-            for (int i = 0; i < finalTargets.Length; i++)
-                if (finalTargets[i] >= 0)
-                    y[finalTargets[i]] = finalResults[i];
-        }
 
         double[] oldest = history[history.Length - 1];
         for (int d = history.Length - 1; d > 0; d--)
             history[d] = history[d - 1];
         Array.Copy(y, oldest, y.Length);
         history[0] = oldest;
-    }
-
-    private void SolveNewton()
-    {
-        double[] previous = history[0];
-        Array.Copy(previous, y, y.Length);
-        Multiply(Q, previous, w);
-        Multiply(Q, yLinear, voc);
-        for (int f = 0; f < dz; f++)
-            z[f] = previous[free[f]];
-
-        for (int iteration = 1; ; iteration++)
-        {
-            EvaluateNonlinear();
-
-            // Solve (I - Z·J)·wNext - Qz·zNext = voc + Z·(q - J·w), the linearization of w = voc + Z·q(w) + Qz·z,
-            // together with CP·J·wNext = -cs - CP·(q - J·w), the linearization of the constraints cs + CP·q(w) = 0.
-            for (int r = 0; r < k; r++)
-            {
-                double[] row = augmented[r];
-                Array.Clear(row);
-                row[r] = 1;
-                double rhs = voc[r];
-                for (int c = 0; c < m; c++)
-                {
-                    double zc = Z[r, c];
-                    if (zc == 0)
-                        continue;
-                    double linear = q[c];
-                    for (int p = 0; p < k; p++)
-                    {
-                        row[p] -= zc * jacobian[c, p];
-                        linear -= jacobian[c, p] * w[p];
-                    }
-                    rhs += zc * linear;
-                }
-                for (int f = 0; f < dz; f++)
-                    row[k + f] = -Qz[r, f];
-                row[K] = rhs;
-            }
-            for (int f = 0; f < dz; f++)
-            {
-                double[] row = augmented[k + f];
-                Array.Clear(row);
-                double rhs = -cs[f];
-                for (int c = 0; c < m; c++)
-                {
-                    double weight = CP[f, c];
-                    if (weight == 0)
-                        continue;
-                    double linear = q[c];
-                    for (int p = 0; p < k; p++)
-                    {
-                        row[p] += weight * jacobian[c, p];
-                        linear -= jacobian[c, p] * w[p];
-                    }
-                    rhs -= weight * linear;
-                }
-                row[K] = rhs;
-            }
-            SolveLinearStep(augmented, stepSolution, groups, groupRows, K);
-            for (int f = 0; f < dz; f++)
-                zNext[f] = stepSolution[k + f];
-
-            // q linearized at w and evaluated at the next w, which is what full Newton solves with.
-            for (int c = 0; c < m; c++)
-            {
-                double value = q[c];
-                for (int p = 0; p < k; p++)
-                    value += jacobian[c, p] * (stepSolution[p] - w[p]);
-                linearizedQ[c] = value;
-            }
-
-            bool done = true;
-            foreach (int j in convergence)
-            {
-                double next = Combine(j);
-                done &= Math.Abs(next - y[j]) < Math.Abs(y[j]) * RelativeTolerance + AbsoluteTolerance;
-            }
-
-            done |= LinearOnly;
-            Array.Copy(y, yBeforeUpdate, y.Length);
-            for (int i = 0; i < y.Length; i++)
-                y[i] = Combine(i);
-            for (int p = 0; p < k; p++)
-                w[p] = stepSolution[p];
-            for (int f = 0; f < dz; f++)
-                z[f] = zNext[f];
-
-            if (done || iteration == iterationCap)
-            {
-                IterationCounts.Add((byte)(done ? iteration : iteration | CapFlag));
-                if (SegmentObserver != null)
-                    ObserveSegments(iteration, !done);
-                return;
-            }
-        }
     }
 
     // Solves (I - Z·J)·x = b, one coupled port group at a time in dependency order. This is the same
@@ -593,15 +426,6 @@ public sealed class CircuitInterpreter
             for (int r = 0; r < group.Length; r++)
                 stepSolution[group[r]] = rows[r][group.Length];
         }
-    }
-
-    private int[][] BuildGroups(bool segment)
-    {
-        if (k == 0)
-            return Array.Empty<int[]>();
-        if (!segment)
-            return new[] { Enumerable.Range(0, k).ToArray() };
-        return DependencyGraph.StronglyConnected(k, PortDependencies).Select(g => g.OrderBy(p => p).ToArray()).ToArray();
     }
 
     private bool coupledCleared;
@@ -724,81 +548,6 @@ public sealed class CircuitInterpreter
     private int step;
     private double[][] segmentInputs = Array.Empty<double[]>();
     private double[][] segmentOutputs = Array.Empty<double[]>();
-
-    private IReadOnlyList<Segment> BuildSegments(ExtractedSystem system)
-    {
-        var portNames = new string[k];
-        for (int r = 0; r < k; r++)
-            portNames[r] = string.Join(" + ", Enumerable.Range(0, system.Unknowns.Length)
-                .Where(j => Q[r, j] != 0)
-                .Select(j => Q[r, j] == 1 ? system.Unknowns[j].ToString() : $"{Q[r, j]:G6}*{system.Unknowns[j]}"));
-
-        var segments = new List<Segment>();
-        var solved = new HashSet<int>();
-        foreach (int[] group in groups)
-        {
-            int[] ports = group.Where(i => i < k).ToArray();
-            int[] freeIndices = group.Where(i => i >= k).Select(i => i - k).ToArray();
-            // Each nonlinear term belongs to the last segment whose ports it reads.
-            int[] terms = Enumerable.Range(0, m).Where(c => ports.Any(p => dependsOn[c, p]) && !LaterReads(c, group)).ToArray();
-
-            // Upstream ports: those of earlier segments that this segment's equations read through Z and q.
-            var upstream = new SortedSet<int>();
-            foreach (int r in ports)
-                for (int c = 0; c < m; c++)
-                    if (Z[r, c] != 0)
-                        for (int p = 0; p < k; p++)
-                            if (dependsOn[c, p] && solved.Contains(p))
-                                upstream.Add(p);
-            foreach (int f in freeIndices)
-                for (int c = 0; c < m; c++)
-                    if (CP[f, c] != 0)
-                        for (int p = 0; p < k; p++)
-                            if (dependsOn[c, p] && solved.Contains(p))
-                                upstream.Add(p);
-
-            string FreeName(int f) => system.Unknowns[free[f]].ToString();
-            segments.Add(new Segment
-            {
-                Index = segments.Count,
-                Ports = ports,
-                Free = freeIndices,
-                Constraints = freeIndices,
-                Upstream = upstream.ToArray(),
-                Parameters = Enumerable.Range(0, system.RuntimeParameters.Length)
-                    .Where(j => terms.Any(c => system.Nonlinear[c].DependsOn(system.RuntimeParameters[j].Symbol))).ToArray(),
-                NonlinearTerms = terms,
-                InputNames = ports.Select(p => $"open-circuit {portNames[p]}")
-                    .Concat(freeIndices.Select(f => $"constraint {f} constant (free unknown {FreeName(f)})"))
-                    .Concat(upstream.Select(p => $"upstream port {portNames[p]}"))
-                    .Concat(Enumerable.Range(0, system.RuntimeParameters.Length)
-                        .Where(j => terms.Any(c => system.Nonlinear[c].DependsOn(system.RuntimeParameters[j].Symbol)))
-                        .Select(j => $"parameter {system.RuntimeParameters[j].Name}"))
-                    .ToArray(),
-                OutputNames = ports.Select(p => $"port {portNames[p]}")
-                    .Concat(freeIndices.Select(f => $"free unknown {FreeName(f)}"))
-                    .Concat(terms.Select(c => $"nonlinear term {c}"))
-                    .ToArray(),
-            });
-            foreach (int p in ports)
-                solved.Add(p);
-        }
-
-        bool LaterReads(int c, int[] group)
-        {
-            int index = Array.IndexOf(groups, group);
-            for (int g = index + 1; g < groups.Length; g++)
-                foreach (int p in groups[g])
-                    if (p < k && dependsOn[c, p])
-                        return true;
-            return false;
-        }
-
-        UnownedTerms = m - segments.Sum(s => s.NonlinearTerms.Length);
-        segmentInputs = segments.Select(s => new double[s.InputCount]).ToArray();
-        segmentOutputs = segments.Select(s => new double[s.OutputCount]).ToArray();
-        return segments;
-    }
 
     // Reduced port position i depends on position j when one of its live Newton coefficients multiplies a term that
     // reads port N[j].
@@ -955,7 +704,7 @@ public sealed class CircuitInterpreter
         foreach (int p in segment.Ports)
             inputs[position++] = voc[p];
         foreach (int f in segment.Constraints)
-            inputs[position++] = reduction != null ? reducedConstant[f] : cs[f];
+            inputs[position++] = reducedConstant[f];
         foreach (int p in segment.Upstream)
             inputs[position++] = w[p];
         foreach (int j in segment.Parameters)
@@ -986,10 +735,7 @@ public sealed class CircuitInterpreter
     {
         if (UnownedTerms > 0)
             throw new NotSupportedException("Some nonlinear terms read no ports, so no segment computes them.");
-        if (reduction != null)
-            PrepareReduced();
-        else
-            Multiply(Q, yLinear, voc);
+        PrepareReduced();
         foreach (Segment segment in Segments)
         {
             double[] inputs = segmentInputs[segment.Index], outputs = segmentOutputs[segment.Index];
@@ -1005,7 +751,7 @@ public sealed class CircuitInterpreter
         }
         Array.Copy(z, zNext, dz);
         for (int i = 0; i < y.Length; i++)
-            y[i] = reduction != null ? CombineReduced(i) : Combine(i);
+            y[i] = CombineReduced(i);
         IterationCounts.Add(0);
         step++;
     }
@@ -1050,9 +796,10 @@ public sealed class CircuitInterpreter
             w[p] = inputs[position++];
         foreach (int j in segment.Parameters)
             ParameterValues[j] = inputs[position++];
-        reduction?.Update(ParameterValues, LinearJacobian);
-        int[] terms = reduction?.TN ?? Enumerable.Range(0, m).ToArray();
-        int[] rowOf = segment.Ports.Select(p => reduction != null ? Array.IndexOf(reduction.N, p) : p).ToArray();
+        LinearPortReduction reduced = reduction!;
+        reduced.Update(ParameterValues, LinearJacobian);
+        int[] terms = reduced.TN;
+        int[] rowOf = segment.Ports.Select(p => Array.IndexOf(reduced.N, p)).ToArray();
 
         for (int i = 0; i < ports; i++)
             w[segment.Ports[i]] = guess[i];
@@ -1076,7 +823,7 @@ public sealed class CircuitInterpreter
                 for (int t = 0; t < terms.Length; t++)
                 {
                     int c = terms[t];
-                    double zc = reduction != null ? reduction.Zr[rowOf[i]][t] : Z[r, c];
+                    double zc = reduced.Zr[rowOf[i]][t];
                     if (zc == 0)
                         continue;
                     residual -= zc * q[c];
@@ -1085,7 +832,7 @@ public sealed class CircuitInterpreter
                 }
                 for (int f = 0; f < frees; f++)
                 {
-                    double coupling = reduction != null ? reduction.Qzr[rowOf[i]][segment.Free[f]] : Qz[r, segment.Free[f]];
+                    double coupling = reduced.Qzr[rowOf[i]][segment.Free[f]];
                     residual -= coupling * freeValues[f];
                     row[ports + f] = -coupling;
                 }
@@ -1100,7 +847,7 @@ public sealed class CircuitInterpreter
                 for (int t = 0; t < terms.Length; t++)
                 {
                     int c = terms[t];
-                    double weight = reduction != null ? reduction.CPr[constraint][t] : CP[constraint, c];
+                    double weight = reduced.CPr[constraint][t];
                     if (weight == 0)
                         continue;
                     residual += weight * q[c];
@@ -1108,13 +855,12 @@ public sealed class CircuitInterpreter
                         row[j] += weight * jacobian[c, segment.Ports[j]];
                 }
                 // The reduced constraints can also read the free unknowns directly (Czr).
-                if (reduction != null)
-                    for (int h = 0; h < frees; h++)
-                    {
-                        double coupling = reduction.Czr[constraint][segment.Free[h]];
-                        residual += coupling * freeValues[h];
-                        row[ports + h] += coupling;
-                    }
+                for (int h = 0; h < frees; h++)
+                {
+                    double coupling = reduced.Czr[constraint][segment.Free[h]];
+                    residual += coupling * freeValues[h];
+                    row[ports + h] += coupling;
+                }
                 row[size] = -residual;
             }
 
@@ -1179,8 +925,6 @@ public sealed class CircuitInterpreter
 
         int[] n = Enumerable.Range(0, k).Where(p => inN[p]).ToArray();
         int[] l = Enumerable.Range(0, k).Where(p => !inN[p]).ToArray();
-        if (l.Length == 0 && NormalPathForTesting)
-            return null;
         if (l.Length == 0 && clearIfNothingToEliminate)
             ClearRoundoffCoupling();
         int[] tn = Enumerable.Range(0, m).Where(c => !linear[c]).ToArray();
@@ -1322,7 +1066,6 @@ public sealed class CircuitInterpreter
             if (TN.Length == 0)
                 done = true;
 
-            Array.Copy(y, yBeforeUpdate, y.Length);
             for (int i = 0; i < y.Length; i++)
                 y[i] = CombineReduced(i);
             for (int j = 0; j < kn; j++)
@@ -1359,16 +1102,6 @@ public sealed class CircuitInterpreter
             for (int g = 0; g < dz; g++)
                 value += Nz[i, g] * zNext[g];
         }
-        return value;
-    }
-
-    private double Combine(int i)
-    {
-        double value = yLinear[i];
-        for (int c = 0; c < m; c++)
-            value += G[i, c] * linearizedQ[c];
-        for (int f = 0; f < dz; f++)
-            value += Nz[i, f] * zNext[f];
         return value;
     }
 

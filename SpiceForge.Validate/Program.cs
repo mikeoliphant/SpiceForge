@@ -24,9 +24,6 @@ if (args.Length > 0 && args[0] == "segment")
 if (args.Length > 0 && args[0] == "jit")
     return JitCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
-if (args.Length > 0 && args[0] == "coverage")
-    return CoverageCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
-
 if (args.Length > 0 && args[0] == "livespice")
 {
     // livespice [filter] [--jobs N] [--threshold dB]: against a tightly converged LiveSPICE, with PR 284 fixed.
@@ -96,33 +93,11 @@ if (args.Length > 0 && args[0] == "dynamic")
 if (args.Length > 3 && args[0] == "accuracy")
     return AccuracyCheck.Run(args[1], args[2], double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
 
-if (args.Length > 4 && args[0] == "wavtrace")
-{
-    if (args.Length > 5) WavTrace.Tolerance = double.Parse(args[5]);
-    WavTrace.WatchAll = args.Contains("--all");
-    return WavTrace.Run(args[1], args[2], double.Parse(args[3]), double.Parse(args[4]));
-}
-
 if (args.Length > 2 && args[0] == "wav")
 {
     WavCheck.UseInterpreter = args.Contains("--interp");
     return WavCheck.Run(args[1], args[2], args.Length > 3 && int.TryParse(args[3], out int show) ? show : 25);
 }
-
-if (args.Length > 2 && args[0] == "trace")
-    return TraceCheck.Run(testsDir, args[1], double.Parse(args[2]));
-
-if (args.Length > 1 && args[0] == "pots")
-    return RatCheck.Run(testsDir, args[1]);
-
-if (args.Length > 0 && args[0] == "dump")
-{
-    ReferenceCheck.Dump = true;
-    return ReferenceCheck.Run(testsDir, repo, true, args[1]);
-}
-
-if (args.Length > 0 && (args[0] == "linear" || args[0] == "nonlinear"))
-    return ReferenceCheck.Run(testsDir, repo, args[0] == "nonlinear", args.Length > 1 ? args[1] : null);
 
 string? filter = args.Length > 0 ? args[0] : null;
 

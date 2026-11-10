@@ -147,7 +147,7 @@ internal static class DynamicPotCheck
                 double[][] outA = baked.Outputs.Select(_ => new double[Samples]).ToArray();
                 double[][] outB = dynamic.Outputs.Select(_ => new double[Samples]).ToArray();
                 Phases.Time("settings: simulate", () => { a.Run(input, outA); b.Run(input, outB); });
-                double db = ReferenceCheck.WorstErrorDb(outA, outB);
+                double db = Signals.WorstErrorDb(outA, outB);
                 bool ok = db <= -100;
                 if (!ok)
                     failures++;
@@ -233,11 +233,7 @@ internal static class DynamicPotCheck
             double inlinedBest = Best(() => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
             CompiledCircuit.InlineLiveForTesting = false;
             double bakedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
-            CircuitInterpreter.NormalPathForTesting = true;
-            double bakedNormalBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
-            CircuitInterpreter.NormalPathForTesting = false;
             Console.WriteLine($"  best of 3, pots still: baked {bakedBest:F2} us, dynamic {liveBest:F2} us, dynamic with live coefficients inlined {inlinedBest:F2} us");
-            Console.WriteLine($"  best of 3: baked on the old normal Newton path {bakedNormalBest:F2} us");
             // The same compiled dynamic engine with its pots held still, so it never recomputes its reduction.
             var still = new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution);
             double[][] stillBuffers = built.Outputs.Select(_ => new double[SweepBlock]).ToArray();
@@ -276,9 +272,9 @@ internal static class DynamicPotCheck
             + $"reductions recomputed during the sweep {engine.ReductionUpdates}{stillNote}.");
         double[][] Split(double[] all) => Enumerable.Range(0, built.Outputs.Length).Select(o => all.AsSpan(o * SweepSamples, SweepSamples).ToArray()).ToArray();
         bool finite = ours.All(double.IsFinite);
-        double vsTight = ReferenceCheck.WorstErrorDb(Split(reference), Split(ours));
+        double vsTight = Signals.WorstErrorDb(Split(reference), Split(ours));
         // The compiled reduction folds the eliminated ports into its coefficients, so it rounds differently.
-        double jitDb = ReferenceCheck.WorstErrorDb(Split(ours), Split(jit));
+        double jitDb = Signals.WorstErrorDb(Split(ours), Split(jit));
         bool same = jitDb <= -100;
         int capped = engine.IterationCounts.Count(x => (x & 0x80) != 0);
         double meanIterations = engine.IterationCounts.Count == 0 ? 0 : engine.IterationCounts.Average(x => x & 0x7F);
@@ -306,7 +302,7 @@ internal static class DynamicPotCheck
     {
         var x = new double[samples];
         for (int n = 0; n < samples; n++)
-            x[n] = ReferenceCheck.Harmonics(n / (double)SampleRate, amplitude, 82, 2);
+            x[n] = Signals.Harmonics(n / (double)SampleRate, amplitude, 82, 2);
         return x;
     }
 }

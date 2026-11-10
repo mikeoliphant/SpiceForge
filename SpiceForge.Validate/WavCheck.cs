@@ -39,8 +39,8 @@ internal static class WavCheck
 
         var stock = new Simulation(solution) { Oversample = Oversample, Iterations = IterationCap, Input = new[] { inputSymbol }, Output = new[] { speaker.Out } };
         dynamic compiled = UseInterpreter
-            ? new CircuitInterpreter(system, inputSymbol, nodes, h, Oversample, IterationCap, solution, matchLiveSpice: true)
-            : new CompiledCircuit(system, inputSymbol, nodes, h, Oversample, IterationCap, solution, matchLiveSpice: true);
+            ? new CircuitInterpreter(system, inputSymbol, nodes, h, Oversample, IterationCap, solution)
+            : new CompiledCircuit(system, inputSymbol, nodes, h, Oversample, IterationCap, solution);
 
         var stockOut = new double[input.Length];
         var ours = new double[input.Length];

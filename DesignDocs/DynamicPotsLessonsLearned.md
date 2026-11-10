@@ -222,18 +222,17 @@ generation:
 - **Failed grid points can be harmless.** Thousands of points in the table's corners don't converge, because the
   samples' bounding box includes signal and Drive combinations the circuit never reaches. No lookup landed there.
 
+- **Remove a path only once nothing depends on it.** With segments on the reduced path and the tightly converged
+  LiveSPICE reference in place, the normal Newton path, LiveSPICE-matched mode, its post-Newton evaluator and the
+  sample-exact LiveSPICE checks (reference captures, coverage, pot settings, step traces) went in one change, with
+  every remaining check at its old baseline. Each engine now has one Newton path plus black boxes.
+
 ## Open issues
 
 - Live coefficient reads remain a cost: the Big Muff's inlined step is 5 µs faster than its live one. Keeping the
   solved pot-leg block factored, as LiveSPICE pull request 282 does, might reduce the live set further.
 - The SD-1's remaining overhead is its live coefficient reads, about 0.3 µs (2.36 live vs 2.05 inlined).
 - The Phase 90's sweep has many capped steps that aren't explained yet.
-- Segmentation isn't connected to the reduced path: no port-group scheduling, no segment recording, and black-box
-  segments are built from the full system with the pot legs inside. On the test circuits this changes no results,
-  since none currently splits, but it blocks lookup tables and stage cuts with dynamic pots.
-- Matched mode, and so the normal Newton path, now exists only for sample-exact comparison with stock LiveSPICE.
-  With the tightly converged LiveSPICE reference in place, both can go, leaving one Newton path, once segmentation
-  has moved to the reduced path.
 - Our port-reduced Newton is less robust than LiveSPICE's on the Fuzz Face (hundreds of capped steps against at most
   10). Junction limiting, as netlist_codegen does, is a candidate fix.
 - Pots can be set per render but not automated over time.
