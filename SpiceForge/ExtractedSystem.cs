@@ -42,6 +42,9 @@ public sealed class ExtractedSystem
     /// <summary>The DC steady state, found the same way LiveSPICE finds it.</summary>
     public required Arrow[] InitialConditions { get; init; }
 
+    /// <summary>Runtime parameters (dynamic pots) whose symbols appear in the nonlinear terms, read while running.</summary>
+    public PotParameter[] RuntimeParameters { get; init; } = Array.Empty<PotParameter>();
+
     public int Rows => Equations.Length;
     public int Ports => Q.GetLength(0);
 }

@@ -20,6 +20,16 @@ if (args.Length > 0 && args[0] == "jit")
 if (args.Length > 0 && args[0] == "coverage")
     return CoverageCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
+if (args.Length > 0 && args[0] == "dynamic")
+{
+    if (args.Contains("--long")) DynamicPotCheck.Samples = 96000;
+    int blockIndex = Array.IndexOf(args, "--block");
+    if (blockIndex > 0) DynamicPotCheck.SweepBlock = int.Parse(args[blockIndex + 1]);
+    int capIndex = Array.IndexOf(args, "--cap");
+    if (capIndex > 0) DynamicPotCheck.SweepCap = int.Parse(args[capIndex + 1]);
+    return DynamicPotCheck.Run(testsDir, args.Length > 1 && !args[1].StartsWith("--") ? args[1] : null);
+}
+
 if (args.Length > 3 && args[0] == "accuracy")
     return AccuracyCheck.Run(args[1], args[2], double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
 

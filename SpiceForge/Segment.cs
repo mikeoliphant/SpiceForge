@@ -5,7 +5,8 @@ namespace SpiceForge;
 /// fixed function of its inputs, with no memory of earlier steps:
 /// <list type="bullet">
 /// <item>inputs: the open-circuit value of each of its ports (voc), the constant part of each of its constraint
-/// rows (only when E is singular), and the converged values of any upstream ports it reads;</item>
+/// rows (only when E is singular), the converged values of any upstream ports it reads, and the values of any
+/// runtime parameters (dynamic pots) it reads;</item>
 /// <item>outputs: the converged value of each of its ports, then each of its free unknowns, then the value of each of
 /// its nonlinear terms. Every unknown in the circuit follows linearly from the nonlinear-term values.</item>
 /// </list>
@@ -30,10 +31,14 @@ public sealed class Segment
     /// <summary>Nonlinear terms this segment computes: those that read its ports and no later segment's.</summary>
     public required int[] NonlinearTerms { get; init; }
 
+    /// <summary>Runtime parameters (dynamic pots) this segment's nonlinear terms read, as indices into
+    /// ExtractedSystem.RuntimeParameters. They come last among the inputs.</summary>
+    public required int[] Parameters { get; init; }
+
     public required string[] InputNames { get; init; }
     public required string[] OutputNames { get; init; }
 
-    public int InputCount => Ports.Length + Constraints.Length + Upstream.Length;
+    public int InputCount => Ports.Length + Constraints.Length + Upstream.Length + Parameters.Length;
     public int OutputCount => Ports.Length + Free.Length + NonlinearTerms.Length;
 }
 

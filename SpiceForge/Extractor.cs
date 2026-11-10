@@ -12,16 +12,28 @@ public static class Extractor
 
     private static readonly Variable t = Component.t;
 
-    public static ExtractedSystem Extract(Analysis analysis, Expression timeStep)
+    /// <param name="parameters">Runtime parameters in the equations, such as dynamic pots. The DC starting point
+    /// uses their initial values; everywhere else they stay symbols, read at runtime.</param>
+    public static ExtractedSystem Extract(Analysis analysis, Expression timeStep, IReadOnlyList<PotParameter>? parameters = null)
     {
-        SystemOfEquations system = Discretize(analysis, timeStep, out Arrow[] initialConditions);
+        parameters ??= Array.Empty<PotParameter>();
+        Arrow[] parameterValues = parameters.Select(p => Arrow.New(p.Symbol, p.InitialValue)).ToArray();
+        SystemOfEquations system = Discretize(analysis, timeStep, parameterValues, out Arrow[] initialConditions);
         Expression[] unknowns = system.Unknowns.ToArray();
         LinearCombination[] equations = system.Equations.ToArray();
-        return Split(unknowns, equations, initialConditions);
+        ExtractedSystem extracted = Split(unknowns, equations, initialConditions);
+        return new ExtractedSystem
+        {
+            Unknowns = extracted.Unknowns, Parameters = extracted.Parameters, Nonlinear = extracted.Nonlinear,
+            E = extracted.E, H = extracted.H, C = extracted.C, P = extracted.P, Q = extracted.Q, FreeUnknowns = extracted.FreeUnknowns,
+            ExactE = extracted.ExactE, ExactH = extracted.ExactH, ExactC = extracted.ExactC, ExactP = extracted.ExactP,
+            Sources = extracted.Sources, Equations = extracted.Equations, InitialConditions = extracted.InitialConditions,
+            RuntimeParameters = parameters.ToArray(),
+        };
     }
 
     // Follows TransientSolution.Solve up to the point where the system is discretized.
-    private static SystemOfEquations Discretize(Analysis analysis, Expression h, out Arrow[] initialConditions)
+    private static SystemOfEquations Discretize(Analysis analysis, Expression h, Arrow[] parameterValues, out Arrow[] initialConditions)
     {
         List<Equal> mna = analysis.Equations.ToList();
         List<Expression> y = analysis.Unknowns.ToList();
@@ -34,7 +46,7 @@ public static class Extractor
 
         List<Expression> dy_dt = y.Where(i => mna.Any(j => j.DependsOn(Call.D(i, t)))).Select(i => Call.D(i, t)).ToList();
 
-        initialConditions = SolveSteadyState(analysis, mna, y, dy_dt);
+        initialConditions = SolveSteadyState(analysis, mna, y, dy_dt, parameterValues);
 
         var system = new SystemOfEquations(mna.Substitute(SinglePoleSwitch.ExcludeOpen).OfType<Equal>(), dy_dt.Concat(y));
         system.RowReduce(dy_dt);
@@ -50,12 +62,13 @@ public static class Extractor
         return system;
     }
 
-    private static Arrow[] SolveSteadyState(Analysis analysis, List<Equal> mna, List<Expression> y, List<Expression> dy_dt)
+    private static Arrow[] SolveSteadyState(Analysis analysis, List<Equal> mna, List<Expression> y, List<Expression> dy_dt, Arrow[] parameterValues)
     {
         var initial = new List<Arrow>();
         var dc = new SystemOfEquations(mna
             .Substitute(dy_dt.Select(i => Arrow.New(i, 0)).Append(Arrow.New(t, 0), Arrow.New(Component.T, 0), SinglePoleSwitch.IncludeOpen))
             .Substitute(analysis.InitialConditions)
+            .Substitute(parameterValues)
             .OfType<Equal>(), y.Select(j => j.Substitute(t, 0)));
 
         foreach (SystemOfEquations partition in dc.Partition())

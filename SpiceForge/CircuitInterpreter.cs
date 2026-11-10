@@ -50,6 +50,16 @@ public sealed class CircuitInterpreter
     internal readonly int[] convergence;
     internal readonly double[,] D;
 
+    // Runtime parameters (dynamic pots), by index in ExtractedSystem.RuntimeParameters.
+    internal readonly int[] parameterSymbols = Array.Empty<int>();
+
+    /// <summary>Current values of the runtime parameters, in the order of ExtractedSystem.RuntimeParameters. Change
+    /// them between Run calls (or from the audio thread between blocks); they take effect on the next step.</summary>
+    public double[] ParameterValues { get; }
+
+    /// <summary>Whether every nonlinear term is linear in the ports, so Newton stops after one step.</summary>
+    public bool LinearOnly { get; }
+
     // Singular E: free unknowns z join the Newton unknowns, and d constraint rows join its equations.
     internal readonly int dz;
     internal readonly int K;
@@ -117,6 +127,9 @@ public sealed class CircuitInterpreter
         bool matchLiveSpice = false)
     {
         MatchLiveSpice = matchLiveSpice;
+        if (matchLiveSpice && system.RuntimeParameters.Length > 0)
+            throw new ArgumentException("Runtime parameters can't be combined with matching LiveSPICE.", nameof(matchLiveSpice));
+        ParameterValues = system.RuntimeParameters.Select(p => p.InitialValue).ToArray();
         this.oversample = oversample;
         this.iterationCap = iterationCap;
         inverseOversample = 1.0 / oversample;
@@ -149,11 +162,16 @@ public sealed class CircuitInterpreter
                 termIndex++;
             }
 
-            Expression[] nonlinearSymbols = expressions.SelectMany(SymbolScan.Collect).Concat(pivots).Distinct().ToArray();
+            Expression[] nonlinearSymbols = expressions.SelectMany(SymbolScan.Collect).Concat(pivots)
+                .Concat(system.RuntimeParameters.Select(r => (Expression)r.Symbol)).Distinct().ToArray();
             nonlinearEvaluator = new ExpressionEvaluator(nonlinearSymbols, expressions);
             nonlinearInputs = new double[nonlinearSymbols.Length];
             nonlinearResults = new double[expressions.Count];
             portSymbols = pivots.Select(p => Array.IndexOf(nonlinearSymbols, p)).ToArray();
+            parameterSymbols = system.RuntimeParameters.Select(r => Array.IndexOf(nonlinearSymbols, (Expression)r.Symbol)).ToArray();
+
+            // When every term is linear in the ports (only pot legs, say), one Newton step is exact.
+            LinearOnly = expressions.Skip(m).All(partial => !partial.DependsOn(pivots));
         }
 
         DenseLu? lu = null;
@@ -437,6 +455,7 @@ public sealed class CircuitInterpreter
                 done &= Math.Abs(next - y[j]) < Math.Abs(y[j]) * RelativeTolerance + AbsoluteTolerance;
             }
 
+            done |= LinearOnly;
             Array.Copy(y, yBeforeUpdate, y.Length);
             for (int i = 0; i < y.Length; i++)
                 y[i] = Combine(i);
@@ -662,10 +681,15 @@ public sealed class CircuitInterpreter
                 Free = freeIndices,
                 Constraints = freeIndices,
                 Upstream = upstream.ToArray(),
+                Parameters = Enumerable.Range(0, system.RuntimeParameters.Length)
+                    .Where(j => terms.Any(c => system.Nonlinear[c].DependsOn(system.RuntimeParameters[j].Symbol))).ToArray(),
                 NonlinearTerms = terms,
                 InputNames = ports.Select(p => $"open-circuit {portNames[p]}")
                     .Concat(freeIndices.Select(f => $"constraint {f} constant (free unknown {FreeName(f)})"))
                     .Concat(upstream.Select(p => $"upstream port {portNames[p]}"))
+                    .Concat(Enumerable.Range(0, system.RuntimeParameters.Length)
+                        .Where(j => terms.Any(c => system.Nonlinear[c].DependsOn(system.RuntimeParameters[j].Symbol)))
+                        .Select(j => $"parameter {system.RuntimeParameters[j].Name}"))
                     .ToArray(),
                 OutputNames = ports.Select(p => $"port {portNames[p]}")
                     .Concat(freeIndices.Select(f => $"free unknown {FreeName(f)}"))
@@ -701,6 +725,8 @@ public sealed class CircuitInterpreter
             inputs[position++] = cs[f];
         foreach (int p in segment.Upstream)
             inputs[position++] = w[p];
+        foreach (int j in segment.Parameters)
+            inputs[position++] = ParameterValues[j];
     }
 
     private void ObserveSegments(int iterations, bool capped)
@@ -783,6 +809,8 @@ public sealed class CircuitInterpreter
             constant[f] = inputs[position++];
         foreach (int p in segment.Upstream)
             w[p] = inputs[position++];
+        foreach (int j in segment.Parameters)
+            ParameterValues[j] = inputs[position++];
 
         for (int i = 0; i < ports; i++)
             w[segment.Ports[i]] = guess[i];
@@ -883,6 +911,9 @@ public sealed class CircuitInterpreter
         for (int p = 0; p < k; p++)
             if (portSymbols[p] >= 0)
                 nonlinearInputs[portSymbols[p]] = w[p];
+
+        for (int j = 0; j < parameterSymbols.Length; j++)
+            nonlinearInputs[parameterSymbols[j]] = ParameterValues[j];
 
         nonlinearEvaluator!.Evaluate(nonlinearInputs, nonlinearResults);
 

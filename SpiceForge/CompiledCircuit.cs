@@ -31,6 +31,10 @@ public sealed class CompiledCircuit
     /// <summary>One entry per oversampled step: the Newton iteration count, with 0x80 set if the cap was hit.</summary>
     public List<byte> IterationCounts { get; } = new();
 
+    /// <summary>Current values of the runtime parameters (dynamic pots), in the order of ExtractedSystem.RuntimeParameters.
+    /// The compiled code reads this array directly, so changes take effect on the next step without recompiling.</summary>
+    public double[] ParameterValues { get; }
+
     public CompiledCircuit(
         ExtractedSystem system,
         Expression inputSymbol,
@@ -54,6 +58,7 @@ public sealed class CompiledCircuit
             throw new NotSupportedException("Some nonlinear terms read no ports, so no segment computes them.");
         y = new double[system.Unknowns.Length];
         history = plan.history;
+        ParameterValues = plan.ParameterValues;
         step = new Emitter(plan, system, inputSymbol, timeStep, iterationCap, solution, segmentSolver).Build();
     }
 
@@ -342,6 +347,9 @@ public sealed class CompiledCircuit
                     code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), cs[f]));
                 foreach (int p in segment.Upstream)
                     code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)), w[p]!));
+                foreach (int j in segment.Parameters)
+                    code.Add(LinqExpr.Assign(LinqExpr.ArrayAccess(inputArray, LinqExpr.Constant(position++)),
+                        LinqExpr.ArrayIndex(LinqExpr.Constant(plan.ParameterValues), LinqExpr.Constant(j))));
 
                 code.Add(LinqExpr.Call(SegmentCall, LinqExpr.Constant(segmentSolver, typeof(ISegmentSolver)), LinqExpr.Constant(segment), inputArray, outputArray));
 
@@ -368,6 +376,13 @@ public sealed class CompiledCircuit
             code.Return(LinqExpr.Constant(0));
         }
 
+        // A runtime parameter reads the live parameter array; anything else is null.
+        private LinqExpr? ParameterRead(Expression symbol)
+        {
+            int index = Array.FindIndex(system.RuntimeParameters, r => r.Symbol.Equals(symbol));
+            return index < 0 ? null : LinqExpr.ArrayIndex(LinqExpr.Constant(plan.ParameterValues), LinqExpr.Constant(index));
+        }
+
         private static readonly MethodInfo SegmentCall = typeof(Emitter).GetMethod(nameof(CallSegment), BindingFlags.Static | BindingFlags.NonPublic)!;
 
         private static void CallSegment(ISegmentSolver solver, Segment segment, double[] inputs, double[] outputs) => solver.Solve(segment, inputs, outputs);
@@ -377,7 +392,7 @@ public sealed class CompiledCircuit
             int n = system.Unknowns.Length, k = plan.k, m = plan.m, dz = plan.dz, K = plan.K;
             // A Newton system with no equations only holds a free unknown at its previous value.
             List<NewtonIteration> newtonSets = solution.Solutions.OfType<NewtonIteration>().Where(s => s.Equations.Any()).ToList();
-            if (newtonSets.Count != 1)
+            if (plan.MatchLiveSpice && newtonSets.Count != 1)
                 throw new NotSupportedException("Circuits with several LiveSPICE Newton systems aren't supported.");
 
             var assigned = new HashSet<Expression>(solution.Solutions.OfType<LinearSolutions>().SelectMany(s => s.Solutions).Select(a => a.Left));
@@ -448,7 +463,7 @@ public sealed class CompiledCircuit
                     code.Map(Scope.Local, pivotSymbols[p], w[p]);
                 foreach (Expression symbol in system.Nonlinear.SelectMany(SymbolScan.Collect).Distinct())
                     if (!pivotSymbols.Contains(symbol))
-                        code.Map(Scope.Local, symbol, LinqExpr.Constant(0.0));
+                        code.Map(Scope.Local, symbol, ParameterRead(symbol) ?? LinqExpr.Constant(0.0));
 
                 var q = new ParameterExpression[m];
                 var jacobian = new LinqExpr?[m, k];
@@ -562,6 +577,8 @@ public sealed class CompiledCircuit
                 }
 
                 ParameterExpression done = code.DeclInit<bool>("done", true);
+                if (plan.LinearOnly)
+                    code.Add(LinqExpr.Assign(done, LinqExpr.Constant(true)));
                 foreach (int j in plan.convergence)
                 {
                     code.Add(LinqExpr.AndAssign(done, LinqExpr.LessThan(
