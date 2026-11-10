@@ -423,11 +423,11 @@ public sealed class CompiledCircuit
                 LinqExpr previous = LinqExpr.Constant(0.0);
                 for (int j = 0; j < n; j++)
                     if (Q[N[i]][j] != 0)
-                        previous = LinqExpr.Add(previous, LinqExpr.Multiply(Cell(Q, N[i], j), History(1, j)));
+                        previous = LinqExpr.Add(previous, LinqExpr.Multiply(Cell(Q, N[i], j), Guess(j)));
                 w[i] = Local(previous);
             }
-            var current = tracked.ToDictionary(i => i, i => Local(History(1, i)));
-            ParameterExpression[] z = plan.free.Select(j => Local(History(1, j))).ToArray();
+            var current = tracked.ToDictionary(i => i, i => Local(Guess(i)));
+            ParameterExpression[] z = plan.free.Select(j => Local(Guess(j))).ToArray();
 
             // The same coupled groups as the interpreter's reduced solve, so both solve each step identically.
             var augmented = Enumerable.Range(0, size).Select(_ => new double[CircuitInterpreter.RowLength(size)]).ToArray();
@@ -456,6 +456,9 @@ public sealed class CompiledCircuit
 
             ParameterExpression iteration = code.DeclInit<int>("iteration", 0);
             ParameterExpression result = code.DeclInit<int>("result", 0);
+            bool extrapolate = plan.ExtrapolateGuess && plan.history.Length > 1;
+            ParameterExpression spent = code.DeclInit<int>("spent", 0);
+            ParameterExpression restarted = code.DeclInit<bool>("restarted", !extrapolate);
             var finalQ = new LinqExpr?[TN.Length];
 
             code.DoWhile((LinqExpr exit) =>
@@ -575,9 +578,38 @@ public sealed class CompiledCircuit
                 for (int g = 0; g < dz; g++)
                     code.Add(LinqExpr.Assign(z[g], zNext[g]));
 
-                code.Add(LinqExpr.IfThen(done, LinqExpr.Block(LinqExpr.Assign(result, iteration), exit)));
+                // The iterations over both starts, as CircuitInterpreter.SolveReduced counts them.
+                LinqExpr total = LinqExpr.Call(typeof(Math).GetMethod(nameof(Math.Min), new[] { typeof(int), typeof(int) })!,
+                    LinqExpr.Add(spent, iteration), LinqExpr.Constant(0x7F));
+                code.Add(LinqExpr.IfThen(done, LinqExpr.Block(LinqExpr.Assign(result, total), exit)));
                 code.Add(LinqExpr.IfThen(LinqExpr.Equal(iteration, LinqExpr.Constant(iterationCap)),
-                    LinqExpr.Block(LinqExpr.Assign(result, LinqExpr.Or(iteration, LinqExpr.Constant(0x80))), exit)));
+                    LinqExpr.Block(LinqExpr.Assign(result, LinqExpr.Or(total, LinqExpr.Constant(0x80))), exit)));
+
+                // Not converged soon from the extrapolated guess: start again, once, from the previous step.
+                if (extrapolate)
+                {
+                    var restart = new List<LinqExpr>
+                    {
+                        LinqExpr.Assign(restarted, LinqExpr.Constant(true)),
+                        LinqExpr.Assign(spent, iteration),
+                        LinqExpr.Assign(iteration, LinqExpr.Constant(0)),
+                    };
+                    for (int i = 0; i < kn; i++)
+                    {
+                        LinqExpr previousPort = LinqExpr.Constant(0.0);
+                        for (int j = 0; j < n; j++)
+                            if (Q[N[i]][j] != 0)
+                                previousPort = LinqExpr.Add(previousPort, LinqExpr.Multiply(Cell(Q, N[i], j), History(1, j)));
+                        restart.Add(LinqExpr.Assign(w[i], previousPort));
+                    }
+                    foreach (int j in tracked)
+                        restart.Add(LinqExpr.Assign(current[j], History(1, j)));
+                    for (int g = 0; g < dz; g++)
+                        restart.Add(LinqExpr.Assign(z[g], History(1, plan.free[g])));
+                    code.Add(LinqExpr.IfThen(
+                        LinqExpr.AndAlso(LinqExpr.Not(restarted), LinqExpr.Equal(iteration, LinqExpr.Constant(CircuitInterpreter.RestartAfter))),
+                        LinqExpr.Block(restart)));
+                }
             }, LinqExpr.Constant(true));
 
             // Every unknown anything reads, from the final linearized terms and free unknowns. The tracked ones were
@@ -660,6 +692,11 @@ public sealed class CompiledCircuit
             CircuitInterpreter.Kind.Current => Element(y, b.Unknown),
             _ => History(b.Delay, b.Unknown),
         };
+
+        // Newton's starting value for an unknown, as CircuitInterpreter.SolveReduced (see ExtrapolateGuess).
+        private LinqExpr Guess(int unknown) => plan.ExtrapolateGuess && plan.history.Length > 1
+            ? LinqExpr.Subtract(LinqExpr.Multiply(LinqExpr.Constant(2.0), History(1, unknown)), History(2, unknown))
+            : History(1, unknown);
 
         private LinqExpr History(int delay, int unknown) =>
             LinqExpr.ArrayIndex(historyRows[delay - 1], LinqExpr.Constant(unknown));

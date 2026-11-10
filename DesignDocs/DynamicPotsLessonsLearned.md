@@ -250,6 +250,19 @@ the error against the uncut circuit, with no load or a linear copy of the downst
 - **Supply networks join every stage.** Tube stages share a B+ decoupling chain, so no node separates them until the
   supply network is copied into each half (`--supply`); that's a real but small approximation (no inter-stage sag).
 
+## Newton's starting guess
+
+- **Extrapolate the starting guess.** Starting Newton from 2·y[n-1] - y[n-2] instead of y[n-1], as netlist_codegen
+  does, cut the iterations from about 2 per step to 1.1-1.3 on every nonlinear circuit, with the same accuracy
+  against tightly converged references. Compiled, most real circuits got 20-45% faster (Fender 5e3 28.2 to 17.9 µs,
+  now 1.5× stock; Phase 90 32.9 to 20.2; SD-1 1.39 to 0.95).
+- **But give it a way back.** Extrapolating through a kink overshoots: the Rat at hot input went from a handful of
+  capped steps to thousands, and its baked and dynamic engines diverged. Restarting once from the previous step when
+  Newton hasn't converged after 3 iterations restored the Rat's capped-step counts exactly, while the steps that
+  converge keep the saving. netlist_codegen limits junction voltages instead, which needs per-device knowledge.
+- **It doesn't fix every robustness gap.** The Fuzz Face still caps where LiveSPICE's Newton doesn't, and it and the
+  Orange Squeezer run slower with the restart firing.
+
 ## Open issues
 
 - Live coefficient reads remain a cost: the Big Muff's inlined step is 5 µs faster than its live one. Keeping the
