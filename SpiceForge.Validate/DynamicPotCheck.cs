@@ -233,11 +233,11 @@ internal static class DynamicPotCheck
             double inlinedBest = Best(() => new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution));
             CompiledCircuit.InlineLiveForTesting = false;
             double bakedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
-            CircuitInterpreter.ForceReductionForTesting = true;
-            double bakedReducedBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
-            CircuitInterpreter.ForceReductionForTesting = false;
+            CircuitInterpreter.NormalPathForTesting = true;
+            double bakedNormalBest = Best(() => new CompiledCircuit(baked.System, baked.Input, baked.Outputs, h, Oversample, IterationCap, baked.Solution));
+            CircuitInterpreter.NormalPathForTesting = false;
             Console.WriteLine($"  best of 3, pots still: baked {bakedBest:F2} us, dynamic {liveBest:F2} us, dynamic with live coefficients inlined {inlinedBest:F2} us");
-            Console.WriteLine($"  best of 3: baked through the reduced path {bakedReducedBest:F2} us");
+            Console.WriteLine($"  best of 3: baked on the old normal Newton path {bakedNormalBest:F2} us");
             // The same compiled dynamic engine with its pots held still, so it never recomputes its reduction.
             var still = new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution);
             double[][] stillBuffers = built.Outputs.Select(_ => new double[SweepBlock]).ToArray();

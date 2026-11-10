@@ -449,12 +449,16 @@ public sealed class CompiledCircuit
         {
             if (InlineLiveForTesting) return;
             for (int row = 0; row < matrix.Length; row++)
-                LiveRow(matrix, row);
+                if (plan.reduction!.RowVaries(matrix, row))
+                    LiveRow(matrix, row);
         }
 
-        private LinqExpr Live(double[][] matrix, int row, int column) => InlineLiveForTesting
-            ? LinqExpr.Constant(matrix[row][column])
-            : LinqExpr.ArrayIndex(LiveRow(matrix, row), LinqExpr.Constant(column));
+        // A coefficient of the reduction: read from its live array if it depends on the parameters, and compiled as a
+        // constant if it doesn't (all of them, in a circuit without dynamic pots).
+        private LinqExpr Live(double[][] matrix, int row, int column) =>
+            InlineLiveForTesting || !plan.reduction!.Varies(matrix, row, column)
+                ? LinqExpr.Constant(matrix[row][column])
+                : LinqExpr.ArrayIndex(LiveRow(matrix, row), LinqExpr.Constant(column));
 
         private LinqExpr Live(double[] vector, int index) => InlineLiveForTesting
             ? LinqExpr.Constant(vector[index])
@@ -561,8 +565,10 @@ public sealed class CompiledCircuit
             Hoist(r.Czr);
             foreach (int i in tracked.Union(required).Where(i => r.Affected[i]))
             {
-                LiveRow(r.TermGain, i);
-                LiveRow(r.FreeGain, i);
+                if (r.RowVaries(r.TermGain, i))
+                    LiveRow(r.TermGain, i);
+                if (r.RowVaries(r.FreeGain, i))
+                    LiveRow(r.FreeGain, i);
             }
             if (system.RuntimeParameters.Length > 0)
                 LiveArray(plan.ParameterValues);
@@ -693,9 +699,10 @@ public sealed class CompiledCircuit
                     LinqExpr.Block(LinqExpr.Assign(result, LinqExpr.Or(iteration, LinqExpr.Constant(0x80))), exit)));
             }, LinqExpr.Constant(true));
 
-            // Every unknown anything reads, from the final linearized terms and free unknowns.
+            // Every unknown anything reads, from the final linearized terms and free unknowns. The tracked ones were
+            // already rebuilt from exactly those in the last iteration.
             foreach (int i in required.Union(tracked).OrderBy(i => i))
-                code.Add(LinqExpr.Assign(Element(y, i), Rebuild(i, finalQ, z)));
+                code.Add(LinqExpr.Assign(Element(y, i), current.TryGetValue(i, out ParameterExpression? done) ? done : Rebuild(i, finalQ, z)));
             code.Return(result);
         }
 
@@ -715,6 +722,7 @@ public sealed class CompiledCircuit
 
         private static readonly MethodInfo SegmentCall = typeof(Emitter).GetMethod(nameof(CallSegment), BindingFlags.Static | BindingFlags.NonPublic)!;
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
         private static void CallSegment(ISegmentSolver solver, Segment segment, double[] inputs, double[] outputs) => solver.Solve(segment, inputs, outputs);
 
         private void EmitNewton(ParameterExpression[] sources)

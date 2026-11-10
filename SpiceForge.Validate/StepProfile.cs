@@ -33,20 +33,23 @@ internal static class StepProfile
             ExtractedSystem system = Extractor.Extract(circuit.Analyze(), h, pots);
             Expression input = circuit.Components.Where(i => i is Input).Select(i => Component.DependentVariable(i.Name, Component.t)).Single();
             Expression[] outputs = circuit.Nodes.Select(i => i.V).ToArray();
+            // --speaker: only the first speaker's node, as LiveSPICE's own benchmark (and JitCheck) measures.
+            if (Environment.GetCommandLineArgs().Contains("--speaker")
+                && circuit.Components.OfType<Speaker>().FirstOrDefault()?.Anode.ConnectedTo?.V is Expression anode)
+                outputs = new[] { anode };
             CompiledCircuit.InlineLiveForTesting = dynamic;
             _ = new CompiledCircuit(system, input, outputs, h, Oversample, IterationCap, solution);
             CompiledCircuit.InlineLiveForTesting = false;
             return CompiledCircuit.LastStepForTesting!;
         }
 
-        // Baked, but through the reduced path, so both columns come from the same emitter. With --paths, the columns
+        // Baked (through the reduced path, as every circuit now is), so both columns come from the same emitter. With --paths, the columns
         // are instead the baked circuit on its normal path and on the reduced path.
         bool paths = Environment.GetCommandLineArgs().Contains("--paths");
-        CircuitInterpreter.ForceReductionForTesting = !paths;
+        CircuitInterpreter.NormalPathForTesting = paths;
         LambdaExpression bakedStep = Compile(false);
-        CircuitInterpreter.ForceReductionForTesting = paths;
+        CircuitInterpreter.NormalPathForTesting = false;
         LambdaExpression dynamicStep = Compile(!paths);
-        CircuitInterpreter.ForceReductionForTesting = false;
         if (paths)
             Console.WriteLine("columns: baked = normal path, dynamic = baked circuit through the reduced path");
         var debugView = typeof(LinqExpr).GetProperty("DebugView", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;

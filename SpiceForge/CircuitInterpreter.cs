@@ -64,8 +64,9 @@ public sealed class CircuitInterpreter
     public int EliminatedPorts => reduction?.L.Length ?? 0;
     public long ReductionUpdates => reduction?.Updates ?? 0;
 
-    /// <summary>For profiling only: take the reduced path even when there are no linear ports to eliminate.</summary>
-    internal static bool ForceReductionForTesting { get; set; }
+    /// <summary>For profiling only: take the normal Newton path when there are no linear ports to eliminate, as before
+    /// every circuit went through the reduced path.</summary>
+    internal static bool NormalPathForTesting { get; set; }
 
 
     // Runtime parameters (dynamic pots), by index in ExtractedSystem.RuntimeParameters.
@@ -270,7 +271,14 @@ public sealed class CircuitInterpreter
         zNext = new double[dz];
         cs = new double[dz];
 
-        reduction = matchLiveSpice || m == 0 ? null : BuildReduction();
+        // Entries of Z that exact arithmetic would make zero come out as roundoff, and are cleared for the port groups.
+        // With nothing to eliminate, the reduction's coefficients are Z itself, so they're cleared before it is built,
+        // as the normal Newton path always did. With pot legs to fold in, the reduction is built from Z as it is: a
+        // cleared entry can still matter once folded (a high-gain circuit amplifies it), and clearing them broke
+        // circuits such as the Rockerverb and the Fender 5e3.
+        // (The reduction keeps Z itself, so the order matters: it learns its live pattern from Z before clearing.)
+        bool clear = segment && dz == 0;
+        reduction = matchLiveSpice || m == 0 ? null : BuildReduction(clear);
         if (reduction != null)
         {
             int size = reduction.N.Length + dz;
@@ -291,6 +299,8 @@ public sealed class CircuitInterpreter
             }
             reduction.Freeze(ParameterValues, LinearJacobian);
         }
+        if (clear && !coupledCleared)
+            ClearRoundoffCoupling();
 
         // The constraint rows couple everything, so a split system is solved as one group.
         groups = dz > 0 ? new[] { Enumerable.Range(0, K).ToArray() } : BuildGroups(segment);
@@ -538,6 +548,9 @@ public sealed class CircuitInterpreter
 
     internal static int RowLength(int size) => size + 1 + (System.Numerics.Vector.IsHardwareAccelerated ? System.Numerics.Vector<double>.Count - 1 : 0);
 
+    // Compiled steps call this every Newton iteration. Without AggressiveOptimization it starts at tier 0 and stays there
+    // until tiering catches up, which made short runs through the compiled reduced path 25% slower on the TS-9.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     internal static void SolveLinearStep(double[][] augmented, double[] stepSolution, int[][] groups, double[][][] groupRows, int k)
     {
         if (groups.Length <= 1)
@@ -577,8 +590,15 @@ public sealed class CircuitInterpreter
             return Array.Empty<int[]>();
         if (!segment)
             return new[] { Enumerable.Range(0, k).ToArray() };
+        return DependencyGraph.StronglyConnected(k, PortDependencies).Select(g => g.OrderBy(p => p).ToArray()).ToArray();
+    }
 
-        // Entries that exact arithmetic would make zero come out as roundoff, so clear them first.
+    private bool coupledCleared;
+
+    // Clears each Z entry that is roundoff relative to the largest in its column.
+    private void ClearRoundoffCoupling()
+    {
+        coupledCleared = true;
         for (int c = 0; c < m; c++)
         {
             double max = 0;
@@ -593,8 +613,6 @@ public sealed class CircuitInterpreter
                 }
             }
         }
-
-        return DependencyGraph.StronglyConnected(k, PortDependencies).Select(g => g.OrderBy(p => p).ToArray()).ToArray();
     }
 
     private IEnumerable<int> PortDependencies(int r)
@@ -951,7 +969,7 @@ public sealed class CircuitInterpreter
             outputs[position++] = q[c];
         return converged;
     }
-    private LinearPortReduction? BuildReduction()
+    private LinearPortReduction? BuildReduction(bool clearIfNothingToEliminate)
     {
         bool[] linear = (bool[])termLinear.Clone();
         bool changed = true;
@@ -975,8 +993,10 @@ public sealed class CircuitInterpreter
 
         int[] n = Enumerable.Range(0, k).Where(p => inN[p]).ToArray();
         int[] l = Enumerable.Range(0, k).Where(p => !inN[p]).ToArray();
-        if (l.Length == 0 && !ForceReductionForTesting)
+        if (l.Length == 0 && NormalPathForTesting)
             return null;
+        if (l.Length == 0 && clearIfNothingToEliminate)
+            ClearRoundoffCoupling();
         int[] tn = Enumerable.Range(0, m).Where(c => !linear[c]).ToArray();
         int[] tl = Enumerable.Range(0, m).Where(c => linear[c]).ToArray();
         return new LinearPortReduction(n, l, tn, tl, Z, Qz, CP, Q, parameterGain, constant, sourceGain, G, Nz, CH, CC, CS);

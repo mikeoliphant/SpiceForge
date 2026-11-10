@@ -87,6 +87,11 @@ internal sealed class LinearPortReduction
     // update in progress (while learning).
     private readonly (bool[][] Used, double[][] Values, bool RowTest, double[][] Ratio)[] tracked;
 
+    // Each tracked entry's value at the first learning setting, and whether a later one differed (see Varies).
+    private readonly double[][][] firstValues;
+    private readonly bool[][][] varies;
+    private bool firstSeen;
+
     /// <summary>How many times the coefficients have been recomputed.</summary>
     public long Updates { get; private set; }
 
@@ -142,6 +147,8 @@ internal sealed class LinearPortReduction
             (FreeGainUsed, FreeGain, false), (ConstraintGainUsed, ConstraintGain, false),
             (ConstraintSourceUsed, ConstraintSource, false),
         }.Select(a => (a.Item1, a.Item2, a.Item3, Jagged(a.Item2.Length, a.Item2.Length == 0 ? 0 : a.Item2[0].Length))).ToArray();
+        firstValues = tracked.Select(a => Jagged(a.Values.Length, a.Values.Length == 0 ? 0 : a.Values[0].Length)).ToArray();
+        varies = tracked.Select(a => Flags(a.Values)).ToArray();
 
         // The eliminated ports' open-circuit values in terms of the step inputs, Q_L·yLinear. These don't change.
         portGain = Jagged(l.Length, parameters);
@@ -267,7 +274,14 @@ internal sealed class LinearPortReduction
         {
             double value = Fold(baseValue, portValue);
             if (!Learning)
-                return used[row][column] ? value : 0;
+            {
+                // Held at zero if never marked, and at its learned value if it doesn't depend on the parameters, so
+                // every engine sees exactly the coefficients the compiled step reads or inlines.
+                if (!used[row][column])
+                    return 0;
+                int a = Array.FindIndex(tracked, t => ReferenceEquals(t.Used, used));
+                return varies[a][row][column] ? value : firstValues[a][row][column];
+            }
             double size = Math.Abs(baseValue);
             for (int j = 0; j < kl; j++)
                 if (throughSize[j] != 0)
@@ -322,6 +336,18 @@ internal sealed class LinearPortReduction
     // Marks the entries that are more than residue at the current parameters (see the Used properties).
     private void MarkLearned()
     {
+        for (int a = 0; a < tracked.Length; a++)
+            for (int i = 0; i < tracked[a].Values.Length; i++)
+                for (int c = 0; c < tracked[a].Values[i].Length; c++)
+                {
+                    double v = tracked[a].Values[i][c];
+                    if (!firstSeen)
+                        firstValues[a][i][c] = v;
+                    else if (v != firstValues[a][i][c])
+                        varies[a][i][c] = true;
+                }
+        firstSeen = true;
+
         foreach (var (used, values, rowTest, ratios) in tracked)
             for (int i = 0; i < values.Length; i++)
             {
@@ -343,6 +369,26 @@ internal sealed class LinearPortReduction
         Learning = false;
         last = null;
         Update(parameters, linearJacobian);
+    }
+
+    /// <summary>
+    /// Whether this live coefficient changed between the learning settings, so it depends on the parameters. One that
+    /// doesn't can be compiled as a constant (its current value) rather than read from its array. Only meaningful once
+    /// frozen. <paramref name="matrix"/> is one of the coefficient arrays above.
+    /// </summary>
+    public bool Varies(double[][] matrix, int row, int column)
+    {
+        int a = Array.FindIndex(tracked, t => ReferenceEquals(t.Values, matrix));
+        if (a < 0)
+            throw new ArgumentException("Not one of the reduction's coefficient arrays.", nameof(matrix));
+        return varies[a][row][column];
+    }
+
+    /// <summary>Whether any coefficient in this row of <paramref name="matrix"/> depends on the parameters.</summary>
+    public bool RowVaries(double[][] matrix, int row)
+    {
+        int a = Array.FindIndex(tracked, t => ReferenceEquals(t.Values, matrix));
+        return a >= 0 && varies[a][row].Any(v => v);
     }
 
     private static bool[][] Flags(double[][] like) => like.Select(row => new bool[row.Length]).ToArray();
