@@ -95,6 +95,29 @@ there is the cost of the live reads.
 Results after dropping residue (µs per sample, pots still): Big Muff 26.8 dynamic vs 25.5 baked (33.2 before),
 Blues Breaker 5.7 vs 5.3 (7.6), TS-9 1.27 vs 1.28, Rat 14.5 vs 13.2 (15.1), SD-1 unchanged at 3.70 vs 2.10.
 
+## Register pressure in the reduced path
+
+- **Compare paths on the same circuit.** Running the baked SD-1 through the reduced path cost 2.95 µs against 1.99 on
+  its normal path, with no pots at all. `profile <circuit> --paths` compares the two emitted steps. Total work was
+  about the same, but the reduced path did 176 more multiply-adds before the Newton loop and 167 fewer after it.
+- **Compute only what the loop reads before the loop.** The reduced path computed the linear part of every needed
+  unknown before Newton, so they all stayed live across the loop. Moving the ones only read afterwards to after the
+  loop, as the normal path does, took dynamic SD-1 from 3.70 to 2.35 µs.
+- **Don't load every input into a local.** The SD-1 has 15 history inputs, and x64 has 16 XMM registers. As locals
+  they were all live through the linear parts, so the JIT spilled each running sum to one stack slot on every term:
+  168 of the 239 stack stores in one step went to the same slot. Reading history values from their arrays where
+  they're used costs nothing, because a multiply can take its operand from memory. The reduced path went from 2.95
+  to 2.02 µs, and baked circuits got faster too (Rat 13.2 to 9.6, Big Muff 25.5 to 20.2).
+- **A faster live build than inlined one is a clue.** After the first fix, the step with live arrays (2.35 µs) beat the
+  same step with constants inlined (3.48 µs). Array loads happen where they're used, while the constants version
+  kept every input in a register. Numbers that run backwards like that point at register allocation, not arithmetic.
+- **The same spill pattern keeps coming back.** It's the third time a long linear combination has spilled its running
+  sum through one stack slot. When a step is slower than its operation count suggests, count stores per stack slot
+  in the JIT's output first.
+
+Results after these fixes (µs per sample, pots still): SD-1 about 2.35 dynamic vs 1.95 baked (3.70 vs 2.10 before),
+Blues Breaker 3.9 vs 3.3, Rat 10.3 vs 9.6, Big Muff 24.2 vs 20.2.
+
 ## Validation
 
 - **Measure where validation time goes before optimizing it.** The guess was symbolic work. In fact, simulation
@@ -118,5 +141,5 @@ Blues Breaker 5.7 vs 5.3 (7.6), TS-9 1.27 vs 1.28, Rat 14.5 vs 13.2 (15.1), SD-1
 
 - Live coefficient reads remain a cost: the Big Muff's inlined step is 5 µs faster than its live one. Keeping the
   solved pot-leg block factored, as LiveSPICE pull request 282 does, might reduce the live set further.
-- The SD-1's reduced path costs about 0.9 µs more than its baked path, even with pots baked in.
+- The SD-1's remaining overhead is its live coefficient reads, about 0.3 µs (2.36 live vs 2.05 inlined).
 - The Phase 90's sweep has many capped steps that aren't explained yet.

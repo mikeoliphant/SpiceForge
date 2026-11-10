@@ -179,7 +179,15 @@ public sealed class CompiledCircuit
                 bool used = i >= plan.parameterCount || sourceSymbols.Contains(plan.Symbols[i])
                     || linearRows.Any(row => parameterGain[row][i] != 0)
                     || (i < plan.parameterCount && Enumerable.Range(0, plan.dz).Any(f => CH[f][i] != 0));
-                if (used)
+                if (!used)
+                    continue;
+                // History values are read from their arrays where they're used, not loaded into locals. The step has
+                // nearly as many of them as x64 has XMM registers, and as locals they're all live through the linear
+                // parts, leaving the JIT to spill each running sum to one stack slot on every term. A multiply can
+                // read its operand straight from memory, so this costs nothing.
+                if (plan.bindings[i].Kind == CircuitInterpreter.Kind.History)
+                    code.Map(Scope.Local, plan.Symbols[i], Read(plan.bindings[i]));
+                else
                     code.DeclInit(plan.Symbols[i], Read(plan.bindings[i]));
             }
 
@@ -464,8 +472,10 @@ public sealed class CompiledCircuit
             int kn = N.Length, size = kn + dz;
             int[] tracked = plan.convergence.Distinct().ToArray();
 
+            // Before the loop, only the linear parts the loop reads: the unknowns the stopping rule tracks and those the
+            // ports read. The rest are computed after the loop, where they're used, as EmitNewton does. Computing them
+            // all up front keeps every one live across the loop, which costs register spills on every term.
             var needed = new SortedSet<int>(tracked);
-            needed.UnionWith(required);
             foreach (int p in N)
                 for (int j = 0; j < n; j++)
                     if (Q[p][j] != 0)
@@ -473,6 +483,8 @@ public sealed class CompiledCircuit
             var linear = new Dictionary<int, ParameterExpression>();
             foreach (int i in needed)
                 linear[i] = Local(r.Affected[i] ? LiveLinearPart(i, sources, r) : LinearPart(i, sources));
+            LinqExpr LinearOf(int i) => linear.TryGetValue(i, out ParameterExpression? local) ? local
+                : r.Affected[i] ? LiveLinearPart(i, sources, r) : LinearPart(i, sources);
 
             var open = new ParameterExpression[kn];
             for (int i = 0; i < kn; i++)
@@ -513,7 +525,7 @@ public sealed class CompiledCircuit
             // An unknown from the solve: y = yEff + Geff·qN + Nzeff·z.
             LinqExpr Rebuild(int i, LinqExpr?[] terms, IReadOnlyList<LinqExpr> frees)
             {
-                LinqExpr value = linear[i];
+                LinqExpr value = LinearOf(i);
                 for (int c = 0; c < TN.Length; c++)
                 {
                     LinqExpr? weight = r.Affected[i]

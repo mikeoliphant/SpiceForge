@@ -39,11 +39,16 @@ internal static class StepProfile
             return CompiledCircuit.LastStepForTesting!;
         }
 
-        // Baked, but through the reduced path, so both columns come from the same emitter.
-        CircuitInterpreter.ForceReductionForTesting = true;
+        // Baked, but through the reduced path, so both columns come from the same emitter. With --paths, the columns
+        // are instead the baked circuit on its normal path and on the reduced path.
+        bool paths = Environment.GetCommandLineArgs().Contains("--paths");
+        CircuitInterpreter.ForceReductionForTesting = !paths;
         LambdaExpression bakedStep = Compile(false);
+        CircuitInterpreter.ForceReductionForTesting = paths;
+        LambdaExpression dynamicStep = Compile(!paths);
         CircuitInterpreter.ForceReductionForTesting = false;
-        LambdaExpression dynamicStep = Compile(true);
+        if (paths)
+            Console.WriteLine("columns: baked = normal path, dynamic = baked circuit through the reduced path");
         var debugView = typeof(LinqExpr).GetProperty("DebugView", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         string dumps = Environment.GetEnvironmentVariable("STEP_DUMP") ?? "";
         if (dumps.Length > 0)
