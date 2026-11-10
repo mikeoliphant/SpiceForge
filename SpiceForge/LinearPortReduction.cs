@@ -31,6 +31,8 @@ internal sealed class LinearPortReduction
     private readonly double[] constant, cc;
     private readonly int dz;
     private readonly double[][] portGain, portSource;
+    // The sum of the magnitudes of the terms that make up each port gain, to tell cancellations from small values.
+    private readonly double[][] portGainSize, portSourceSize;
     private readonly double[] portConstant;
     private double[]? last;
 
@@ -51,7 +53,16 @@ internal sealed class LinearPortReduction
     public double[] ConstraintConstant { get; }
     public double[][] ConstraintSource { get; }
 
-    // Which coefficients can be nonzero, from evaluating at several parameter settings (see Mark).
+    // Which coefficients can be nonzero, from evaluating at several parameter settings while learning (see Freeze).
+    // An entry counts only if it is more than rounding residue at some setting, since each one costs a live read and a
+    // multiply-add in the compiled step:
+    //  - Everywhere, it must be larger than CancellationTolerance times the sum of the magnitudes of the terms that make
+    //    it up (including those of the eliminated ports' gains), so not an exact cancellation.
+    //  - In the gains that rebuild the unknowns from the step inputs (Gain, Source), it must also be larger than
+    //    RowTolerance times the largest entry in its row. Below that, its term is smaller than the rounding error the
+    //    row's sum already carries. Many such entries are residue carried in from Z, G or A⁻¹ (a fifth of the Big
+    //    Muff's live reads). The Newton coefficients and the term gains don't get this test: in high-gain circuits
+    //    (the Rat), dropping even entries at 1e-17 of their row changes the solution.
     public bool[][] ZrUsed { get; }
     public bool[][] QzrUsed { get; }
     public bool[][] CPrUsed { get; }
@@ -62,6 +73,19 @@ internal sealed class LinearPortReduction
     public bool[][] FreeGainUsed { get; }
     public bool[][] ConstraintGainUsed { get; }
     public bool[][] ConstraintSourceUsed { get; }
+
+    private const double CancellationTolerance = 1e-12;
+    private const double RowTolerance = 1e-16;
+
+    /// <summary>
+    /// While true, each update marks the coefficients that can be nonzero. Once frozen, entries that were never marked
+    /// are kept at zero, so every engine sees exactly the coefficients the compiled step reads.
+    /// </summary>
+    public bool Learning { get; private set; } = true;
+
+    // Each live array with its flags, whether it gets the row test, and each entry's size relative to its terms in the
+    // update in progress (while learning).
+    private readonly (bool[][] Used, double[][] Values, bool RowTest, double[][] Ratio)[] tracked;
 
     /// <summary>How many times the coefficients have been recomputed.</summary>
     public long Updates { get; private set; }
@@ -111,10 +135,19 @@ internal sealed class LinearPortReduction
         FreeGainUsed = Flags(FreeGain);
         ConstraintGainUsed = Flags(ConstraintGain);
         ConstraintSourceUsed = Flags(ConstraintSource);
+        tracked = new[]
+        {
+            (ZrUsed, Zr, false), (QzrUsed, Qzr, false), (CPrUsed, CPr, false), (CzrUsed, Czr, false),
+            (GainUsed, Gain, true), (SourceUsed, Source, true), (TermGainUsed, TermGain, false),
+            (FreeGainUsed, FreeGain, false), (ConstraintGainUsed, ConstraintGain, false),
+            (ConstraintSourceUsed, ConstraintSource, false),
+        }.Select(a => (a.Item1, a.Item2, a.Item3, Jagged(a.Item2.Length, a.Item2.Length == 0 ? 0 : a.Item2[0].Length))).ToArray();
 
         // The eliminated ports' open-circuit values in terms of the step inputs, Q_L·yLinear. These don't change.
         portGain = Jagged(l.Length, parameters);
         portSource = Jagged(l.Length, sources);
+        portGainSize = Jagged(l.Length, parameters);
+        portSourceSize = Jagged(l.Length, sources);
         portConstant = new double[l.Length];
         for (int j = 0; j < l.Length; j++)
             for (int i = 0; i < unknowns; i++)
@@ -124,9 +157,15 @@ internal sealed class LinearPortReduction
                     continue;
                 portConstant[j] += weight * constant[i];
                 for (int p = 0; p < parameters; p++)
+                {
                     portGain[j][p] += weight * parameterGain[i, p];
+                    portGainSize[j][p] += Math.Abs(weight * parameterGain[i, p]);
+                }
                 for (int x = 0; x < sources; x++)
+                {
                     portSource[j][x] += weight * sourceGain[i, x];
+                    portSourceSize[j][x] += Math.Abs(weight * sourceGain[i, x]);
+                }
             }
     }
 
@@ -194,18 +233,23 @@ internal sealed class LinearPortReduction
 
         // Each row type below is its static coefficient plus (row·M)·(the eliminated ports' version of the column).
         var through = new double[kl];
+        var throughSize = new double[kl];
         void Through(Func<int, double> rowAtLinearTerm)
         {
             for (int j = 0; j < kl; j++)
             {
-                double value = 0;
+                double value = 0, size = 0;
                 for (int t = 0; t < ml; t++)
                 {
                     double weight = rowAtLinearTerm(TL[t]);
                     if (weight != 0)
+                    {
                         value += weight * m[t, j];
+                        size += Math.Abs(weight * m[t, j]);
+                    }
                 }
                 through[j] = value;
+                throughSize[j] = size;
             }
         }
         double Fold(double baseValue, Func<int, double> portValue)
@@ -216,28 +260,44 @@ internal sealed class LinearPortReduction
                     value += through[j] * portValue(j);
             return value;
         }
+        // Folds an entry that can be read live. While learning, it records how far the entry is from cancelling (see
+        // MarkLearned); once frozen, an entry that was never marked stays at zero.
+        double Keep(bool[][] used, int row, int column, double baseValue, Func<int, double> portValue,
+            Func<int, double>? portSize = null)
+        {
+            double value = Fold(baseValue, portValue);
+            if (!Learning)
+                return used[row][column] ? value : 0;
+            double size = Math.Abs(baseValue);
+            for (int j = 0; j < kl; j++)
+                if (throughSize[j] != 0)
+                    size += throughSize[j] * (portSize == null ? Math.Abs(portValue(j)) : portSize(j));
+            // Only arrays with entries get here, so the lookup is unambiguous (empty ones may share an instance).
+            Array.Find(tracked, a => ReferenceEquals(a.Used, used)).Ratio[row][column] = size == 0 ? 0 : Math.Abs(value) / size;
+            return value;
+        }
 
         for (int r = 0; r < kn; r++)
         {
             int port = N[r];
             Through(t => z[port, t]);
             for (int c = 0; c < mn; c++)
-                Zr[r][c] = Fold(z[port, TN[c]], j => z[L[j], TN[c]]);
+                Zr[r][c] = Keep(ZrUsed, r, c, z[port, TN[c]], j => z[L[j], TN[c]]);
             for (int f = 0; f < dz; f++)
-                Qzr[r][f] = Fold(qz[port, f], j => qz[L[j], f]);
+                Qzr[r][f] = Keep(QzrUsed, r, f, qz[port, f], j => qz[L[j], f]);
         }
         for (int f = 0; f < dz; f++)
         {
             Through(t => cp[f, t]);
             for (int c = 0; c < mn; c++)
-                CPr[f][c] = Fold(cp[f, TN[c]], j => z[L[j], TN[c]]);
+                CPr[f][c] = Keep(CPrUsed, f, c, cp[f, TN[c]], j => z[L[j], TN[c]]);
             for (int h = 0; h < dz; h++)
-                Czr[f][h] = Fold(0, j => qz[L[j], h]);
+                Czr[f][h] = Keep(CzrUsed, f, h, 0, j => qz[L[j], h]);
             ConstraintConstant[f] = Fold(cc[f], j => portConstant[j]);
             for (int p = 0; p < ConstraintGain[f].Length; p++)
-                ConstraintGain[f][p] = Fold(ch[f, p], j => portGain[j][p]);
+                ConstraintGain[f][p] = Keep(ConstraintGainUsed, f, p, ch[f, p], j => portGain[j][p], j => portGainSize[j][p]);
             for (int x = 0; x < ConstraintSource[f].Length; x++)
-                ConstraintSource[f][x] = Fold(cs[f, x], j => portSource[j][x]);
+                ConstraintSource[f][x] = Keep(ConstraintSourceUsed, f, x, cs[f, x], j => portSource[j][x], j => portSourceSize[j][x]);
         }
         for (int i = 0; i < Affected.Length; i++)
         {
@@ -246,37 +306,43 @@ internal sealed class LinearPortReduction
             Through(t => g[i, t]);
             Constant[i] = Fold(constant[i], j => portConstant[j]);
             for (int p = 0; p < Gain[i].Length; p++)
-                Gain[i][p] = Fold(gain[i, p], j => portGain[j][p]);
+                Gain[i][p] = Keep(GainUsed, i, p, gain[i, p], j => portGain[j][p], j => portGainSize[j][p]);
             for (int x = 0; x < Source[i].Length; x++)
-                Source[i][x] = Fold(sourceGain[i, x], j => portSource[j][x]);
+                Source[i][x] = Keep(SourceUsed, i, x, sourceGain[i, x], j => portSource[j][x], j => portSourceSize[j][x]);
             for (int c = 0; c < mn; c++)
-                TermGain[i][c] = Fold(g[i, TN[c]], j => z[L[j], TN[c]]);
+                TermGain[i][c] = Keep(TermGainUsed, i, c, g[i, TN[c]], j => z[L[j], TN[c]]);
             for (int f = 0; f < dz; f++)
-                FreeGain[i][f] = Fold(nz[i, f], j => qz[L[j], f]);
+                FreeGain[i][f] = Keep(FreeGainUsed, i, f, nz[i, f], j => qz[L[j], f]);
         }
+        if (Learning)
+            MarkLearned();
         return true;
     }
 
-    /// <summary>Records which coefficients are nonzero at the current parameters.</summary>
-    public void Mark()
+    // Marks the entries that are more than residue at the current parameters (see the Used properties).
+    private void MarkLearned()
     {
-        Or(ZrUsed, Zr);
-        Or(QzrUsed, Qzr);
-        Or(CPrUsed, CPr);
-        Or(CzrUsed, Czr);
-        Or(GainUsed, Gain);
-        Or(SourceUsed, Source);
-        Or(TermGainUsed, TermGain);
-        Or(FreeGainUsed, FreeGain);
-        Or(ConstraintGainUsed, ConstraintGain);
-        Or(ConstraintSourceUsed, ConstraintSource);
+        foreach (var (used, values, rowTest, ratios) in tracked)
+            for (int i = 0; i < values.Length; i++)
+            {
+                double floor = 0;
+                if (rowTest)
+                    foreach (double v in values[i])
+                        floor = Math.Max(floor, RowTolerance * Math.Abs(v));
+                for (int c = 0; c < values[i].Length; c++)
+                    if (ratios[i][c] > CancellationTolerance && Math.Abs(values[i][c]) > floor)
+                        used[i][c] = true;
+            }
     }
 
-    private static void Or(bool[][] used, double[][] values)
+    /// <summary>
+    /// Ends learning, and recomputes the coefficients at these parameters with the entries never marked held at zero.
+    /// </summary>
+    public void Freeze(double[] parameters, Func<double[,]> linearJacobian)
     {
-        for (int i = 0; i < used.Length; i++)
-            for (int j = 0; j < used[i].Length; j++)
-                used[i][j] |= values[i][j] != 0;
+        Learning = false;
+        last = null;
+        Update(parameters, linearJacobian);
     }
 
     private static bool[][] Flags(double[][] like) => like.Select(row => new bool[row.Length]).ToArray();

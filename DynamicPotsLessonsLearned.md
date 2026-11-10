@@ -70,6 +70,31 @@ Results with pots held still (µs per sample): TS-9 1.28 dynamic vs 1.06 baked (
 (5.19 before). On larger circuits (Big Muff, Rat), the inlined dynamic step is faster than baked, so what remains
 there is the cost of the live reads.
 
+## Residue in the live set
+
+- **Count what the compiled step actually reads.** The SD-1 marked 283 live gains against 213 baked nonzeros, which
+  looked like inflation. But 59 belonged to the pot-leg currents, which nothing reads, so the step never loads them.
+  Counting array reads in the emitted expression tree (`--timing` prints it) is the reliable number.
+- **Learning a sparsity pattern numerically picks up residue.** Folding the eliminated legs leaves entries at or below
+  1e-17 of their row: a fifth of the Big Muff's live reads, and some on the TS-9, Blues Breaker and Rat. LiveSPICE
+  pull request 282 hit the same thing with its parameter block. On the SD-1 there was none.
+- **Most residue isn't a cancellation where you can see it.** The test from that PR, an entry tiny compared with the
+  terms summed to make it, caught only 6 entries in total, even after including the eliminated ports' own gains.
+  The rest arrives already as residue, from Z, G or A⁻¹.
+- **Size relative to the row isn't safe everywhere.** In a high-gain circuit (the Rat), dropping even entries at 1e-16
+  of their row from the Newton coefficients or the term gains changed the solution: +21 dB and 400 capped steps.
+  Applied only to the gains that rebuild the unknowns from the step inputs, at 1e-16 (below the rounding error the
+  row's sum already carries), it was safe on every circuit. Test a threshold on the most sensitive circuit, and per
+  array.
+- **Hold dropped entries at zero in every engine.** Once learning ends, the reduction zeroes every unmarked entry,
+  so the interpreter and the compiled step still agree exactly.
+- **A dropped term saved more than a load.** Removing about 8% of the Big Muff's reads cut 6 µs per sample (33.2 to
+  26.8, against 25.5 baked), about 4.5 ns per term per step. None of the dropped values were subnormal. The serial
+  running sums are the likely reason, but that isn't confirmed.
+
+Results after dropping residue (µs per sample, pots still): Big Muff 26.8 dynamic vs 25.5 baked (33.2 before),
+Blues Breaker 5.7 vs 5.3 (7.6), TS-9 1.27 vs 1.28, Rat 14.5 vs 13.2 (15.1), SD-1 unchanged at 3.70 vs 2.10.
+
 ## Validation
 
 - **Measure where validation time goes before optimizing it.** The guess was symbolic work. In fact, simulation
@@ -91,6 +116,7 @@ there is the cost of the live reads.
 
 ## Open issues
 
-- Live coefficient reads remain the main overhead on large circuits (about 9 µs per sample on the Big Muff).
+- Live coefficient reads remain a cost: the Big Muff's inlined step is 5 µs faster than its live one. Keeping the
+  solved pot-leg block factored, as LiveSPICE pull request 282 does, might reduce the live set further.
 - The SD-1's reduced path costs about 0.9 µs more than its baked path, even with pots baked in.
 - The Phase 90's sweep has many capped steps that aren't explained yet.

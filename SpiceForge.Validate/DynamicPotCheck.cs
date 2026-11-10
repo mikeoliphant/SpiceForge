@@ -245,6 +245,12 @@ internal static class DynamicPotCheck
             for (int start = 0; start < SweepSamples; start += SweepBlock)
                 still.Run(input.AsSpan(start, SweepBlock).ToArray(), stillBuffers);
             double stillUs = watch.Elapsed.TotalMilliseconds * 1000 / SweepSamples;
+            int reads = ArrayReads.Count(CompiledCircuit.LastStepForTesting!);
+            CompiledCircuit.InlineLiveForTesting = true;
+            _ = new CompiledCircuit(built.System, built.Input, built.Outputs, h, Oversample, IterationCap, built.Solution);
+            CompiledCircuit.InlineLiveForTesting = false;
+            int inlinedReads = ArrayReads.Count(CompiledCircuit.LastStepForTesting!);
+            Console.WriteLine($"  live coefficient reads per step: {reads - inlinedReads}");
             Phases.Add("timing (best of 3 etc.)", timingWatch.Elapsed);
             stillNote = $"; compiled with pots still {stillUs:F2} us/sample";
         }

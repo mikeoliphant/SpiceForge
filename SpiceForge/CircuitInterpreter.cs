@@ -288,8 +288,8 @@ public sealed class CircuitInterpreter
                 for (int j = 0; j < ParameterValues.Length; j++)
                     ParameterValues[j] = sample < 2 ? -0.4 + 0.8 * random.NextDouble() : initialValues[j];
                 reduction.Update(ParameterValues, LinearJacobian);
-                reduction.Mark();
             }
+            reduction.Freeze(ParameterValues, LinearJacobian);
         }
 
         // The constraint rows couple everything, so a split system is solved as one group.
