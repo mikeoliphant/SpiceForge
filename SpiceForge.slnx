@@ -1,4 +1,8 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="AGENTS.md" />
+    <File Path="CREDITS.md" />
+  </Folder>
   <Folder Name="/DesignDocs/">
     <File Path="DesignDocs/LessonsLearned.md" />
     <File Path="DesignDocs/PLAN.md" />

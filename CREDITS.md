@@ -1,0 +1,60 @@
+# Credits
+
+SpiceForge builds on other people's work, both as code it depends on and as ideas that shaped how it solves circuits.
+Each project's own license applies to its code.
+
+## Dependencies
+
+### Submodules
+
+- [LiveSPICE](https://github.com/dsharlet/LiveSPICE) by Dillon Sharlet, used through the
+  [mikeoliphant/LiveSPICE](https://github.com/mikeoliphant/LiveSPICE) fork in `Dependencies/LiveSPICE`, unmodified.
+  Its schematic format, component models, `Circuit.Analyze()` and transient solution are the front end every engine
+  here starts from; its `Simulation` is the reference the engines were validated against, and its `Tests` circuits
+  are the test suite. The plugin's editor follows the layout of LiveSPICE's VST.
+- [ComputerAlgebra](https://github.com/dsharlet/ComputerAlgebra) by Dillon Sharlet, inside LiveSPICE: the symbolic
+  algebra (gradients, simplification, LINQ compilation) the extractor and the compiled engine are built on.
+- [UILayout](https://github.com/mikeoliphant/UILayout), in `SpiceForgePlugin/Dependencies/UILayout`: the plugin's user
+  interface and the image sheet processor that renders its textures.
+
+### NuGet packages
+
+- [AudioPlugSharp](https://github.com/mikeoliphant/AudioPlugSharp) (`AudioPlugSharp`, `AudioPlugSharpVst3`,
+  `AudioPlugSharpHost`): the VST3 bridge, and the stand-alone ASIO host.
+- [MonoGame](https://github.com/MonoGame/MonoGame) (`MonoGame.Framework.WindowsDX`, `MonoGame.Framework.DesktopGL`,
+  `MonoGame.Content.Builder.Task`): rendering the plugin's editor, and building its content.
+- [NAudio](https://github.com/naudio/NAudio): reading and writing WAV files in the renderer, validation tools and host.
+- [SVG.NET](https://github.com/svg-net/SVG) (`Svg`, through UILayout's image processor): rendering the editor's SVG
+  images.
+- [Roslyn](https://github.com/dotnet/roslyn) (`Microsoft.CodeAnalysis.CSharp`), referenced by the plugin.
+
+### Assets
+
+- [Inter](https://github.com/rsms/inter) by Rasmus Andersson (SIL Open Font License): the editor's font.
+- The editor's file, edit and reload icons are from Google's
+  [Material Symbols](https://github.com/google/material-design-icons).
+- The switch lamps are styled after the PowerOn and PowerOff images of
+  [Stompbox](https://github.com/mikeoliphant/StompboxUI).
+
+## Ideas and insight
+
+These didn't contribute code, but they contributed understanding that went directly into SpiceForge's solutions.
+`DesignDocs/LessonsLearned.md` has the details.
+
+- [netlist_codegen](https://github.com/jatinchowdhury18/netlist_codegen) by Jatin Chowdhury: the original inspiration
+  for the N-port, port-reduced approach. Reading its code generation led to extrapolating Newton's starting guess
+  (20 to 45% faster on most real circuits), unrolling the small Newton solve into locals, and paying attention to
+  register pressure; its junction limiting prompted the step-limiting experiments.
+- [LiveSPICE pull request 284](https://github.com/dsharlet/LiveSPICE/pull/284), "Evaluate the solutions after Newton's
+  method with the updated values", by jopdorp: describes the stale cached values LiveSPICE uses after Newton, which
+  we had reproduced exactly while matching it. That confirmed it was a real error, led to exact rebuild becoming the
+  default, and its fix is part of the tightly converged LiveSPICE reference used for validation.
+- [LiveSPICE pull request 282](https://github.com/dsharlet/LiveSPICE/pull/282), "Fix the Rockerverb divergence with
+  dynamic parameters", by jopdorp: its handling of the parameter block informed how dynamic pots treat roundoff residue
+  in the folded coefficients, and its idea of keeping the parameter-dependent block out of the reduction was tried
+  here as a low-rank rebuild (it didn't pay off for us; see the lessons).
+- LiveSPICE's [`dynamic-parameters`](https://github.com/dsharlet/LiveSPICE/tree/dynamic-parameters) branch: showed
+  that runtime pots could be cheap, and its problems (divergence on the SD-1, misbehavior at positions 0 and 1) shaped
+  SpiceForge's formulation of pot legs as `v = R·P·i`, which is exact at the end stops.
+- SPICE's junction limiting (`pnjlim`), from Berkeley SPICE: the model for limiting Newton's steps on junction ports in
+  units of their exponent.

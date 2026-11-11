@@ -128,7 +128,7 @@ The sections from here to Oversampling come from that work and what followed it.
 - **No re-solve, ever.** Even a few milliseconds of symbolic or numeric re-solving when a pot moves is
   unacceptable for realtime use. Everything a pot affects has to be precomputed or updated in time proportional to
   the circuit's linear structure, between blocks.
-- **Don't modify LiveSPICE.** Its `dynamic-parameter` branch showed that runtime pots can be cheap, but it diverges
+- **Don't modify LiveSPICE.** Its `dynamic-parameters` branch showed that runtime pots can be cheap, but it diverges
   (on the SD-1, for example) and misbehaves at pot positions 0 and 1. Its low overhead was the target, not its
   formulation.
 
