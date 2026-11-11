@@ -10,10 +10,13 @@ using Expression = ComputerAlgebra.Expression;
 // both in LiveSPICE's normalized units, so a full-scale sample is the component's 0 dBFS voltage.
 // Pots and switches are runtime parameters by default, held at their schematic positions or those given with --pot
 // and --switch; --pot-at and --switch-at move them at given times, exactly on that sample, and --pot-ramp spreads each
-// pot move over a few milliseconds. --static-pots bakes them in.
+// pot move over a few milliseconds. --static-pots bakes them in. --oversample sets the steps per sample (8 by
+// default), and --resampling sinc filters in and out of them with windowed sincs instead of LiveSPICE's linear
+// interpolation and averaging; its latency is taken off, so the output still lines up with the input.
 
-const int Oversample = 8;
+int Oversample = 8;
 const int Iterations = 8;
+var resampling = Resampling.Linear;
 const int BlockSize = 4096;
 
 string? engine = "compiled";
@@ -28,6 +31,16 @@ for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--engine" && i + 1 < args.Length)
         engine = args[++i];
+    else if (args[i] == "--oversample" && i + 1 < args.Length)
+    {
+        if (!int.TryParse(args[++i], out Oversample) || Oversample < 1)
+            return Usage($"Expected --oversample <steps per sample>, not '{args[i]}'.");
+    }
+    else if (args[i] == "--resampling" && i + 1 < args.Length)
+    {
+        if (!Enum.TryParse(args[++i], ignoreCase: true, out resampling))
+            return Usage($"Expected --resampling linear|sinc, not '{args[i]}'.");
+    }
     else if (args[i] == "--static-pots")
         dynamicPots = false;
     else if (args[i] == "--pot" && i + 1 < args.Length)
@@ -78,6 +91,8 @@ if (positional.Count != 3)
     return Usage(null);
 if (engine != "compiled" && engine != "stock")
     return Usage($"Unknown engine '{engine}'.");
+if (resampling != Resampling.Linear && engine != "compiled")
+    return Usage("--resampling needs the compiled engine.");
 if (automation.Count > 0 && (engine != "compiled" || !dynamicPots))
     return Usage("--pot-at and --switch-at need the compiled engine with dynamic pots and switches (not --engine stock or --static-pots).");
 
@@ -111,6 +126,7 @@ try
             PotPositions = potPositions,
             SwitchPositions = switchPositions,
             DynamicControls = dynamicPots,
+            Resampling = resampling,
         });
         name = processor.Name;
     }
@@ -134,7 +150,8 @@ try
 
     string controls = processor == null ? "" : processor.Pots.Count + processor.Switches.Count > 0
         ? $", {processor.Pots.Count} dynamic pot(s), {processor.Switches.Count} dynamic switch(es)" : dynamicPots ? "" : ", pots and switches baked in";
-    Console.WriteLine($"Built {name} for {sampleRate} Hz, {channels} channel(s), {engine} engine{controls}, in {watch.Elapsed.TotalSeconds:F2} s.");
+    string steps = $"{Oversample}x" + (resampling == Resampling.Linear ? "" : $", {resampling.ToString().ToLowerInvariant()} resampling ({processor!.Latency} samples of latency, removed)");
+    Console.WriteLine($"Built {name} for {sampleRate} Hz, {channels} channel(s), {engine} engine, {steps}{controls}, in {watch.Elapsed.TotalSeconds:F2} s.");
     if (potPositions.Count > 0)
         Console.WriteLine("Pots: " + string.Join(", ", potPositions.Select(p => $"{p.Key} {p.Value.ToString("0.###", invariant)}")) + ".");
     if (switchPositions.Count > 0)
@@ -175,9 +192,23 @@ try
     double peak = 0;
     watch.Restart();
 
+    // The resampling's latency: that many samples are dropped from the start, and made up at the end by running
+    // silence through, so the output lines up with the input and is the same length.
+    int latency = processor?.Latency ?? 0;
+    int skip = latency, tail = latency;
+
     int read;
-    while ((read = samples.Read(interleaved.AsSpan())) > 0)
+    while (true)
     {
+        read = samples.Read(interleaved.AsSpan());
+        if (read == 0)
+        {
+            if (tail == 0)
+                break;
+            read = Math.Min(tail, BlockSize) * channels;
+            Array.Clear(interleaved, 0, read);
+            tail -= read / channels;
+        }
         int count = read / channels;
         for (int c = 0; c < channels; c++)
             for (int n = 0; n < count; n++)
@@ -220,21 +251,23 @@ try
             }
         }
 
+        int dropped = Math.Min(skip, count);
+        skip -= dropped;
         for (int c = 0; c < channels; c++)
-            for (int n = 0; n < count; n++)
+            for (int n = dropped; n < count; n++)
             {
                 double value = blockOut[c][n];
                 if (double.IsNaN(value) || double.IsInfinity(value))
                     throw new InvalidOperationException($"The simulation diverged near {(frames + n) / (double)sampleRate:F3} s.");
-                interleaved[n * channels + c] = (float)value;
+                interleaved[(n - dropped) * channels + c] = (float)value;
                 peak = Math.Max(peak, Math.Abs(value));
             }
 
-        writer.WriteSamples(interleaved, 0, count * channels);
+        writer.WriteSamples(interleaved, 0, (count - dropped) * channels);
         frames += count;
     }
 
-    double seconds = frames / (double)sampleRate;
+    double seconds = (frames - latency) / (double)sampleRate;
     Console.WriteLine($"Rendered {seconds:F2} s of audio in {watch.Elapsed.TotalSeconds:F2} s ({seconds / Math.Max(watch.Elapsed.TotalSeconds, 1e-9):F1}x real time). Output peak {peak:F3}{(peak > 1 ? ", which clips in integer formats" : "")}.");
     return 0;
 }
@@ -248,7 +281,7 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]... [--pot-at <seconds>:<name>=<position>]... [--pot-ramp <ms>]");
+    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]... [--pot-at <seconds>:<name>=<position>]... [--pot-ramp <ms>] [--oversample <n>] [--resampling linear|sinc]");
     Console.Error.WriteLine("  --pot sets a pot, or a group of ganged pots, by name to a wiper position from 0 to 1. Repeat it for more pots.");
     Console.Error.WriteLine("  --switch sets a switch, or a group of ganged switches, to a position: the throw it connects (from 0), or 0/1 for on/off.");
     Console.Error.WriteLine("  --switch-at TIME:NAME=POSITION moves a switch at TIME seconds, exactly on that sample. Repeat it for more changes.");

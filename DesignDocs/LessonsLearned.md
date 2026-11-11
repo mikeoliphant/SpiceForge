@@ -529,6 +529,27 @@ Moving the oversampling out of the simulation loop:
   0.04 µs, within their run-to-run noise. The compiled engine keeps its step buffers between blocks, so it still
   allocates nothing.
 
+A windowed-sinc oversampler (`SincOversampler`, `Resampling.Sinc` in `SchematicProcessorOptions`, `--resampling sinc`
+in the renderer, a toggle in the plugin):
+
+- **Design for a whole-sample delay.** Both filters are Kaiser-windowed sincs passing to 0.417·fs and stopping from
+  0.583·fs at 100 dB, with a half-length that's a multiple of N, so each delays by a whole number of samples: 38 to 40
+  in all (0.8 ms at 48 kHz), which the processor reports as `Latency`. The renderer drops that many samples from the
+  start and runs silence through at the end, so its output still lines up with the input (checked by
+  cross-correlation: lag 0, same length).
+- **It's what the study predicted, and now N buys accuracy.** At N=8 the tone stack's 5 kHz error went from −26 dB to
+  −64 dB, the clipper's from −27 to −116 dB, the Blues Breaker's from −30 to −51 dB at 5 kHz (aliasing −48 to −70)
+  and from −54 to −75 dB at 1 kHz, and the Rat's 1 kHz error from −47 to −61 dB. With linear resampling the error
+  leveled off past N=4 to 8; with sinc it keeps falling about 12 dB per doubling of N, BDF2's second-order error, so
+  the resampling no longer hides the step size. The Rat at 5 kHz stays limited by capped Newton steps below N=16.
+- **Make cheap things cheap.** The first version cost about 0.6 µs a sample more than linear at N=8. Most of it was
+  filtering a speaker terminal tied to ground, which is zero at every step; skipping outputs that aren't unknowns
+  (bit-identical for linear too) and vectorizing the two dot products brought it to 0.03 to 0.2 µs (tone stack 0.71
+  against 0.54, Rat 7.78 against 7.70, Big Muff 18.9 against 18.5). It allocates nothing once warmed up.
+- **A one-tap window divides by zero.** At N=1 the filter is a single tap, and the Kaiser window's k/half was 0/0;
+  `Math.Max(0, NaN)` is NaN, so every N=1 run "diverged". N=1 is now a pass-through with no latency. The study caught
+  it because it runs N=1 too.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was
@@ -554,10 +575,10 @@ Moving the oversampling out of the simulation loop:
 - The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.
 - A rejected control setting keeps the circuit at its last good coefficients, but nothing reports it to the host
   (`SchematicProcessor.RejectedSettings` counts them). It has never happened on the test circuits.
-- A windowed-sinc oversampler (an interpolating filter in, a decimating lowpass out) should beat more substeps for
-  accuracy and aliasing (see Oversampling), and can now be added as another `Oversampler`. It would add latency (a
-  linear-phase filter at 8× about 0.3–0.5 ms) that the plugin must report, and it wouldn't match LiveSPICE, so it
-  belongs behind an option.
+- Sinc resampling's 40 samples of latency can't be reported to a host: AudioPlugSharp has no latency call, so a DAW
+  won't compensate for it. A minimum-phase or shorter filter would cut it, at some cost in phase or rejection.
+- Sinc resampling is opt-in. Whether it should be the plugin's default (it doesn't match LiveSPICE, and adds latency)
+  hasn't been decided.
 - At the default iteration cap of 8, oversampling partly compensates for Newton not converging; a higher cap with a
   lower factor was cheaper and more accurate on the Rat. The defaults haven't been revisited.
 - `CutCheck` still interpolates and averages on its own instead of using `LinearOversampler` and `RunSteps`.

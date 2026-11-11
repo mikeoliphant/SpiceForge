@@ -20,6 +20,7 @@ namespace SpiceForgePlugin
         public int Oversample { get; set; } = SpiceForgePlugin.DefaultOversample;
         public int Iterations { get; set; } = SpiceForgePlugin.DefaultIterations;
         public bool AutoReload { get; set; }
+        public bool SincResampling { get; set; }
         public List<ControlSetting> Pots { get; set; } = new List<ControlSetting>();
         public List<ControlSetting> Switches { get; set; } = new List<ControlSetting>();
     }
@@ -52,6 +53,10 @@ namespace SpiceForgePlugin
         public int Oversample { get; private set; } = DefaultOversample;
         public int Iterations { get; private set; } = DefaultIterations;
         public bool AutoReload { get; private set; }
+
+        /// <summary>Whether to resample with windowed sincs (a flat band and little aliasing, about 40 samples of
+        /// latency the host isn't told about) instead of LiveSPICE's linear interpolation and averaging.</summary>
+        public bool SincResampling { get; private set; }
 
         /// <summary>The running processor, or null while there's none (audio passes through).</summary>
         public SchematicProcessor CurrentProcessor => Volatile.Read(ref processor);
@@ -153,6 +158,14 @@ namespace SpiceForgePlugin
             Rebuild(keepPositions: true);
         }
 
+        public void SetSincResampling(bool sinc)
+        {
+            if (sinc == SincResampling)
+                return;
+            SincResampling = sinc;
+            Rebuild(keepPositions: true);
+        }
+
         /// <summary>Whether the schematic is rebuilt when its file changes, as when it's edited in LiveSPICE.</summary>
         public void SetAutoReload(bool autoReload)
         {
@@ -214,6 +227,7 @@ namespace SpiceForgePlugin
             {
                 Oversample = Oversample,
                 IterationCap = Iterations,
+                Resampling = SincResampling ? Resampling.Sinc : Resampling.Linear,
                 PotPositions = new Dictionary<string, double>(pendingPots),
                 SwitchPositions = new Dictionary<string, int>(pendingSwitches),
                 IgnoreUnknownControls = true,
@@ -277,6 +291,7 @@ namespace SpiceForgePlugin
             state.Oversample = Oversample;
             state.Iterations = Iterations;
             state.AutoReload = AutoReload;
+            state.SincResampling = SincResampling;
 
             SchematicProcessor current = CurrentProcessor;
             state.Pots = current != null
@@ -302,6 +317,7 @@ namespace SpiceForgePlugin
             Oversample = OversampleChoices.Contains(state.Oversample) ? state.Oversample : DefaultOversample;
             Iterations = IterationChoices.Contains(state.Iterations) ? state.Iterations : DefaultIterations;
             AutoReload = state.AutoReload;
+            SincResampling = state.SincResampling;
             SchematicPath = state.SchematicPath ?? "";
             pendingPots = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             foreach (ControlSetting pot in state.Pots ?? new List<ControlSetting>())
