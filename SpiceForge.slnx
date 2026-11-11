@@ -7,6 +7,7 @@
   <Folder Name="/DesignDocs/">
     <File Path="DesignDocs/LessonsLearned.md" />
     <File Path="DesignDocs/PLAN.md" />
+    <File Path="DesignDocs/UISpec.md" />
   </Folder>
   <Folder Name="/SpiceForgePlugin/">
     <Project Path="SpiceForgePlugin/Dependencies/UILayout/ImageSheetProcessor/ImageSheetProcessor.csproj" />
