@@ -170,6 +170,29 @@ public sealed class CircuitInterpreter
             nonlinearInputs = new double[nonlinearSymbols.Length];
             nonlinearResults = new double[expressions.Count];
             portSymbols = pivots.Select(p => Array.IndexOf(nonlinearSymbols, p)).ToArray();
+
+            // For JunctionLimit: each port's largest slope in the argument of an exponential that's linear in the ports
+            // (a p-n junction's V/(n·Vt): about 40 per volt), so its steps can be limited in units of the exponent.
+            junctionSlope = new double[k];
+            foreach (Expression term in system.Nonlinear)
+                foreach (Expression argument in ExpArguments.Collect(term))
+                {
+                    Dictionary<Expression, Expression> slope = argument.Gradient(pivots);
+                    for (int p = 0; p < k; p++)
+                    {
+                        Expression d = slope[pivots[p]];
+                        if (d.EqualsZero() || d.DependsOn(pivots))
+                            continue;
+                        try
+                        {
+                            junctionSlope[p] = Math.Max(junctionSlope[p], Math.Abs((double)d));
+                        }
+                        catch (Exception)
+                        {
+                            // Not a number (it reads a runtime parameter, say): leave the port unlimited.
+                        }
+                    }
+                }
             parameterSymbols = system.RuntimeParameters.Select(r => Array.IndexOf(nonlinearSymbols, (Expression)r.Symbol)).ToArray();
 
             // When every term is linear in the ports (only pot legs, say), one Newton step is exact.
@@ -826,9 +849,17 @@ public sealed class CircuitInterpreter
     /// limit.</summary>
     public double StepLimit { get; set; }
 
-    /// <summary>Experimental: with <see cref="StepLimit"/>, limit only once a step has taken this many iterations, as a
-    /// fallback for steps Newton isn't converging on; 0 limits every iteration.</summary>
+    /// <summary>Experimental: with <see cref="StepLimit"/> or <see cref="JunctionLimit"/>, limit only once a step has
+    /// taken this many iterations, as a fallback for steps Newton isn't converging on; 0 limits every iteration.</summary>
     public int StepLimitAfter { get; set; }
+
+    /// <summary>Experimental, interpreter only: the most a junction port may move in one Newton iteration, in units of
+    /// the exponent it drives (a silicon junction's V/(n·Vt)), so junctions are limited tightly and ports that drive
+    /// no exponential, or only gently (a triode's grid), aren't. 0 (the default) doesn't limit.</summary>
+    public double JunctionLimit { get; set; }
+
+    // Each port's largest slope in a linear exponent argument (0 if it drives none).
+    private readonly double[] junctionSlope = Array.Empty<double>();
 
     /// <summary>Newton's stopping rule: |dv| < |v|·RelativeTolerance + AbsoluteTolerance. The defaults are LiveSPICE's.</summary>
     public double RelativeTolerance { get; set; } = 1e-4;
@@ -1133,14 +1164,19 @@ public sealed class CircuitInterpreter
                 for (int j = 0; j < kn; j++)
                     largest = Math.Max(largest, Math.Abs(reducedSolution[j] - w[N[j]]));
                 if (largest > StepLimit)
+                    damped = Damp(StepLimit / largest, kn, N);
+            }
+            if (JunctionLimit > 0 && spent + iteration > StepLimitAfter)
+            {
+                double scale = 1;
+                for (int j = 0; j < kn; j++)
                 {
-                    double scale = StepLimit / largest;
-                    for (int j = 0; j < kn; j++)
-                        reducedSolution[j] = w[N[j]] + scale * (reducedSolution[j] - w[N[j]]);
-                    for (int g = 0; g < dz; g++)
-                        reducedSolution[kn + g] = z[g] + scale * (reducedSolution[kn + g] - z[g]);
-                    damped = true;
+                    double change = Math.Abs(reducedSolution[j] - w[N[j]]) * junctionSlope[N[j]];
+                    if (change > JunctionLimit)
+                        scale = Math.Min(scale, JunctionLimit / change);
                 }
+                if (scale < 1)
+                    damped = Damp(scale, kn, N);
             }
 
             for (int c = 0; c < TN.Length; c++)
@@ -1194,6 +1230,16 @@ public sealed class CircuitInterpreter
                     z[f] = previous[free[f]];
             }
         }
+    }
+
+    // Scales this iteration's step (the new ports and free unknowns, from the current ones) by scale.
+    private bool Damp(double scale, int kn, int[] N)
+    {
+        for (int j = 0; j < kn; j++)
+            reducedSolution[j] = w[N[j]] + scale * (reducedSolution[j] - w[N[j]]);
+        for (int g = 0; g < dz; g++)
+            reducedSolution[kn + g] = z[g] + scale * (reducedSolution[kn + g] - z[g]);
+        return true;
     }
 
     /// <summary>With <see cref="ExtrapolateGuess"/>, Newton restarts from the previous step if it hasn't converged

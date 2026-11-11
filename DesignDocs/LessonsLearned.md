@@ -401,6 +401,12 @@ Counted over 0.5 s of a 440 Hz sine at 0.1, 0.5 and 1.0 input, at the default st
   475 to 3,999: tube ports legitimately move many volts in a step. That is why SPICE limits per junction, scaled to
   its thermal voltage, rather than every port alike. A version that limits only the ports feeding exponential
   junction terms would need to know which those are; the step limit stays an experiment until then.
+- **Limit junctions in units of their exponent.** `JunctionLimit` finds every `Exp` whose argument is linear in the
+  ports (a junction's V/(n·Vt), about 40 per volt) and limits each port's move by its largest slope there, so ports
+  that drive no exponential, or only through the triode's nonlinear argument, aren't limited. As a fallback after 3
+  iterations at a cap of 32 it left the Fender 5e3 at 0 capped steps, and a limit of 10 took the Fuzz Face to 0, 0 and
+  161 (from 248 to 492); a limit of 4 broke it at power-up. Neither limit survives a cap of 8 on the Fuzz Face: the
+  junctions' first moves out of the DC solution need more limited iterations than that.
 
 ## Inlining the Newton step solve
 
@@ -556,9 +562,10 @@ Moving the oversampling out of the simulation loop:
 - Stage cuts across loaded devices (BJT bases, conducting tube grids) need a load model that includes the downstream
   stage's input device; `cut` has only no load and a linear load.
 - Our Newton is less robust than LiveSPICE's on the Fuzz Face (hundreds of capped steps against at most 10), even with
-  the extrapolated guess and restart. A generic step limit fixes it as a fallback at a cap of 32 but hurts the tube
-  amps (see Limiting Newton's steps); limiting only junction ports, as netlist_codegen and SPICE do, is the next thing
-  to try. The Phase 90's sweep also has capped steps that aren't explained.
+  the extrapolated guess and restart. Limiting junction ports in units of their exponent, as a fallback at a cap of 32,
+  cuts its capped steps without touching the tube amps (see Limiting Newton's steps), but only in the interpreter, and
+  it can't help at a cap of 8, where the power-up transient needs more limited iterations; starting from a better DC
+  solution, or an unlimited first few steps, might. The Phase 90's sweep also has capped steps that aren't explained.
 - Lookup tables over a pot need recordings that sweep it (`--sweep`), and are built in the table's bounding box, so
   thousands of corner points the circuit never reaches don't converge (harmlessly, so far).
 - Switches move instantly, even with `--pot-ramp`, which only ramps pots. The jump causes a large transient, and on the
