@@ -15,8 +15,6 @@ using Expression = ComputerAlgebra.Expression;
 const int Oversample = 8;
 const int Iterations = 8;
 const int BlockSize = 4096;
-// A ramped pot move updates every this many samples (0.7 ms at 48 kHz).
-const int RampStep = 32;
 
 string? engine = "compiled";
 bool dynamicPots = true;
@@ -93,83 +91,86 @@ try
     ISampleProvider samples = reader.ToSampleProvider();
 
     var watch = System.Diagnostics.Stopwatch.StartNew();
-    Expression h = (Real)1 / (sampleRate * Oversample);
-    // The stock engine is LiveSPICE's own, which only runs with the pots baked in.
-    LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, dynamicPots && engine == "compiled",
-        new ConsoleLog { Verbosity = MessageType.Error }, potPositions, dynamicSwitches: dynamicPots && engine == "compiled", switchPositions);
-    var circuit = loaded.Circuit;
+    var log = new ConsoleLog { Verbosity = MessageType.Error };
+    var invariant = System.Globalization.CultureInfo.InvariantCulture;
 
-    var inputs = circuit.Components.OfType<Input>().ToList();
-    if (inputs.Count != 1)
-        throw new InvalidOperationException($"The schematic needs exactly one Input component, and it has {inputs.Count}.");
-    Expression input = Component.DependentVariable(inputs[0].Name, Component.t);
+    // The compiled engine, through SchematicProcessor (one copy of the circuit per channel); or LiveSPICE's own
+    // Simulation, which only runs with pots and switches baked in.
+    SchematicProcessor? processor = null;
+    Simulation[] stock = Array.Empty<Simulation>();
+    string name;
+    if (engine == "compiled")
+    {
+        processor = new SchematicProcessor(schematicPath, sampleRate, new SchematicProcessorOptions
+        {
+            Channels = channels,
+            Oversample = Oversample,
+            IterationCap = Iterations,
+            PotSmoothingMilliseconds = rampMilliseconds,
+            Log = log,
+            PotPositions = potPositions,
+            SwitchPositions = switchPositions,
+            DynamicControls = dynamicPots,
+        });
+        name = processor.Name;
+    }
+    else
+    {
+        Expression h = (Real)1 / (sampleRate * Oversample);
+        LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, dynamicPots: false, log, potPositions, dynamicSwitches: false, switchPositions);
+        name = loaded.Circuit.Name;
+        var inputs = loaded.Circuit.Components.OfType<Input>().ToList();
+        if (inputs.Count != 1)
+            throw new InvalidOperationException($"The schematic needs exactly one Input component, and it has {inputs.Count}.");
+        var speakers = loaded.Circuit.Components.OfType<Speaker>().ToList();
+        if (speakers.Count == 0)
+            throw new InvalidOperationException("The schematic has no Speaker component to take the output from.");
+        Expression input = Component.DependentVariable(inputs[0].Name, Component.t);
+        Expression output = speakers.Select(s => s.Out).Aggregate((a, b) => a + b);
+        stock = Enumerable.Range(0, channels)
+            .Select(_ => new Simulation(loaded.Solution) { Oversample = Oversample, Iterations = Iterations, Input = new[] { input }, Output = new[] { output } })
+            .ToArray();
+    }
 
-    var speakers = circuit.Components.OfType<Speaker>().ToList();
-    if (speakers.Count == 0)
-        throw new InvalidOperationException("The schematic has no Speaker component to take the output from.");
-
-    Func<Processor> create = engine == "stock"
-        ? StockFactory(loaded.Solution, input, speakers)
-        : CompiledFactory(loaded.System, loaded.Solution, h, input, speakers);
-    Processor[] processors = Enumerable.Range(0, channels).Select(_ => create()).ToArray();
-    string pots = engine == "stock" ? "" : loaded.Pots.Count + loaded.Switches.Count > 0
-        ? $", {loaded.Pots.Count} dynamic pot(s), {loaded.Switches.Select(c => c.Switch).Distinct().Count()} dynamic switch(es)" : dynamicPots ? "" : ", pots and switches baked in";
-    Console.WriteLine($"Built {circuit.Name} for {sampleRate} Hz, {channels} channel(s), {engine} engine{pots}, in {watch.Elapsed.TotalSeconds:F2} s.");
+    string controls = processor == null ? "" : processor.Pots.Count + processor.Switches.Count > 0
+        ? $", {processor.Pots.Count} dynamic pot(s), {processor.Switches.Count} dynamic switch(es)" : dynamicPots ? "" : ", pots and switches baked in";
+    Console.WriteLine($"Built {name} for {sampleRate} Hz, {channels} channel(s), {engine} engine{controls}, in {watch.Elapsed.TotalSeconds:F2} s.");
     if (potPositions.Count > 0)
-        Console.WriteLine("Pots: " + string.Join(", ", potPositions.Select(p => $"{p.Key} {p.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}")) + ".");
+        Console.WriteLine("Pots: " + string.Join(", ", potPositions.Select(p => $"{p.Key} {p.Value.ToString("0.###", invariant)}")) + ".");
     if (switchPositions.Count > 0)
         Console.WriteLine("Switches: " + string.Join(", ", switchPositions.Select(p => $"{p.Key} {p.Value}")) + ".");
 
-    // Automation, as steps: each sets some parameters at a sample. Events at the same time apply in the order given,
-    // and names and positions are checked before rendering. A pot move with --pot-ramp becomes a line of steps, every
-    // RampStep samples, from where the pot is to its target; a later move of the same pot drops what's left of it.
-    var parameters = loaded.Parameters;
-    var ordered = automation.Select((e, order) => (e, order)).OrderBy(x => x.e.Seconds).ThenBy(x => x.order).Select(x => x.e).ToList();
-    long ramp = (long)Math.Round(rampMilliseconds / 1000 * sampleRate);
-    var steps = new List<(long Sample, int Order, Action<double[]> Set)>();
-    var timeline = parameters.Select(p => new List<(long Sample, int Order, double Wipe)>
-        { (-1, -1, p is PotParameter pot ? pot.InitialWipe : 0) }).ToArray();
-    for (int index = 0; index < ordered.Count; index++)
+    // Automation: each event sets a control at its sample (blocks are split there), in the order given for events at
+    // the same time. Names and positions are checked before rendering. Pot moves are ramped by the processor's
+    // smoothing (--pot-ramp), from wherever the pot is.
+    var events = automation.Select((e, order) => (e, order)).OrderBy(x => x.e.Seconds).ThenBy(x => x.order)
+        .Select(x => (Sample: (long)Math.Round(x.e.Seconds * sampleRate), Set: Control(x.e))).ToList();
+    Action Control((double Seconds, bool Pot, string Name, double Value) e)
     {
-        var e = ordered[index];
-        long at = (long)Math.Round(e.Seconds * sampleRate);
-        // Steps at the same sample apply in event order, and a ramp's own steps after its first.
-        int order = index * 1_000_000;
-        if (!e.Pot)
+        if (e.Pot)
         {
-            DynamicSwitches.Set(new double[parameters.Count], parameters, e.Name, (int)e.Value);
-            steps.Add((at, order, values => DynamicSwitches.Set(values, parameters, e.Name, (int)e.Value)));
-            continue;
+            PotControl pot = processor!.GetPot(e.Name);
+            if (!(e.Value >= 0 && e.Value <= 1))
+                throw new ArgumentException($"Pot '{e.Name}' position {e.Value} isn't between 0 and 1.");
+            return () => pot.Position = e.Value;
         }
-        DynamicPots.Set(new double[parameters.Count], parameters, e.Name, e.Value);
-        foreach (int j in DynamicPots.IndicesOf(parameters, e.Name))
-        {
-            var line = timeline[j];
-            line.RemoveAll(point => point.Sample > at);
-            double start = line[^1].Wipe;
-            int count = ramp == 0 ? 1 : (int)Math.Max(1, (ramp + RampStep - 1) / RampStep);
-            for (int k = 1; k <= count; k++)
-                line.Add((at + (ramp == 0 ? 0 : (long)Math.Round((double)ramp * k / count)), order + k, start + (e.Value - start) * k / count));
-        }
+        SwitchControl sw = processor!.GetSwitch(e.Name);
+        if (e.Value < 0 || e.Value >= sw.Positions)
+            throw new ArgumentException($"Switch '{e.Name}' has positions 0 to {sw.Positions - 1}, not {e.Value}.");
+        return () => sw.Position = (int)e.Value;
     }
-    for (int j = 0; j < parameters.Count; j++)
-        foreach (var point in timeline[j].Skip(1))
-        {
-            int index = j;
-            double value = ((PotParameter)parameters[j]).ValueAt(Math.Clamp(point.Wipe, 0, 1));
-            steps.Add((point.Sample, point.Order, values => values[index] = value));
-        }
-    var events = steps.OrderBy(s => s.Sample).ThenBy(s => s.Order).ToList();
-    if (ordered.Count > 0)
-        Console.WriteLine("Automation: " + string.Join(", ", ordered.Select(e =>
-            $"{(e.Pot ? "pot" : "switch")} {e.Name} {e.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} at {e.Seconds:0.###} s"))
-            + (ramp > 0 && ordered.Any(e => e.Pot) ? $"; pot moves ramped over {rampMilliseconds:0.###} ms" : "") + ".");
+    if (events.Count > 0)
+        Console.WriteLine("Automation: " + string.Join(", ", automation.OrderBy(e => e.Seconds).Select(e =>
+            $"{(e.Pot ? "pot" : "switch")} {e.Name} {e.Value.ToString("0.###", invariant)} at {e.Seconds:0.###} s"))
+            + (rampMilliseconds > 0 && automation.Any(e => e.Pot) ? $"; pot moves ramped over {rampMilliseconds:0.###} ms" : "") + ".");
     int nextEvent = 0;
 
     using var writer = new WaveFileWriter(outputPath, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
     var interleaved = new float[BlockSize * channels];
-    var channelIn = new double[BlockSize];
-    var channelOut = new double[BlockSize];
+    double[][] blockIn = Enumerable.Range(0, channels).Select(_ => new double[BlockSize]).ToArray();
+    double[][] blockOut = Enumerable.Range(0, channels).Select(_ => new double[BlockSize]).ToArray();
+    double[][] partIn = Enumerable.Range(0, channels).Select(_ => new double[BlockSize]).ToArray();
+    double[][] partOut = Enumerable.Range(0, channels).Select(_ => new double[BlockSize]).ToArray();
     long frames = 0;
     double peak = 0;
     watch.Restart();
@@ -178,44 +179,56 @@ try
     while ((read = samples.Read(interleaved.AsSpan())) > 0)
     {
         int count = read / channels;
-        double[] blockIn = count == BlockSize ? channelIn : new double[count];
-        double[] blockOut = count == BlockSize ? channelOut : new double[count];
-
-        // Split the block where events fall, so each takes effect on its own sample.
-        var cuts = new SortedSet<int> { 0, count };
-        for (int k = nextEvent; k < events.Count && events[k].Sample < frames + count; k++)
-            cuts.Add((int)Math.Max(0, events[k].Sample - frames));
-        int[] bounds = cuts.ToArray();
-
         for (int c = 0; c < channels; c++)
-        {
             for (int n = 0; n < count; n++)
-                blockIn[n] = interleaved[n * channels + c];
-            int k = nextEvent;
+                blockIn[c][n] = interleaved[n * channels + c];
+
+        if (processor == null)
+        {
+            for (int c = 0; c < channels; c++)
+            {
+                double[] input = count == BlockSize ? blockIn[c] : blockIn[c].AsSpan(0, count).ToArray();
+                double[] output = count == BlockSize ? blockOut[c] : new double[count];
+                stock[c].Run(input, output);
+                Array.Copy(output, blockOut[c], count);
+            }
+        }
+        else
+        {
+            // Split the block where events fall, so each takes effect on its own sample.
+            var cuts = new SortedSet<int> { 0, count };
+            for (int k = nextEvent; k < events.Count && events[k].Sample < frames + count; k++)
+                cuts.Add((int)Math.Max(0, events[k].Sample - frames));
+            int[] bounds = cuts.ToArray();
             for (int part = 0; part + 1 < bounds.Length; part++)
             {
                 int start = bounds[part], length = bounds[part + 1] - start;
-                for (; k < events.Count && events[k].Sample <= frames + start; k++)
-                    events[k].Set(processors[c].Parameters!);
-                if (bounds.Length == 2)
-                    processors[c].Run(blockIn, blockOut);
+                for (; nextEvent < events.Count && events[nextEvent].Sample <= frames + start; nextEvent++)
+                    events[nextEvent].Set();
+                if (length == 0)
+                    continue;
+                if (start == 0 && length == count)
+                    processor.Process(blockIn, blockOut, count);
                 else
                 {
-                    double[] partOut = new double[length];
-                    processors[c].Run(blockIn.AsSpan(start, length).ToArray(), partOut);
-                    Array.Copy(partOut, 0, blockOut, start, length);
+                    for (int c = 0; c < channels; c++)
+                        Array.Copy(blockIn[c], start, partIn[c], 0, length);
+                    processor.Process(partIn, partOut, length);
+                    for (int c = 0; c < channels; c++)
+                        Array.Copy(partOut[c], 0, blockOut[c], start, length);
                 }
             }
+        }
+
+        for (int c = 0; c < channels; c++)
             for (int n = 0; n < count; n++)
             {
-                if (double.IsNaN(blockOut[n]) || double.IsInfinity(blockOut[n]))
+                double value = blockOut[c][n];
+                if (double.IsNaN(value) || double.IsInfinity(value))
                     throw new InvalidOperationException($"The simulation diverged near {(frames + n) / (double)sampleRate:F3} s.");
-                interleaved[n * channels + c] = (float)blockOut[n];
-                peak = Math.Max(peak, Math.Abs(blockOut[n]));
+                interleaved[n * channels + c] = (float)value;
+                peak = Math.Max(peak, Math.Abs(value));
             }
-        }
-        while (nextEvent < events.Count && events[nextEvent].Sample < frames + count)
-            nextEvent++;
 
         writer.WriteSamples(interleaved, 0, count * channels);
         frames += count;
@@ -231,46 +244,6 @@ catch (Exception ex)
     return 1;
 }
 
-// Runs the port-reduced compiled engine, reading each speaker's two nodes and combining them.
-static Func<Processor> CompiledFactory(ExtractedSystem system, TransientSolution solution, Expression h, Expression input, List<Speaker> speakers)
-{
-    Expression[] nodes = speakers.SelectMany(s => new[] { s.Anode.V, s.Cathode.V }).ToArray();
-    foreach (Expression node in nodes)
-        if (!system.Unknowns.Contains(node) && !node.EqualsZero())
-            throw new InvalidOperationException($"Speaker node {node} isn't an unknown of the circuit.");
-    double[] scales = speakers.Select(s => 1 / (double)s.V0dBFS).ToArray();
-
-    return () =>
-    {
-        var compiled = new CompiledCircuit(system, input, nodes, h, Oversample, Iterations, solution);
-        double[][] buffers = Array.Empty<double[]>();
-        return new Processor(compiled.ParameterValues, (inputBlock, outputBlock) =>
-        {
-            if (buffers.Length == 0 || buffers[0].Length != inputBlock.Length)
-                buffers = nodes.Select(_ => new double[inputBlock.Length]).ToArray();
-            compiled.Run(inputBlock, buffers);
-            for (int n = 0; n < inputBlock.Length; n++)
-            {
-                double sum = 0;
-                for (int s = 0; s < scales.Length; s++)
-                    sum += (buffers[2 * s][n] - buffers[2 * s + 1][n]) * scales[s];
-                outputBlock[n] = sum;
-            }
-        });
-    };
-}
-
-// Runs LiveSPICE's own Simulation, for comparison.
-static Func<Processor> StockFactory(TransientSolution solution, Expression input, List<Speaker> speakers)
-{
-    Expression output = speakers.Select(s => s.Out).Aggregate((a, b) => a + b);
-    return () =>
-    {
-        var simulation = new Simulation(solution) { Oversample = Oversample, Iterations = Iterations, Input = new[] { input }, Output = new[] { output } };
-        return new Processor(null, (inputBlock, outputBlock) => simulation.Run(inputBlock, outputBlock));
-    };
-}
-
 static int Usage(string? problem)
 {
     if (problem != null)
@@ -283,22 +256,4 @@ static int Usage(string? problem)
     Console.Error.WriteLine("  --pot-ramp MS spreads each --pot-at move over MS milliseconds, in a straight line from where the pot is (default 0).");
     Console.Error.WriteLine("  --static-pots bakes pots and switches in instead of making them runtime parameters.");
     return 2;
-}
-
-/// <summary>Processes one channel, one block at a time, keeping its circuit state between blocks.</summary>
-sealed class Processor
-{
-    private readonly Action<double[], double[]> run;
-
-    /// <summary>The engine's runtime parameter values (pots, then switch contacts), or null for LiveSPICE's own engine.
-    /// Changes take effect from the next Run.</summary>
-    public double[]? Parameters { get; }
-
-    public Processor(double[]? parameters, Action<double[], double[]> run)
-    {
-        Parameters = parameters;
-        this.run = run;
-    }
-
-    public void Run(double[] input, double[] output) => run(input, output);
 }

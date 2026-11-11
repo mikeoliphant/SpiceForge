@@ -54,6 +54,9 @@ if (args.Length > 2 && args[0] == "cut")
         args.Length > 4 ? double.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture) : 2);
 }
 
+if (args.Length > 0 && args[0] == "processor")
+    return ProcessorCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
+
 if (args.Length > 0 && args[0] == "switches")
     return DynamicSwitchCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 

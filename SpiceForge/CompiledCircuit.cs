@@ -30,8 +30,15 @@ public sealed class CompiledCircuit
     private double input;
     private double inputPrevious;
 
-    /// <summary>One entry per oversampled step: the Newton iteration count, with 0x80 set if the cap was hit.</summary>
+    /// <summary>One entry per oversampled step: the Newton iteration count, with 0x80 set if the cap was hit. Recorded
+    /// only while <see cref="RecordIterations"/> is set.</summary>
     public List<byte> IterationCounts { get; } = new();
+
+    /// <summary>Whether to record <see cref="IterationCounts"/>. On by default for validation; a long-running host
+    /// should turn it off, since it grows by one byte per oversampled step.</summary>
+    public bool RecordIterations { get; set; } = true;
+
+    private double[] sums = Array.Empty<double>();
 
     /// <summary>Current values of the runtime parameters (dynamic pots), in the order of ExtractedSystem.RuntimeParameters.
     /// The compiled code reads this array directly, so changes take effect on the next step without recompiling.</summary>
@@ -70,13 +77,18 @@ public sealed class CompiledCircuit
         step = new Emitter(plan, system, inputSymbol, timeStep, iterationCap, solution, segmentSolver).Build();
     }
 
-    public void Run(double[] inputSamples, double[][] outputBuffers)
+    public void Run(double[] inputSamples, double[][] outputBuffers) => Run(inputSamples, outputBuffers, inputSamples.Length);
+
+    /// <summary>Runs the first <paramref name="count"/> samples of <paramref name="inputSamples"/>, writing the first
+    /// <paramref name="count"/> samples of each output buffer. It allocates nothing.</summary>
+    public void Run(double[] inputSamples, double[][] outputBuffers, int count)
     {
         // Runtime parameters only change between calls, so the reduced coefficients only need checking here.
         if (reduce)
             plan.UpdateReduction();
-        var sums = new double[outputs.Length];
-        for (int n = 0; n < inputSamples.Length; n++)
+        if (sums.Length != outputs.Length)
+            sums = new double[outputs.Length];
+        for (int n = 0; n < count; n++)
         {
             double delta = (inputSamples[n] - input) * inverseOversample;
             Array.Clear(sums);
@@ -86,7 +98,7 @@ public sealed class CompiledCircuit
                 time += substep;
                 input += delta;
                 int result = step(time, input, inputPrevious, history, y);
-                if (newton)
+                if (newton && RecordIterations)
                     IterationCounts.Add((byte)result);
 
                 double[] oldest = history[history.Length - 1];
