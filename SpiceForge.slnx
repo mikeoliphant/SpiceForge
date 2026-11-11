@@ -10,6 +10,12 @@
     <File Path="DesignDocs/UISpec.md" />
     <File Path="DesignDocs/WebSocketApi.md" />
   </Folder>
+  <Folder Name="/SpiceForgeWebUI/">
+    <File Path="SpiceForgeWebUI/README.md" />
+    <File Path="SpiceForgeWebUI/package.json" />
+    <File Path="SpiceForgeWebUI/build.mjs" />
+    <File Path="SpiceForgeWebUI/tsconfig.json" />
+  </Folder>
   <Folder Name="/SpiceForgePlugin/">
     <Project Path="SpiceForgePlugin/Dependencies/UILayout/ImageSheetProcessor/ImageSheetProcessor.csproj" />
     <Project Path="SpiceForgePlugin/Dependencies/UILayout/UILayout.MonoGame.WindowsDX/UILayout.MonoGame.WindowsDX.csproj" />

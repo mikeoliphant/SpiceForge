@@ -4,7 +4,8 @@ using SpiceForgeServer.Protocol;
 
 // SpiceForgeServer: the WebSocket server a local web front end edits schematics through (DesignDocs/WebSocketApi.md).
 // So far it does the editing side: the catalogue, symbol layouts, value checks, files and circuit checks. Audio and
-// simulation answer `unsupported`.
+// simulation answer `unsupported`. It also serves the front end (SpiceForgeWebUI's build) from its web root, so the
+// page and the API share an origin.
 
 WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(args);
 builder.Configuration.AddEnvironmentVariables("SPICEFORGE_");
@@ -30,7 +31,22 @@ var api = new Api(context);
 WebApplication app = builder.Build();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 
-app.MapGet("/", () => Results.Text("SpiceForgeServer. Connect a WebSocket to /api?token=<token>.\n"));
+if (options.WebRoot != null)
+{
+    var files = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(options.WebRoot);
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = files });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = files,
+        // The front end is rebuilt often while it's developed; never serve a stale copy.
+        OnPrepareResponse = c => c.Context.Response.Headers.CacheControl = "no-cache",
+    });
+}
+else
+{
+    app.MapGet("/", () => Results.Text("SpiceForgeServer. No front end found: build SpiceForgeWebUI, or pass --webRoot.\n" +
+        "Connect a WebSocket to /api?token=<token>.\n"));
+}
 
 app.Map("/api", async (HttpContext http) =>
 {
@@ -56,8 +72,16 @@ app.Map("/api", async (HttpContext http) =>
     await Connection.Run(socket, context, api);
 });
 
+string page = $"http://127.0.0.1:{options.Port}/?token={options.Token}";
 Console.WriteLine($"SpiceForgeServer listening on ws://127.0.0.1:{options.Port}/api?token={options.Token}");
+Console.WriteLine(options.WebRoot != null ? $"Front end: {page} (from {options.WebRoot})" : "Front end: none found");
 Console.WriteLine($"Settings: {options.SettingsPath}");
+if (options.OpenBrowser && options.WebRoot != null)
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(page) { UseShellExecute = true }); }
+        catch (Exception ex) { Console.Error.WriteLine($"Couldn't open a browser: {ex.Message}"); }
+    });
 await app.RunAsync();
 return 0;
 

@@ -776,6 +776,22 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   `==` throws when either side is null (test with `is not null`). LiveSPICE's library skips a type that fails;
   the catalogue does the same, and lists 131 entries.
 
+## The web front end
+
+`SpiceForgeWebUI`: plain TypeScript, no runtime dependencies, bundled by esbuild (the bundle is 22 KB), served by
+`SpiceForgeServer` from the same origin as the API.
+
+- **Drawing from the server's layouts with LiveSPICE's own rules is enough to match its look.** The Pro Co Rat (42
+  symbols, 63 wires), the Fender 5e3 (61 and 105), the subcircuit tone stacks and `Errors/Unserialized` draw as
+  LiveSPICE draws them. The rules are `Symbol.MapToGlobal`, the arc sweep reversing under mirroring, and
+  `SymbolControl`'s upright text placement, with text measured by a canvas in the same font. All terminals connect
+  where wires pass through them, and the unresolved component draws as a placeholder with its reason.
+- **Headless screenshots with a virtual time budget don't run WebSockets.** `msedge --headless --screenshot
+  --virtual-time-budget` left the page at "Connecting…". Driving Edge over its DevTools protocol, from a small Node
+  script using Node's built-in WebSocket, works and also reports console errors.
+- **npm now blocks install scripts by default.** npm 11.20 skipped esbuild's postinstall. The build works without it,
+  since that script is only an optimization.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was

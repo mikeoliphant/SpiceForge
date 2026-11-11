@@ -37,6 +37,16 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
 - UILayout's image processor also uses SharpFont (`SpaceWizards.SharpFont`; MIT) and StbImageSharp and
   StbImageWriteSharp, at build time only.
 
+### npm packages (build only)
+
+The web front end, `SpiceForgeWebUI`, has no runtime dependencies. These build it, under
+[Node.js](https://nodejs.org):
+
+- [TypeScript](https://github.com/microsoft/TypeScript) (`typescript`; Apache License 2.0): the compiler, for type
+  checking.
+- [esbuild](https://github.com/evanw/esbuild) by Evan Wallace (`esbuild`; MIT): bundling the TypeScript into one
+  JavaScript file.
+
 ### Assets
 
 - [Inter](https://github.com/rsms/inter) by Rasmus Andersson (SIL Open Font License 1.1): the editor's font.
