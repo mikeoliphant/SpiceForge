@@ -383,6 +383,25 @@ the error against the uncut circuit, with no load or a linear copy of the downst
 - **It doesn't fix every robustness gap.** The Fuzz Face still caps where LiveSPICE's Newton doesn't, and it and the
   Orange Squeezer run slower with the restart firing.
 
+## Limiting Newton's steps on the Fuzz Face
+
+An experiment, in the interpreter only (`StepLimit`, `StepLimitAfter`, off by default): when an iteration would move
+any port by more than a limit, scale the whole step down to it, the generic version of SPICE's junction limiting.
+Counted over 0.5 s of a 440 Hz sine at 0.1, 0.5 and 1.0 input, at the default stopping tolerance:
+
+- **The Fuzz Face's capped steps cascade at a low cap.** Unlimited, it capped 395, 24 and 8,713 steps at a cap of 8, 248
+  to 492 at 32 and 6 to 13 at 100: a step that stops unconverged starts the next one badly.
+- **Limiting every iteration needs iterations to spend.** At a cap of 100, a 0.1 or 0.3 V limit removed every capped
+  step. At a cap of 8 it broke the circuit (non-finite output) at every level, because the first steps out of the DC
+  solution move the junctions further than 8 limited iterations can go. A 1 V limit failed even at 100.
+- **As a fallback it works at a cap of 32.** Limiting to 0.5 V only once a step has spent 3 iterations left ordinary
+  steps alone and took the Fuzz Face to 0, 0 and 19 capped steps (from 248 to 492), and the Orange Squeezer from 1 to
+  0, with the Rat, Big Muff and SD-1 unchanged at 0.
+- **But one limit in volts doesn't suit every device.** The same fallback took the Fender 5e3 from 0 capped steps to
+  475 to 3,999: tube ports legitimately move many volts in a step. That is why SPICE limits per junction, scaled to
+  its thermal voltage, rather than every port alike. A version that limits only the ports feeding exponential
+  junction terms would need to know which those are; the step limit stays an experiment until then.
+
 ## Inlining the Newton step solve
 
 - **Unroll small solves into locals.** Newton systems of up to 8 unknowns are now solved by one small C# routine
@@ -537,8 +556,9 @@ Moving the oversampling out of the simulation loop:
 - Stage cuts across loaded devices (BJT bases, conducting tube grids) need a load model that includes the downstream
   stage's input device; `cut` has only no load and a linear load.
 - Our Newton is less robust than LiveSPICE's on the Fuzz Face (hundreds of capped steps against at most 10), even with
-  the extrapolated guess and restart. Junction limiting, as netlist_codegen does, is a candidate fix. The Phase 90's
-  sweep also has capped steps that aren't explained.
+  the extrapolated guess and restart. A generic step limit fixes it as a fallback at a cap of 32 but hurts the tube
+  amps (see Limiting Newton's steps); limiting only junction ports, as netlist_codegen and SPICE do, is the next thing
+  to try. The Phase 90's sweep also has capped steps that aren't explained.
 - Lookup tables over a pot need recordings that sweep it (`--sweep`), and are built in the table's bounding box, so
   thousands of corner points the circuit never reaches don't converge (harmlessly, so far).
 - Switches move instantly, even with `--pot-ramp`, which only ramps pots. The jump causes a large transient, and on the

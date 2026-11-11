@@ -821,6 +821,15 @@ public sealed class CircuitInterpreter
     public bool ExtrapolateGuess { get; set; } = true;
     private double[] guess = Array.Empty<double>();
 
+    /// <summary>Experimental, interpreter only: the most any port (a junction voltage, typically) may move in one Newton
+    /// iteration. A larger step is scaled down to it, as a whole, and doesn't count as converged. 0 (the default) doesn't
+    /// limit.</summary>
+    public double StepLimit { get; set; }
+
+    /// <summary>Experimental: with <see cref="StepLimit"/>, limit only once a step has taken this many iterations, as a
+    /// fallback for steps Newton isn't converging on; 0 limits every iteration.</summary>
+    public int StepLimitAfter { get; set; }
+
     /// <summary>Newton's stopping rule: |dv| < |v|·RelativeTolerance + AbsoluteTolerance. The defaults are LiveSPICE's.</summary>
     public double RelativeTolerance { get; set; } = 1e-4;
     public double AbsoluteTolerance { get; set; } = 1e-6;
@@ -1117,6 +1126,23 @@ public sealed class CircuitInterpreter
             else if (size > 0)
                 SolveLinearStep(reducedRows, reducedSolution, reducedGroups, reducedGroupRows, size);
 
+            bool damped = false;
+            if (StepLimit > 0 && spent + iteration > StepLimitAfter)
+            {
+                double largest = 0;
+                for (int j = 0; j < kn; j++)
+                    largest = Math.Max(largest, Math.Abs(reducedSolution[j] - w[N[j]]));
+                if (largest > StepLimit)
+                {
+                    double scale = StepLimit / largest;
+                    for (int j = 0; j < kn; j++)
+                        reducedSolution[j] = w[N[j]] + scale * (reducedSolution[j] - w[N[j]]);
+                    for (int g = 0; g < dz; g++)
+                        reducedSolution[kn + g] = z[g] + scale * (reducedSolution[kn + g] - z[g]);
+                    damped = true;
+                }
+            }
+
             for (int c = 0; c < TN.Length; c++)
             {
                 int term = TN[c];
@@ -1136,6 +1162,7 @@ public sealed class CircuitInterpreter
             }
             if (TN.Length == 0)
                 done = true;
+            done &= !damped;
 
             for (int i = 0; i < y.Length; i++)
                 y[i] = CombineReduced(i);
