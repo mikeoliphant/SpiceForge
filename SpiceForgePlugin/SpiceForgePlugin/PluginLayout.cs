@@ -7,7 +7,7 @@ using UILayout;
 using Menu = UILayout.Menu;
 using MenuItem = UILayout.MenuItem;
 
-namespace SpiceForgeVst
+namespace SpiceForgePlugin
 {
     /// <summary>
     /// The plugin's editor, laid out like LiveSPICE's VST: the schematic and its file buttons, the engine settings, and
@@ -18,7 +18,7 @@ namespace SpiceForgeVst
         // Controls per row before wrapping to the next.
         const int ControlsPerRow = 8;
 
-        SpiceForgeVst plugin;
+        SpiceForgePlugin plugin;
         Dock mainDock;
         UIElementWrapper controlWrapper;
         TextBlock schematicText;
@@ -30,7 +30,7 @@ namespace SpiceForgeVst
         // The plugin version the controls were last built for.
         int shownVersion = -1;
 
-        public SpiceForgeLayout(SpiceForgeVst plugin)
+        public SpiceForgeLayout(SpiceForgePlugin plugin)
         {
             this.plugin = plugin;
         }
@@ -141,7 +141,7 @@ namespace SpiceForgeVst
             oversampleButton = new TextButton(plugin.Oversample.ToString()) { VerticalAlignment = EVerticalAlignment.Center };
             oversampleButton.ClickAction = delegate
             {
-                ShowChoices(oversampleButton, SpiceForgeVst.OversampleChoices, plugin.SetOversample);
+                ShowChoices(oversampleButton, SpiceForgePlugin.OversampleChoices, plugin.SetOversample);
             };
             settingsStack.Children.Add(oversampleButton);
 
@@ -153,7 +153,7 @@ namespace SpiceForgeVst
             iterationsButton = new TextButton(plugin.Iterations.ToString()) { VerticalAlignment = EVerticalAlignment.Center };
             iterationsButton.ClickAction = delegate
             {
-                ShowChoices(iterationsButton, SpiceForgeVst.IterationChoices, plugin.SetIterations);
+                ShowChoices(iterationsButton, SpiceForgePlugin.IterationChoices, plugin.SetIterations);
             };
             settingsStack.Children.Add(iterationsButton);
 

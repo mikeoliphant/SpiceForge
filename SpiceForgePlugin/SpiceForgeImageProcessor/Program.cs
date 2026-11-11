@@ -68,7 +68,7 @@ namespace SpiceForgeImageProcessor
 
             processor.SrcPath = Path.Combine(path, "SrcTextures");
 
-            processor.RenderImages(Path.Combine(path, @"SpiceForgeVst\Content\Textures"));
+            processor.RenderImages(Path.Combine(path, @"SpiceForgePlugin\Content\Textures"));
         }
 
     }

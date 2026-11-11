@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<Version>0.0.1</Version>
+		<UseWindowsForms>true</UseWindowsForms>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AudioPlugSharpHost" Version="0.7.13" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SpiceForgePlugin\SpiceForgePlugin.csproj" />
+	</ItemGroup>
+</Project>

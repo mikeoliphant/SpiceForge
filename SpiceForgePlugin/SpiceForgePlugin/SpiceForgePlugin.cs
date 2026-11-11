@@ -9,7 +9,7 @@ using AudioPlugSharp;
 using SpiceForge;
 using UILayout;
 
-namespace SpiceForgeVst
+namespace SpiceForgePlugin
 {
     /// <summary>
     /// The plugin's saved state: the schematic, the engine settings, and every pot and switch position by name.
@@ -17,8 +17,8 @@ namespace SpiceForgeVst
     public class SpiceForgeSaveState : AudioPluginSaveState
     {
         public string SchematicPath { get; set; } = "";
-        public int Oversample { get; set; } = SpiceForgeVst.DefaultOversample;
-        public int Iterations { get; set; } = SpiceForgeVst.DefaultIterations;
+        public int Oversample { get; set; } = SpiceForgePlugin.DefaultOversample;
+        public int Iterations { get; set; } = SpiceForgePlugin.DefaultIterations;
         public bool AutoReload { get; set; }
         public List<ControlSetting> Pots { get; set; } = new List<ControlSetting>();
         public List<ControlSetting> Switches { get; set; } = new List<ControlSetting>();
@@ -40,7 +40,7 @@ namespace SpiceForgeVst
     /// when it's done, starting from the same pot and switch positions. The editor polls <see cref="Version"/> to
     /// notice a new processor or status.
     /// </remarks>
-    public class SpiceForgeVst : AudioPluginBase
+    public class SpiceForgePlugin : AudioPluginBase
     {
         public const int DefaultOversample = 8;
         public const int DefaultIterations = 8;
@@ -89,7 +89,7 @@ namespace SpiceForgeVst
 
         MonoGameHost GameHost;
 
-        public SpiceForgeVst()
+        public SpiceForgePlugin()
         {
             Company = "Mike Oliphant";
             Website = "github.com/mikeoliphant";

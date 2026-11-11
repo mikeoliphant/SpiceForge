@@ -4,7 +4,7 @@ using System.Drawing;
 using System.Globalization;
 using UILayout;
 
-namespace SpiceForgeVst
+namespace SpiceForgePlugin
 {
     public class ParameterDial : Dock
     {
