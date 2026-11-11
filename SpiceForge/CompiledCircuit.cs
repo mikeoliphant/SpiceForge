@@ -1,4 +1,4 @@
-using System.Linq.Expressions;
+﻿using System.Linq.Expressions;
 using System.Reflection;
 using Circuit;
 using ComputerAlgebra;
@@ -20,9 +20,7 @@ public sealed class CompiledCircuit
     private readonly CircuitInterpreter plan;
     private readonly bool reduce;
     private readonly int[] outputs;
-    private readonly int oversample;
     private readonly double substep;
-    private readonly double inverseOversample;
     private readonly bool newton;
     private readonly double[] y;
     private readonly double[][] history;
@@ -38,7 +36,24 @@ public sealed class CompiledCircuit
     /// should turn it off, since it grows by one byte per oversampled step.</summary>
     public bool RecordIterations { get; set; } = true;
 
-    private double[] sums = Array.Empty<double>();
+    private Oversampler oversampler;
+    // The step-rate input and outputs of the current block, grown as needed.
+    private double[] stepInput = Array.Empty<double>();
+    private double[][] stepOutputs;
+
+    /// <summary>How <see cref="Run(double[], double[][], int)"/> converts between the base rate and the step rate. By
+    /// default LiveSPICE's (<see cref="LinearOversampler"/>); a replacement must have the same factor the circuit was
+    /// built for, since that decides the timestep.</summary>
+    public Oversampler Oversampler
+    {
+        get => oversampler;
+        set
+        {
+            if (value.Factor != oversampler.Factor)
+                throw new ArgumentException($"The circuit steps {oversampler.Factor} times per sample, not {value.Factor}.", nameof(value));
+            oversampler = value;
+        }
+    }
 
     /// <summary>Current values of the runtime parameters (dynamic pots), in the order of ExtractedSystem.RuntimeParameters.
     /// The compiled code reads this array directly, so changes take effect on the next step without recompiling.</summary>
@@ -63,9 +78,9 @@ public sealed class CompiledCircuit
     {
         var plan = new CircuitInterpreter(system, inputSymbol, outputSymbols, timeStep, oversample, iterationCap, solution);
         outputs = plan.outputs;
-        this.oversample = oversample;
         substep = plan.substep;
-        inverseOversample = plan.inverseOversample;
+        oversampler = new LinearOversampler(oversample);
+        stepOutputs = outputs.Select(_ => Array.Empty<double>()).ToArray();
         newton = plan.m > 0;
         if (segmentSolver != null && plan.UnownedTerms > 0)
             throw new NotSupportedException("Some nonlinear terms read no ports, so no segment computes them.");
@@ -80,42 +95,51 @@ public sealed class CompiledCircuit
     public void Run(double[] inputSamples, double[][] outputBuffers) => Run(inputSamples, outputBuffers, inputSamples.Length);
 
     /// <summary>Runs the first <paramref name="count"/> samples of <paramref name="inputSamples"/>, writing the first
-    /// <paramref name="count"/> samples of each output buffer. It allocates nothing.</summary>
+    /// <paramref name="count"/> samples of each output buffer: upsampled by <see cref="Oversampler"/>, stepped, and
+    /// downsampled again. It allocates nothing once its buffers have grown to the largest block.</summary>
     public void Run(double[] inputSamples, double[][] outputBuffers, int count)
+    {
+        int steps = count * oversampler.Factor;
+        if (stepInput.Length < steps)
+            GrowStepBuffers(steps);
+        oversampler.Upsample(inputSamples.AsSpan(0, count), stepInput.AsSpan(0, steps));
+        RunSteps(stepInput, stepOutputs, steps);
+        for (int o = 0; o < outputs.Length; o++)
+            oversampler.Downsample(o, stepOutputs[o].AsSpan(0, steps), outputBuffers[o].AsSpan(0, count));
+    }
+
+    private void GrowStepBuffers(int steps)
+    {
+        stepInput = new double[steps];
+        for (int o = 0; o < stepOutputs.Length; o++)
+            stepOutputs[o] = new double[steps];
+    }
+
+    /// <summary>Takes <paramref name="count"/> timesteps, one per value of <paramref name="inputSteps"/>, writing each
+    /// output's value at every step (0 for an output that isn't an unknown). It allocates nothing.</summary>
+    public void RunSteps(double[] inputSteps, double[][] outputSteps, int count)
     {
         // Runtime parameters only change between calls, so the reduced coefficients only need checking here.
         if (reduce)
             plan.UpdateReduction();
-        if (sums.Length != outputs.Length)
-            sums = new double[outputs.Length];
         for (int n = 0; n < count; n++)
         {
-            double delta = (inputSamples[n] - input) * inverseOversample;
-            Array.Clear(sums);
+            time += substep;
+            input = inputSteps[n];
+            int result = step(time, input, inputPrevious, history, y);
+            if (newton && RecordIterations)
+                IterationCounts.Add((byte)result);
 
-            for (int ov = oversample; ov > 0; ov--)
-            {
-                time += substep;
-                input += delta;
-                int result = step(time, input, inputPrevious, history, y);
-                if (newton && RecordIterations)
-                    IterationCounts.Add((byte)result);
-
-                double[] oldest = history[history.Length - 1];
-                for (int d = history.Length - 1; d > 0; d--)
-                    history[d] = history[d - 1];
-                Array.Copy(y, oldest, y.Length);
-                history[0] = oldest;
-
-                for (int o = 0; o < outputs.Length; o++)
-                    if (outputs[o] >= 0)
-                        sums[o] += y[outputs[o]];
-
-                inputPrevious = input;
-            }
+            double[] oldest = history[history.Length - 1];
+            for (int d = history.Length - 1; d > 0; d--)
+                history[d] = history[d - 1];
+            Array.Copy(y, oldest, y.Length);
+            history[0] = oldest;
 
             for (int o = 0; o < outputs.Length; o++)
-                outputBuffers[o][n] = sums[o] * inverseOversample;
+                outputSteps[o][n] = outputs[o] >= 0 ? y[outputs[o]] : 0;
+
+            inputPrevious = input;
         }
     }
 

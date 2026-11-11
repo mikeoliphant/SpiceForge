@@ -506,6 +506,23 @@ gain, non-harmonic in-band energy ("aliasing") and CPU time.
   and the tests used steady sines, two frequencies and one drive level per circuit. The reference uses the same device
   models, so it shows how close each setting gets to a converged simulation, not to real hardware.
 
+Moving the oversampling out of the simulation loop:
+
+- **The engines now step at one rate, and an `Oversampler` resamples around them.** `RunSteps` takes one timestep per
+  input value; `Run` upsamples a base-rate block, runs the steps and downsamples each output. `LinearOversampler` is
+  LiveSPICE's scheme, and another oversampler with the same factor can be swapped in, since the factor sets the
+  timestep.
+- **Copy the arithmetic, not the formula.** LiveSPICE accumulates the input (`input += delta` per substep, carried
+  across samples) rather than computing each substep from the two samples, and multiplies the sum of the substeps by
+  1/N. Doing the same made every circuit bit-identical: the compiled engine, the interpreter and the processor (with a
+  pot and a switch moving), at 1×, 3× and 8×, iteration counts included.
+- **Prove bit-identity with a frozen copy.** The baseline ran from a copy of the old build, so rebuilding while
+  writing the new code couldn't change it, and the comparison was byte for byte rather than in dB.
+- **The extra pass costs about nothing.** Writing and reading a step-rate buffer left real circuits unchanged within
+  noise (Big Muff 18.7–18.8 µs per sample, Rat 7.6–7.7, Blues Breaker 3.0), and the smallest circuits at most about
+  0.04 µs, within their run-to-run noise. The compiled engine keeps its step buffers between blocks, so it still
+  allocates nothing.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was
@@ -531,3 +548,10 @@ gain, non-harmonic in-band energy ("aliasing") and CPU time.
 - The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.
 - Control changes are allocation-free, but if a pot setting made the reduction's small system exactly singular, the
   coefficient update would throw on the audio thread. It never has on the test circuits.
+- A windowed-sinc oversampler (an interpolating filter in, a decimating lowpass out) should beat more substeps for
+  accuracy and aliasing (see Oversampling), and can now be added as another `Oversampler`. It would add latency (a
+  linear-phase filter at 8× about 0.3–0.5 ms) that the plugin must report, and it wouldn't match LiveSPICE, so it
+  belongs behind an option.
+- At the default iteration cap of 8, oversampling partly compensates for Newton not converging; a higher cap with a
+  lower factor was cheaper and more accurate on the Rat. The defaults haven't been revisited.
+- `CutCheck` still interpolates and averages on its own instead of using `LinearOversampler` and `RunSteps`.

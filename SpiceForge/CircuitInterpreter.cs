@@ -1,4 +1,4 @@
-using Circuit;
+﻿using Circuit;
 using ComputerAlgebra;
 using Expression = ComputerAlgebra.Expression;
 
@@ -32,10 +32,8 @@ public sealed class CircuitInterpreter
     internal readonly double[] sourceValues;
     internal readonly double[] sourceCoefficients;
     internal readonly int[] outputs;
-    internal readonly int oversample;
     internal readonly int iterationCap;
     internal readonly double substep;
-    internal readonly double inverseOversample;
 
     // Port reduction: w = voc + Z·q(w), and y = yLinear + G·q.
     internal readonly int k;
@@ -135,9 +133,8 @@ public sealed class CircuitInterpreter
         bool segment = true)
     {
         ParameterValues = system.RuntimeParameters.Select(p => p.InitialValue).ToArray();
-        this.oversample = oversample;
         this.iterationCap = iterationCap;
-        inverseOversample = 1.0 / oversample;
+        oversampler = new LinearOversampler(oversample);
         substep = (double)(timeStep * oversample) / oversample;
 
         k = system.Ports;
@@ -312,34 +309,54 @@ public sealed class CircuitInterpreter
             history[d] = (double[])initial.Clone();
     }
 
+    private Oversampler oversampler;
+
+    /// <summary>How <see cref="Run"/> converts between the base rate and the step rate. By default LiveSPICE's
+    /// (<see cref="LinearOversampler"/>); a replacement must have the same factor the circuit was built for, since that
+    /// decides the timestep.</summary>
+    public Oversampler Oversampler
+    {
+        get => oversampler;
+        set
+        {
+            if (value.Factor != oversampler.Factor)
+                throw new ArgumentException($"The circuit steps {oversampler.Factor} times per sample, not {value.Factor}.", nameof(value));
+            oversampler = value;
+        }
+    }
+
+    /// <summary>Runs <paramref name="inputSamples"/> at the base rate: upsampled by <see cref="Oversampler"/>, stepped,
+    /// and downsampled into <paramref name="outputBuffers"/>.</summary>
     public void Run(double[] inputSamples, double[][] outputBuffers)
+    {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        int steps = inputSamples.Length * oversampler.Factor;
+        var stepInput = new double[steps];
+        var stepOutputs = outputs.Select(_ => new double[steps]).ToArray();
+        oversampler.Upsample(inputSamples, stepInput);
+        RunSteps(stepInput, stepOutputs);
+        for (int o = 0; o < outputs.Length; o++)
+            oversampler.Downsample(o, stepOutputs[o], outputBuffers[o].AsSpan(0, inputSamples.Length));
+        RunTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
+    }
+
+    /// <summary>Takes one timestep per value of <paramref name="inputSteps"/>, writing each output's value at every
+    /// step (0 for an output that isn't an unknown).</summary>
+    public void RunSteps(double[] inputSteps, double[][] outputSteps)
     {
         // Runtime parameters only change between calls, so the reduced coefficients only need checking here.
         reduction?.Update(ParameterValues, JacobianFunction);
-        long started = System.Diagnostics.Stopwatch.GetTimestamp();
-        var sums = new double[outputs.Length];
-        for (int n = 0; n < inputSamples.Length; n++)
+        for (int n = 0; n < inputSteps.Length; n++)
         {
-            double delta = (inputSamples[n] - input) * inverseOversample;
-            Array.Clear(sums);
-
-            for (int ov = oversample; ov > 0; ov--)
-            {
-                time += substep;
-                input += delta;
-                Step();
-
-                for (int o = 0; o < outputs.Length; o++)
-                    if (outputs[o] >= 0)
-                        sums[o] += y[outputs[o]];
-
-                inputPrevious = input;
-            }
+            time += substep;
+            input = inputSteps[n];
+            Step();
 
             for (int o = 0; o < outputs.Length; o++)
-                outputBuffers[o][n] = sums[o] * inverseOversample;
+                outputSteps[o][n] = outputs[o] >= 0 ? y[outputs[o]] : 0;
+
+            inputPrevious = input;
         }
-        RunTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
     }
 
     private double Read(Binding b) => b.Kind switch
