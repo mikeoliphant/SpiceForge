@@ -1,6 +1,5 @@
 <Solution>
   <Folder Name="/DesignDocs/">
-    <File Path="DesignDocs/DynamicPotsLessonsLearned.md" />
     <File Path="DesignDocs/LessonsLearned.md" />
     <File Path="DesignDocs/PLAN.md" />
   </Folder>
