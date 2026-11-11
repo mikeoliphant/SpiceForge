@@ -48,3 +48,37 @@ internal sealed class SymbolCollector : ExpressionVisitor<bool>
     protected override bool VisitMatrix(Matrix A) => VisitAll(A);
     protected override bool VisitCall(Call F) => F.Target is UnknownFunction ? Add(F) : VisitAll(F.Arguments);
 }
+
+/// <summary>Finds the arguments of every exponential in an expression.</summary>
+internal sealed class ExpArguments : ExpressionVisitor<bool>
+{
+    private readonly List<Expression> arguments = new();
+
+    public static IReadOnlyList<Expression> Collect(Expression expression)
+    {
+        var collector = new ExpArguments();
+        collector.Visit(expression);
+        return collector.arguments;
+    }
+
+    private bool VisitAll(IEnumerable<Expression> children)
+    {
+        foreach (Expression child in children)
+            Visit(child);
+        return true;
+    }
+
+    protected override bool VisitUnknown(Expression E) => true;
+    protected override bool VisitSum(Sum A) => VisitAll(A.Terms);
+    protected override bool VisitProduct(Product M) => VisitAll(M.Terms);
+    protected override bool VisitBinary(Binary B) => VisitAll(new[] { B.Left, B.Right });
+    protected override bool VisitUnary(Unary U) => Visit(U.Operand);
+    protected override bool VisitSet(Set S) => VisitAll(S.Members);
+    protected override bool VisitMatrix(Matrix A) => VisitAll(A);
+    protected override bool VisitCall(Call F)
+    {
+        if (F.Target.Name == "Exp" && F.Arguments.Count() == 1)
+            arguments.Add(F.Arguments.First());
+        return VisitAll(F.Arguments);
+    }
+}
