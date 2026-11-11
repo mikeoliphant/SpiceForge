@@ -152,6 +152,28 @@ internal static class ProcessorCheck
             return o;
         }
         Report("two channels, each the same as a single-channel processor", outputs[0].SequenceEqual(Mono(signal)) && outputs[1].SequenceEqual(Mono(quiet)));
+
+        // Moving pots and switches allocates nothing once warmed up: blocks with pots ramping and switches flipping.
+        var live = new SchematicProcessor(file, SampleRate, new SchematicProcessorOptions { Channels = 2 });
+        double[][] ins = { signal.Take(512).ToArray(), quiet.Take(512).ToArray() };
+        double[][] outs = { new double[512], new double[512] };
+        // Indexed loops: foreach over the IReadOnlyList would box an enumerator, which is this test's allocation, not the
+        // processor's.
+        void Block(int i)
+        {
+            for (int k = 0; k < live.Pots.Count; k++)
+                live.Pots[k].Position = (i % 3) / 2.0;
+            for (int k = 0; k < live.Switches.Count; k++)
+                live.Switches[k].Position = i % live.Switches[k].Positions;
+            live.Process(ins, outs, 512);
+        }
+        for (int i = 0; i < 6; i++)
+            Block(i);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 6; i < 66; i++)
+            Block(i);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Report($"moving every pot and switch for 60 blocks: {allocated} bytes allocated", allocated == 0);
         return problems;
     }
 }

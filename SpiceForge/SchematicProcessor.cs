@@ -57,6 +57,9 @@ public sealed class SchematicProcessor
     private readonly int speakerCount;
     private readonly long smoothingSamples;
     private double[][] buffers = Array.Empty<double[]>();
+    // The controls as arrays, so the audio thread loops over them without allocating an enumerator.
+    private readonly PotControl[] pots;
+    private readonly SwitchControl[] switches;
     private double[] chunkIn = Array.Empty<double>();
     private readonly double[][] spanIn = new double[1][], spanOut = new double[1][];
 
@@ -114,10 +117,16 @@ public sealed class SchematicProcessor
             int[] indices = DynamicPots.IndicesOf(parameters, name).ToArray();
             pots.Add(new PotControl(name, pot.InitialWipe, indices.Select(j => (PotParameter)parameters[j]).ToArray(), indices));
         }
-        Pots = pots;
-        Switches = loaded.Switches.GroupBy(c => c.Switch)
-            .Select(g => new SwitchControl(g.Key, g.First().Positions, g.First().InitialPosition))
-            .ToList();
+        this.pots = pots.ToArray();
+        Pots = this.pots;
+        switches = loaded.Switches.GroupBy(c => c.Switch)
+            .Select(g =>
+            {
+                int[] indices = Enumerable.Range(0, parameters.Count).Where(j => parameters[j] is SwitchParameter contact && contact.Switch == g.Key).ToArray();
+                return new SwitchControl(g.Key, g.First().Positions, g.First().InitialPosition, indices, indices.Select(j => (SwitchParameter)parameters[j]).ToArray());
+            })
+            .ToArray();
+        Switches = switches;
     }
 
     /// <summary>The pot or group of ganged pots with this name, case-insensitive. Throws, listing the pots, if none.</summary>
@@ -139,25 +148,29 @@ public sealed class SchematicProcessor
     {
         if (inputs.Length < Channels || outputs.Length < Channels)
             throw new ArgumentException($"Expected {Channels} input and output buffers.");
-        // The controls' current targets, read once so every channel sees the same ones.
-        foreach (SwitchControl sw in Switches)
-            sw.Latch();
-        foreach (PotControl pot in Pots)
-            pot.Latch(smoothingSamples);
-        bool smoothing = Pots.Any(p => p.Moving);
+        // The controls' current targets, read once so every channel sees the same ones. Nothing here allocates: moving a
+        // pot or switch only recomputes the engines' folded coefficients, in place.
+        bool smoothing = false;
+        for (int k = 0; k < switches.Length; k++)
+            switches[k].Latch();
+        for (int k = 0; k < pots.Length; k++)
+        {
+            pots[k].Latch(smoothingSamples);
+            smoothing |= pots[k].Moving;
+        }
 
         for (int start = 0; start < count;)
         {
             int length = smoothing ? Math.Min(SmoothingStep, count - start) : count - start;
-            foreach (PotControl pot in Pots)
-                pot.Advance(length);
+            for (int k = 0; k < pots.Length; k++)
+                pots[k].Advance(length);
             for (int c = 0; c < Channels; c++)
             {
                 double[] values = engines[c].ParameterValues;
-                foreach (PotControl pot in Pots)
-                    pot.Apply(values);
-                foreach (SwitchControl sw in Switches)
-                    DynamicSwitches.Set(values, parameters, sw.Name, sw.Applied);
+                for (int k = 0; k < pots.Length; k++)
+                    pots[k].Apply(values);
+                for (int k = 0; k < switches.Length; k++)
+                    switches[k].Apply(values);
                 Run(engines[c], inputs[c], start, length, outputs[c]);
             }
             start += length;
@@ -182,12 +195,18 @@ public sealed class SchematicProcessor
         spanOut[0].AsSpan(0, input.Length).CopyTo(output);
     }
 
+    // Kept out of Run: a lambda capturing Run's parameters would make the compiler allocate its closure on every call.
+    private void Grow(int length)
+    {
+        int size = Math.Max(length, 4096);
+        buffers = Enumerable.Range(0, 2 * speakerCount).Select(_ => new double[size]).ToArray();
+        chunkIn = new double[size];
+    }
+
     private void Run(CompiledCircuit engine, double[] input, int start, int length, double[] output)
     {
-        if (buffers.Length != 2 * speakerCount || buffers[0].Length < length)
-            buffers = Enumerable.Range(0, 2 * speakerCount).Select(_ => new double[Math.Max(length, 4096)]).ToArray();
-        if (chunkIn.Length < length)
-            chunkIn = new double[Math.Max(length, 4096)];
+        if (buffers.Length != 2 * speakerCount || buffers[0].Length < length || chunkIn.Length < length)
+            Grow(length);
         Array.Copy(input, start, chunkIn, 0, length);
         engine.Run(chunkIn, buffers, length);
         for (int n = 0; n < length; n++)
@@ -274,13 +293,17 @@ public sealed class PotControl
 public sealed class SwitchControl
 {
     private int target;
+    private readonly int[] indices;
+    private readonly SwitchParameter[] contacts;
 
-    internal SwitchControl(string name, int positions, int initial)
+    internal SwitchControl(string name, int positions, int initial, int[] indices, SwitchParameter[] contacts)
     {
         Name = name;
         Positions = positions;
         DefaultPosition = initial;
         target = Applied = initial;
+        this.indices = indices;
+        this.contacts = contacts;
     }
 
     /// <summary>The switch's name, or its group's.</summary>
@@ -308,4 +331,10 @@ public sealed class SwitchControl
     internal int Applied { get; private set; }
 
     internal void Latch() => Applied = Volatile.Read(ref target);
+
+    internal void Apply(double[] values)
+    {
+        for (int k = 0; k < indices.Length; k++)
+            values[indices[k]] = contacts[k].ValueAt(Applied);
+    }
 }

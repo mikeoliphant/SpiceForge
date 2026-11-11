@@ -34,7 +34,6 @@ internal sealed class LinearPortReduction
     // The sum of the magnitudes of the terms that make up each port gain, to tell cancellations from small values.
     private readonly double[][] portGainSize, portSourceSize;
     private readonly double[] portConstant;
-    private double[]? last;
 
     /// <summary>Unknowns a linear term reaches (G_L nonzero); only their coefficients change with the parameters.</summary>
     public bool[] Affected { get; }
@@ -174,6 +173,19 @@ internal sealed class LinearPortReduction
                     portSourceSize[j][x] += Math.Abs(weight * sourceGain[i, x]);
                 }
             }
+
+        int kl = l.Length;
+        work = new double[kl, 2 * kl];
+        m = new double[tl.Length, kl];
+        through = new double[kl];
+        throughSize = new double[kl];
+        last = new double[parameters];
+        zColumns = tn.Select(c => Enumerable.Range(0, kl).Select(j => Z[l[j], c]).ToArray()).ToArray();
+        qzColumns = Enumerable.Range(0, dz).Select(f => Enumerable.Range(0, kl).Select(j => Qz[l[j], f]).ToArray()).ToArray();
+        gainColumns = Enumerable.Range(0, parameters).Select(p => Enumerable.Range(0, kl).Select(j => portGain[j][p]).ToArray()).ToArray();
+        gainSizeColumns = Enumerable.Range(0, parameters).Select(p => Enumerable.Range(0, kl).Select(j => portGainSize[j][p]).ToArray()).ToArray();
+        sourceColumns = Enumerable.Range(0, sources).Select(x => Enumerable.Range(0, kl).Select(j => portSource[j][x]).ToArray()).ToArray();
+        sourceSizeColumns = Enumerable.Range(0, sources).Select(x => Enumerable.Range(0, kl).Select(j => portSourceSize[j][x]).ToArray()).ToArray();
     }
 
     /// <summary>
@@ -182,18 +194,22 @@ internal sealed class LinearPortReduction
     /// </summary>
     public bool Update(double[] parameters, Func<double[,]> linearJacobian)
     {
-        if (last != null && parameters.AsSpan().SequenceEqual(last))
+        // Allocation-free once constructed: hosts call this from the audio thread whenever a pot or switch moves.
+        if (hasLast && parameters.AsSpan().SequenceEqual(last))
             return false;
-        last = (double[])parameters.Clone();
+        parameters.CopyTo(last, 0);
+        hasLast = true;
         Updates++;
 
         double[,] jl = linearJacobian();
         int kl = L.Length, kn = N.Length, ml = TL.Length, mn = TN.Length;
 
         // A = I - Z_LL·Jl, inverted by Gauss-Jordan with partial pivoting.
-        var a = new double[kl, 2 * kl];
+        double[,] a = work;
         for (int i = 0; i < kl; i++)
         {
+            for (int j = 0; j < 2 * kl; j++)
+                a[i, j] = 0;
             for (int j = 0; j < kl; j++)
             {
                 double value = i == j ? 1 : 0;
@@ -228,7 +244,6 @@ internal sealed class LinearPortReduction
         }
 
         // M = Jl·A⁻¹.
-        var m = new double[ml, kl];
         for (int t = 0; t < ml; t++)
             for (int j = 0; j < kl; j++)
             {
@@ -239,98 +254,105 @@ internal sealed class LinearPortReduction
             }
 
         // Each row type below is its static coefficient plus (row·M)·(the eliminated ports' version of the column).
-        var through = new double[kl];
-        var throughSize = new double[kl];
-        void Through(Func<int, double> rowAtLinearTerm)
-        {
-            for (int j = 0; j < kl; j++)
-            {
-                double value = 0, size = 0;
-                for (int t = 0; t < ml; t++)
-                {
-                    double weight = rowAtLinearTerm(TL[t]);
-                    if (weight != 0)
-                    {
-                        value += weight * m[t, j];
-                        size += Math.Abs(weight * m[t, j]);
-                    }
-                }
-                through[j] = value;
-                throughSize[j] = size;
-            }
-        }
-        double Fold(double baseValue, Func<int, double> portValue)
-        {
-            double value = baseValue;
-            for (int j = 0; j < kl; j++)
-                if (through[j] != 0)
-                    value += through[j] * portValue(j);
-            return value;
-        }
-        // Folds an entry that can be read live. While learning, it records how far the entry is from cancelling (see
-        // MarkLearned); once frozen, an entry that was never marked stays at zero.
-        double Keep(bool[][] used, int row, int column, double baseValue, Func<int, double> portValue,
-            Func<int, double>? portSize = null)
-        {
-            double value = Fold(baseValue, portValue);
-            if (!Learning)
-            {
-                // Held at zero if never marked, and at its learned value if it doesn't depend on the parameters, so
-                // every engine sees exactly the coefficients the compiled step reads or inlines.
-                if (!used[row][column])
-                    return 0;
-                int a = Array.FindIndex(tracked, t => ReferenceEquals(t.Used, used));
-                return varies[a][row][column] ? value : firstValues[a][row][column];
-            }
-            double size = Math.Abs(baseValue);
-            for (int j = 0; j < kl; j++)
-                if (throughSize[j] != 0)
-                    size += throughSize[j] * (portSize == null ? Math.Abs(portValue(j)) : portSize(j));
-            // Only arrays with entries get here, so the lookup is unambiguous (empty ones may share an instance).
-            Array.Find(tracked, a => ReferenceEquals(a.Used, used)).Ratio[row][column] = size == 0 ? 0 : Math.Abs(value) / size;
-            return value;
-        }
-
         for (int r = 0; r < kn; r++)
         {
             int port = N[r];
-            Through(t => z[port, t]);
+            Through(z, port);
             for (int c = 0; c < mn; c++)
-                Zr[r][c] = Keep(ZrUsed, r, c, z[port, TN[c]], j => z[L[j], TN[c]]);
+                Zr[r][c] = Keep(0, r, c, z[port, TN[c]], zColumns[c], null);
             for (int f = 0; f < dz; f++)
-                Qzr[r][f] = Keep(QzrUsed, r, f, qz[port, f], j => qz[L[j], f]);
+                Qzr[r][f] = Keep(1, r, f, qz[port, f], qzColumns[f], null);
         }
         for (int f = 0; f < dz; f++)
         {
-            Through(t => cp[f, t]);
+            Through(cp, f);
             for (int c = 0; c < mn; c++)
-                CPr[f][c] = Keep(CPrUsed, f, c, cp[f, TN[c]], j => z[L[j], TN[c]]);
+                CPr[f][c] = Keep(2, f, c, cp[f, TN[c]], zColumns[c], null);
             for (int h = 0; h < dz; h++)
-                Czr[f][h] = Keep(CzrUsed, f, h, 0, j => qz[L[j], h]);
-            ConstraintConstant[f] = Fold(cc[f], j => portConstant[j]);
+                Czr[f][h] = Keep(3, f, h, 0, qzColumns[h], null);
+            ConstraintConstant[f] = Fold(cc[f], portConstant);
             for (int p = 0; p < ConstraintGain[f].Length; p++)
-                ConstraintGain[f][p] = Keep(ConstraintGainUsed, f, p, ch[f, p], j => portGain[j][p], j => portGainSize[j][p]);
+                ConstraintGain[f][p] = Keep(8, f, p, ch[f, p], gainColumns[p], gainSizeColumns[p]);
             for (int x = 0; x < ConstraintSource[f].Length; x++)
-                ConstraintSource[f][x] = Keep(ConstraintSourceUsed, f, x, cs[f, x], j => portSource[j][x], j => portSourceSize[j][x]);
+                ConstraintSource[f][x] = Keep(9, f, x, cs[f, x], sourceColumns[x], sourceSizeColumns[x]);
         }
         for (int i = 0; i < Affected.Length; i++)
         {
             if (!Affected[i])
                 continue;
-            Through(t => g[i, t]);
-            Constant[i] = Fold(constant[i], j => portConstant[j]);
+            Through(g, i);
+            Constant[i] = Fold(constant[i], portConstant);
             for (int p = 0; p < Gain[i].Length; p++)
-                Gain[i][p] = Keep(GainUsed, i, p, gain[i, p], j => portGain[j][p], j => portGainSize[j][p]);
+                Gain[i][p] = Keep(4, i, p, gain[i, p], gainColumns[p], gainSizeColumns[p]);
             for (int x = 0; x < Source[i].Length; x++)
-                Source[i][x] = Keep(SourceUsed, i, x, sourceGain[i, x], j => portSource[j][x], j => portSourceSize[j][x]);
+                Source[i][x] = Keep(5, i, x, sourceGain[i, x], sourceColumns[x], sourceSizeColumns[x]);
             for (int c = 0; c < mn; c++)
-                TermGain[i][c] = Keep(TermGainUsed, i, c, g[i, TN[c]], j => z[L[j], TN[c]]);
+                TermGain[i][c] = Keep(6, i, c, g[i, TN[c]], zColumns[c], null);
             for (int f = 0; f < dz; f++)
-                FreeGain[i][f] = Keep(FreeGainUsed, i, f, nz[i, f], j => qz[L[j], f]);
+                FreeGain[i][f] = Keep(7, i, f, nz[i, f], qzColumns[f], null);
         }
         if (Learning)
             MarkLearned();
         return true;
+    }
+
+    // Work space for Update, allocated once.
+    private readonly double[,] work, m;
+    private readonly double[] through, throughSize, last;
+    private bool hasLast;
+    // The eliminated ports' version of each column, as vectors over the eliminated ports: z[L, TN[c]], qz[L, f], and the
+    // port gains by parameter and by source, with the sums of their terms' magnitudes.
+    private readonly double[][] zColumns, qzColumns, gainColumns, gainSizeColumns, sourceColumns, sourceSizeColumns;
+
+    // through = (the matrix's row at the linear terms)·M, and the sum of its terms' magnitudes.
+    private void Through(double[,] matrix, int row)
+    {
+        int kl = L.Length, ml = TL.Length;
+        for (int j = 0; j < kl; j++)
+        {
+            double value = 0, size = 0;
+            for (int t = 0; t < ml; t++)
+            {
+                double weight = matrix[row, TL[t]];
+                if (weight != 0)
+                {
+                    value += weight * m[t, j];
+                    size += Math.Abs(weight * m[t, j]);
+                }
+            }
+            through[j] = value;
+            throughSize[j] = size;
+        }
+    }
+
+    private double Fold(double baseValue, double[] portValues)
+    {
+        double value = baseValue;
+        for (int j = 0; j < through.Length; j++)
+            if (through[j] != 0)
+                value += through[j] * portValues[j];
+        return value;
+    }
+
+    // Folds an entry of tracked array a that can be read live. While learning, it records how far the entry is from
+    // cancelling (see MarkLearned); once frozen, an entry that was never marked stays at zero, and one that doesn't
+    // depend on the parameters stays at its learned value, so every engine sees exactly the coefficients the compiled
+    // step reads or inlines. portSizes, when given, are the sums of the magnitudes of the terms behind portValues.
+    private double Keep(int a, int row, int column, double baseValue, double[] portValues, double[]? portSizes)
+    {
+        double value = Fold(baseValue, portValues);
+        if (!Learning)
+        {
+            if (!tracked[a].Used[row][column])
+                return 0;
+            return varies[a][row][column] ? value : firstValues[a][row][column];
+        }
+        double size = Math.Abs(baseValue);
+        for (int j = 0; j < through.Length; j++)
+            if (throughSize[j] != 0)
+                size += throughSize[j] * (portSizes == null ? Math.Abs(portValues[j]) : portSizes[j]);
+        tracked[a].Ratio[row][column] = size == 0 ? 0 : Math.Abs(value) / size;
+        return value;
     }
 
     // Marks the entries that are more than residue at the current parameters (see the Used properties).
@@ -367,7 +389,7 @@ internal sealed class LinearPortReduction
     public void Freeze(double[] parameters, Func<double[,]> linearJacobian)
     {
         Learning = false;
-        last = null;
+        hasLast = false;
         Update(parameters, linearJacobian);
     }
 

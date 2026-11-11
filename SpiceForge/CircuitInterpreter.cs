@@ -279,9 +279,9 @@ public sealed class CircuitInterpreter
             {
                 for (int j = 0; j < ParameterValues.Length; j++)
                     ParameterValues[j] = sample < 2 ? -0.4 + 0.8 * random.NextDouble() : initialValues[j];
-                reduction.Update(ParameterValues, LinearJacobian);
+                reduction.Update(ParameterValues, JacobianFunction);
             }
-            reduction.Freeze(ParameterValues, LinearJacobian);
+            reduction.Freeze(ParameterValues, JacobianFunction);
         }
         if (clear && !coupledCleared)
             ClearRoundoffCoupling();
@@ -315,7 +315,7 @@ public sealed class CircuitInterpreter
     public void Run(double[] inputSamples, double[][] outputBuffers)
     {
         // Runtime parameters only change between calls, so the reduced coefficients only need checking here.
-        reduction?.Update(ParameterValues, LinearJacobian);
+        reduction?.Update(ParameterValues, JacobianFunction);
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var sums = new double[outputs.Length];
         for (int n = 0; n < inputSamples.Length; n++)
@@ -636,7 +636,7 @@ public sealed class CircuitInterpreter
             {
                 current.CopyTo(ParameterValues, 0);
                 ParameterValues[j] = end;
-                r.Update(ParameterValues, LinearJacobian);
+                r.Update(ParameterValues, JacobianFunction);
                 for (int i = 0; i < kn; i++)
                     portChange[j, i] = Math.Max(portChange[j, i],
                         Math.Max(RowChange(r.Zr[i], zr0[i], zrScale), RowChange(r.Qzr[i], qzr0[i], qzrScale)));
@@ -646,7 +646,7 @@ public sealed class CircuitInterpreter
             }
         }
         current.CopyTo(ParameterValues, 0);
-        r.Update(ParameterValues, LinearJacobian);
+        r.Update(ParameterValues, JacobianFunction);
 
         var segments = new List<Segment>();
         var solved = new HashSet<int>();
@@ -834,7 +834,7 @@ public sealed class CircuitInterpreter
         foreach (int j in segment.Parameters)
             ParameterValues[j] = inputs[position++];
         LinearPortReduction reduced = reduction!;
-        reduced.Update(ParameterValues, LinearJacobian);
+        reduced.Update(ParameterValues, JacobianFunction);
         int[] terms = reduced.TN;
         int[] rowOf = segment.Ports.Select(p => Array.IndexOf(reduced.N, p)).ToArray();
 
@@ -972,7 +972,12 @@ public sealed class CircuitInterpreter
     }
 
     /// <summary>Recomputes the reduced system if the runtime parameters changed. Compiled code calls this once per step.</summary>
-    internal void UpdateReduction() => reduction!.Update(ParameterValues, LinearJacobian);
+    internal void UpdateReduction() => reduction!.Update(ParameterValues, JacobianFunction);
+
+    // One delegate for LinearJacobian, made once: converting the method on every call would allocate each time a
+    // parameter changes.
+    private Func<double[,]>? jacobianFunction;
+    private Func<double[,]> JacobianFunction => jacobianFunction ??= LinearJacobian;
 
     private double[,] LinearJacobian()
     {
