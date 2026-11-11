@@ -25,7 +25,7 @@ namespace SpiceForgePlugin
         TextToggleButton autoReloadButton;
         TextButton oversampleButton;
         TextButton iterationsButton;
-        UIColor foregroundColor = UIColor.Black;
+        UIColor foregroundColor = UIColor.White;
 
         // The plugin version the controls were last built for.
         int shownVersion = -1;
@@ -61,7 +61,7 @@ namespace SpiceForgePlugin
 
             GetFont("SmallFont").SpriteFont.Spacing = 0;
 
-            DefaultForegroundColor = UIColor.Black;
+            DefaultForegroundColor = UIColor.White;
 
             DefaultOutlineNinePatch = GetImage("PopupBackground");
 
@@ -72,7 +72,7 @@ namespace SpiceForgePlugin
 
             RootUIElement = mainDock = new Dock()
             {
-                BackgroundColor = new UIColor(230, 230, 230),
+                BackgroundColor = UIColor.Black,
                 Padding = new LayoutPadding(20)
             };
 
@@ -256,6 +256,7 @@ namespace SpiceForgePlugin
         {
             NinePatchWrapper outline = new NinePatchWrapper(GetImage("PluginBackground"))
             {
+                Color = new UIColor(32, 32, 32),
                 HorizontalAlignment = EHorizontalAlignment.Center,
                 VerticalAlignment = EVerticalAlignment.Center,
                 Padding = new LayoutPadding(30)
@@ -352,7 +353,7 @@ namespace SpiceForgePlugin
                 DefaultValue = pot.DefaultPosition
             };
 
-            dial.SetDialColor(UIColor.Black);
+            dial.SetDialColor(new UIColor(80, 80, 80));
             dial.SetPointerColor(UIColor.White);
             dial.SetValue(pot.Position);
 

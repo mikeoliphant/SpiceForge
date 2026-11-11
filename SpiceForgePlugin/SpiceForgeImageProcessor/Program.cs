@@ -32,13 +32,13 @@ namespace SpiceForgeImageProcessor
 
             AddWithShadow("HoverTextOutline");
 
-            Add("DialBackground");
-            Add("DialPointer");
+            AddSvg("DialBackground", 128);
+            AddSvg("DialPointer", 128);
 
             Add("PopupBackground");
             Add("PluginBackground");
-            Add("ButtonPressed");
-            Add("ButtonUnpressed");
+            AddSvg("ButtonPressed", 32);
+            AddSvg("ButtonUnpressed", 32);
 
             Add("LevelDisplay");
             Add("LevelDisplayHorizontal");

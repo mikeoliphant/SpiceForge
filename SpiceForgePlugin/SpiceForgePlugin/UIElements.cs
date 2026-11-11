@@ -6,6 +6,35 @@ using UILayout;
 
 namespace SpiceForgePlugin
 {
+    /// <summary>An image drawn rotated about its center, and scaled (unlike UILayout's RotatingImageElement).</summary>
+    public class ScaledRotatingImageElement : UIElement
+    {
+        public UIImage Image { get; }
+        public float Scale { get; }
+        public UIColor Color { get; set; } = UIColor.White;
+        public float Rotation { get; set; }
+
+        public ScaledRotatingImageElement(string imageName, float scale)
+        {
+            Image = Layout.Current.GetImage(imageName);
+            Scale = scale;
+        }
+
+        protected override void GetContentSize(out float width, out float height)
+        {
+            width = Image.Width * Scale;
+            height = Image.Height * Scale;
+        }
+
+        protected override void DrawContents()
+        {
+            base.DrawContents();
+
+            Layout.Current.GraphicsContext.DrawImage(Image, ContentBounds.CenterX, ContentBounds.CenterY, Color, Rotation,
+                new System.Numerics.Vector2(Image.Width / 2.0f, Image.Height / 2.0f), Scale);
+        }
+    }
+
     public class ParameterDial : Dock
     {
         public double MinValue { get; set; }
@@ -15,8 +44,11 @@ namespace SpiceForgePlugin
         public Action<double> ValueChangedAction { get; set; }
         public Action HoldAction { get; set; }
 
+        // How much bigger than its images the dial is drawn.
+        const float ImageScale = 1.5f;
+
         ImageElement background;
-        RotatingImageElement pointer;
+        ScaledRotatingImageElement pointer;
         double currentValue;
 
         public ParameterDial()
@@ -26,9 +58,11 @@ namespace SpiceForgePlugin
             DefaultValue = 0.5;
 
             background = new ImageElement("DialBackground") { HorizontalAlignment = EHorizontalAlignment.Center, VerticalAlignment = EVerticalAlignment.Center };
+            background.DesiredWidth = background.Image.Width * ImageScale;
+            background.DesiredHeight = background.Image.Height * ImageScale;
             Children.Add(background);
 
-            pointer = new RotatingImageElement("DialPointer") { HorizontalAlignment = EHorizontalAlignment.Center, VerticalAlignment = EVerticalAlignment.Center, Color = UIColor.Black };
+            pointer = new ScaledRotatingImageElement("DialPointer", ImageScale) { HorizontalAlignment = EHorizontalAlignment.Center, VerticalAlignment = EVerticalAlignment.Center, Color = UIColor.Black };
             Children.Add(pointer);
 
             SetValue(DefaultValue);
@@ -134,6 +168,7 @@ namespace SpiceForgePlugin
             : base(Layout.Current.GetImage("HoverTextOutline"))
         {
             Visible = false;
+            Color = new UIColor(64, 64, 64);
 
             HorizontalAlignment = EHorizontalAlignment.Center;
             VerticalAlignment = EVerticalAlignment.Center;
@@ -143,7 +178,7 @@ namespace SpiceForgePlugin
 
             textBlock = new StringBuilderTextBlock
             {
-                TextColor = UIColor.Black,
+                TextColor = UIColor.White,
                 TextFont = Layout.Current.GetFont("SmallFont"),
                 Margin = new LayoutPadding(5, 5),
                 HorizontalAlignment = EHorizontalAlignment.Center,

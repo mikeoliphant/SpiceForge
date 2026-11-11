@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <!-- A soft shadow around the dial, fading out to the edge of the image. -->
+    <radialGradient id="shadow" cx="64" cy="64" r="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.5"/>
+      <stop offset="0.77" stop-color="#000000" stop-opacity="0.5"/>
+      <stop offset="0.84" stop-color="#000000" stop-opacity="0.27"/>
+      <stop offset="0.91" stop-color="#000000" stop-opacity="0.125"/>
+      <stop offset="0.97" stop-color="#000000" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.03"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="64" fill="url(#shadow)"/>
+  <!-- White, so the layout can tint it to any color. -->
+  <circle cx="64" cy="64" r="49.5" fill="#ffffff"/>
+</svg>
