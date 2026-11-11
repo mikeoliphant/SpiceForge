@@ -59,6 +59,10 @@ public sealed class CompiledCircuit
     /// The compiled code reads this array directly, so changes take effect on the next step without recompiling.</summary>
     public double[] ParameterValues { get; }
 
+    /// <summary>How many parameter settings the circuit couldn't solve and kept its previous coefficients for (see
+    /// <see cref="LinearPortReduction.Rejected"/>).</summary>
+    public long RejectedSettings => plan.reduction?.Rejected ?? 0;
+
     /// <summary>For profiling only: compile live coefficients as constants at their current values, so later
     /// parameter changes have no effect.</summary>
     internal static bool InlineLiveForTesting { get; set; }

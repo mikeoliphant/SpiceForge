@@ -553,7 +553,7 @@ Moving the oversampling out of the simulation loop:
 - Automation lives in the renderer; a host drives SchematicProcessor's controls itself.
 - The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.
 - A rejected control setting keeps the circuit at its last good coefficients, but nothing reports it to the host
-  (`LinearPortReduction.Rejected` counts them). It has never happened on the test circuits.
+  (`SchematicProcessor.RejectedSettings` counts them). It has never happened on the test circuits.
 - A windowed-sinc oversampler (an interpolating filter in, a decimating lowpass out) should beat more substeps for
   accuracy and aliasing (see Oversampling), and can now be added as another `Oversampler`. It would add latency (a
   linear-phase filter at 8× about 0.3–0.5 ms) that the plugin must report, and it wouldn't match LiveSPICE, so it

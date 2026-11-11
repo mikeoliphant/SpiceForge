@@ -74,6 +74,19 @@ public sealed class SchematicProcessor
 
     public int Channels => engines.Length;
 
+    /// <summary>How many times a pot or switch setting couldn't be solved, so the circuit stayed at its last good one,
+    /// summed over the channels. It has never happened on the test circuits; a host can watch it to say so.</summary>
+    public long RejectedSettings
+    {
+        get
+        {
+            long total = 0;
+            for (int c = 0; c < engines.Length; c++)
+                total += engines[c].RejectedSettings;
+            return total;
+        }
+    }
+
     /// <summary>One control per pot, or per group of ganged pots, in schematic order.</summary>
     public IReadOnlyList<PotControl> Pots { get; }
 
