@@ -45,7 +45,7 @@ namespace SpiceForgePlugin
         public Action HoldAction { get; set; }
 
         // How much bigger than its images the dial is drawn.
-        const float ImageScale = 1.5f;
+        public const float ImageScale = 1.5f;
 
         ImageElement background;
         ScaledRotatingImageElement pointer;

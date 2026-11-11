@@ -35,6 +35,9 @@ namespace SpiceForgeImageProcessor
             AddSvg("DialBackground", 128);
             AddSvg("DialPointer", 128);
 
+            AddSvg("LampOn", 96);
+            AddSvg("LampOff", 96);
+
             Add("PopupBackground");
             Add("PluginBackground");
             AddSvg("ButtonPressed", 32);

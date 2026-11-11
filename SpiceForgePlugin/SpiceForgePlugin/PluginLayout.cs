@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows.Forms;
 using SpiceForge;
 using UILayout;
+using Button = UILayout.Button;
 using Menu = UILayout.Menu;
 using MenuItem = UILayout.MenuItem;
 
@@ -370,23 +371,35 @@ namespace SpiceForgePlugin
             return controlVStack;
         }
 
-        // A switch: on/off as a toggle button, more positions as a button that pops up a menu of them.
+        // A switch: on/off as a lamp to click, more positions as a button that pops up a menu of them.
         UIElement AddSwitch(SwitchControl sw)
         {
             VerticalStack controlVStack = ControlStack(sw.Name);
 
             if (sw.Positions == 2)
             {
-                TextToggleButton button = new TextToggleButton("On", "Off")
+                Button lamp = new Button()
                 {
+                    IsToggleButton = true,
                     HorizontalAlignment = EHorizontalAlignment.Center,
                     VerticalAlignment = EVerticalAlignment.Center,
-                    Margin = new LayoutPadding(5)
+                    PressedElement = LampImage("LampOn"),
+                    UnpressedElement = LampImage("LampOff")
                 };
-                button.SetPressed(sw.Position == 1);
-                button.PressAction = delegate { sw.Position = button.IsPressed ? 1 : 0; };
+                lamp.SetPressed(sw.Position == 1);
+                lamp.PressAction = delegate { sw.Position = lamp.IsPressed ? 1 : 0; };
 
-                controlVStack.Children.Add(button);
+                // Centered in a dial-sized space, so it lines up with the pots in its row.
+                UIImage dialImage = GetImage("DialBackground");
+                Dock slot = new Dock()
+                {
+                    HorizontalAlignment = EHorizontalAlignment.Center,
+                    DesiredWidth = dialImage.Width * ParameterDial.ImageScale,
+                    DesiredHeight = dialImage.Height * ParameterDial.ImageScale
+                };
+                slot.Children.Add(lamp);
+
+                controlVStack.Children.Add(slot);
             }
             else
             {
@@ -410,6 +423,20 @@ namespace SpiceForgePlugin
             }
 
             return controlVStack;
+        }
+
+        // A lamp image, at the dials' scale.
+        ImageElement LampImage(string name)
+        {
+            ImageElement image = new ImageElement(name)
+            {
+                HorizontalAlignment = EHorizontalAlignment.Center,
+                VerticalAlignment = EVerticalAlignment.Center
+            };
+            image.DesiredWidth = image.Image.Width * ParameterDial.ImageScale;
+            image.DesiredHeight = image.Image.Height * ParameterDial.ImageScale;
+
+            return image;
         }
 
         void LoadSchematic()
