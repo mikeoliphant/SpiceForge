@@ -429,6 +429,18 @@ the error against the uncut circuit, with no load or a linear copy of the downst
   ramp (0.401 against 0.393), because the SD-1's clipped wave has steeper edges of its own than any click. Its gain
   relative to the unchanged circuit, per millisecond, showed the difference plainly: a jump from 1.00 to 2.00 at once,
   against a steady rise over the 10 ms ramp.
+- **Ramp a switch in log-resistance, not in its parameter.** A contact at δ = 0 is R0 = 10 MΩ, so a straight ramp in
+  δ keeps it effectively open until the last moment: an instant switch, just later. `SchematicProcessor` (default
+  5 ms) and the renderer (`--switch-ramp`, default 0) sweep each changing contact's resistance geometrically from 1 GΩ
+  to 1 Ω, or back, and land exactly open or closed. The reduction already learns its sparsity at random parameter
+  values in [−0.4, 0.4], so in-between contacts need nothing new.
+- **Most switches don't pop, and a ramp only softens the ones that do.** With silence in, the Blues Breaker's Bypass,
+  the JCM800's C1 and the Bassman's Bright make no transient at all. The JCM2000's OD1/OD2 shifts a bias: a 5 ms ramp
+  lowers its largest step by 5 to 7 dB (−45 to −50 dBFS) and the click's energy by 2.5 to 6 dB, and the rest is the
+  circuit re-biasing, which no ramp removes.
+- **Switching barely troubles Newton at the iteration cap.** Against a cap of 64, a cap of 8 differs by −79 to −103 dB
+  in the 50 ms around each flip at full-scale input, ramped or not, and not at all in steady state. The earlier report
+  of a switched run at −22 dB came from a tighter stopping tolerance, not from steps hitting the cap.
 - **Check names and values before rendering.** Every event is applied once to a scratch array before the render
   starts, so a misspelt pot or an out-of-range position fails at once with the list of what exists, rather than
   partway through a long file.
@@ -541,9 +553,8 @@ Moving the oversampling out of the simulation loop:
   sweep also has capped steps that aren't explained.
 - Lookup tables over a pot need recordings that sweep it (`--sweep`), and are built in the table's bounding box, so
   thousands of corner points the circuit never reaches don't converge (harmlessly, so far).
-- Switches move instantly, even with `--pot-ramp`, which only ramps pots. The jump causes a large transient, and on the
-  Blues Breaker and JCM2000 Newton caps a few steps there (a switched run is -22 and -70 dB from a tightly converged
-  one). Real switches pop too, but a short crossfade, or ramping the contact's δ, may be worth having.
+- A switch that shifts a bias (the JCM2000's OD1/OD2) still pops with a 5 ms ramp, only 5 to 7 dB less; a longer ramp,
+  or muting the output across the move, would be the next step if that matters.
 - Automation lives in the renderer; a host drives SchematicProcessor's controls itself.
 - The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.
 - Control changes are allocation-free, but if a pot setting made the reduction's small system exactly singular, the

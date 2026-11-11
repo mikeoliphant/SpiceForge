@@ -10,7 +10,7 @@ using Expression = ComputerAlgebra.Expression;
 // both in LiveSPICE's normalized units, so a full-scale sample is the component's 0 dBFS voltage.
 // Pots and switches are runtime parameters by default, held at their schematic positions or those given with --pot
 // and --switch; --pot-at and --switch-at move them at given times, exactly on that sample, and --pot-ramp spreads each
-// pot move over a few milliseconds. --static-pots bakes them in.
+// pot move over a few milliseconds, and --switch-ramp each switch move. --static-pots bakes them in.
 
 const int Oversample = 8;
 const int Iterations = 8;
@@ -23,11 +23,18 @@ var switchPositions = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCa
 // Automation: a pot (wipe from 0 to 1) or a switch (position) set at a time in seconds.
 var automation = new List<(double Seconds, bool Pot, string Name, double Value)>();
 double rampMilliseconds = 0;
+double switchRampMilliseconds = 0;
 var positional = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--engine" && i + 1 < args.Length)
         engine = args[++i];
+    else if (args[i] == "--switch-ramp" && i + 1 < args.Length)
+    {
+        if (!double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out switchRampMilliseconds)
+            || !(switchRampMilliseconds >= 0))
+            return Usage($"Expected --switch-ramp <milliseconds>, not '{args[i]}'.");
+    }
     else if (args[i] == "--static-pots")
         dynamicPots = false;
     else if (args[i] == "--pot" && i + 1 < args.Length)
@@ -107,6 +114,7 @@ try
             Oversample = Oversample,
             IterationCap = Iterations,
             PotSmoothingMilliseconds = rampMilliseconds,
+            SwitchSmoothingMilliseconds = switchRampMilliseconds,
             Log = log,
             PotPositions = potPositions,
             SwitchPositions = switchPositions,
@@ -248,7 +256,7 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]... [--pot-at <seconds>:<name>=<position>]... [--pot-ramp <ms>]");
+    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]... [--pot-at <seconds>:<name>=<position>]... [--pot-ramp <ms>] [--switch-ramp <ms>]");
     Console.Error.WriteLine("  --pot sets a pot, or a group of ganged pots, by name to a wiper position from 0 to 1. Repeat it for more pots.");
     Console.Error.WriteLine("  --switch sets a switch, or a group of ganged switches, to a position: the throw it connects (from 0), or 0/1 for on/off.");
     Console.Error.WriteLine("  --switch-at TIME:NAME=POSITION moves a switch at TIME seconds, exactly on that sample. Repeat it for more changes.");
