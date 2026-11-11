@@ -59,19 +59,22 @@ public static class DynamicPots
     {
         if (!(wipe >= 0 && wipe <= 1))
             throw new ArgumentException($"Pot '{nameOrGroup}' position {wipe} isn't between 0 and 1.");
-        bool found = false;
-        for (int j = 0; j < parameters.Count; j++)
-            if (parameters[j] is PotParameter pot && Matches(pot, nameOrGroup))
-            {
-                values[j] = pot.ValueAt(wipe);
-                found = true;
-            }
-        if (!found)
+        foreach (int j in IndicesOf(parameters, nameOrGroup))
+            values[j] = ((PotParameter)parameters[j]).ValueAt(wipe);
+    }
+
+    /// <summary>The indices, in a parameter list laid out as ExtractedSystem.RuntimeParameters, of the pot with this
+    /// name (case-insensitive) or of every pot in this group. Throws, listing the pots, if there are none.</summary>
+    public static IReadOnlyList<int> IndicesOf(IReadOnlyList<RuntimeParameter> parameters, string nameOrGroup)
+    {
+        var indices = Enumerable.Range(0, parameters.Count).Where(j => parameters[j] is PotParameter pot && Matches(pot, nameOrGroup)).ToList();
+        if (indices.Count == 0)
         {
             string[] names = parameters.OfType<PotParameter>()
                 .Select(p => p.Component is IPotControl c && !string.IsNullOrEmpty(c.Group) ? c.Group : p.Name).Distinct().ToArray();
             throw new ArgumentException($"No dynamic pot named '{nameOrGroup}'. The pots are: {(names.Length == 0 ? "(none)" : string.Join(", ", names))}.");
         }
+        return indices;
     }
 
     private static bool Matches(PotParameter pot, string nameOrGroup) =>

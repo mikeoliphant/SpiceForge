@@ -9,11 +9,14 @@ using Expression = ComputerAlgebra.Expression;
 // The input samples drive the schematic's Input component, and the output is the sum of its speakers,
 // both in LiveSPICE's normalized units, so a full-scale sample is the component's 0 dBFS voltage.
 // Pots and switches are runtime parameters by default, held at their schematic positions or those given with --pot
-// and --switch; --pot-at and --switch-at move them at given times, exactly on that sample. --static-pots bakes them in.
+// and --switch; --pot-at and --switch-at move them at given times, exactly on that sample, and --pot-ramp spreads each
+// pot move over a few milliseconds. --static-pots bakes them in.
 
 const int Oversample = 8;
 const int Iterations = 8;
 const int BlockSize = 4096;
+// A ramped pot move updates every this many samples (0.7 ms at 48 kHz).
+const int RampStep = 32;
 
 string? engine = "compiled";
 bool dynamicPots = true;
@@ -21,6 +24,7 @@ var potPositions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCa
 var switchPositions = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 // Automation: a pot (wipe from 0 to 1) or a switch (position) set at a time in seconds.
 var automation = new List<(double Seconds, bool Pot, string Name, double Value)>();
+double rampMilliseconds = 0;
 var positional = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
@@ -44,6 +48,12 @@ for (int i = 0; i < args.Length; i++)
         if (equals <= 0 || !int.TryParse(setting[(equals + 1)..], out int position))
             return Usage($"Expected --switch <name>=<position>, not '{setting}'.");
         switchPositions[setting[..equals]] = position;
+    }
+    else if (args[i] == "--pot-ramp" && i + 1 < args.Length)
+    {
+        if (!double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out rampMilliseconds)
+            || rampMilliseconds < 0)
+            return Usage($"Expected --pot-ramp <milliseconds>, not '{args[i]}'.");
     }
     else if ((args[i] == "--switch-at" || args[i] == "--pot-at") && i + 1 < args.Length)
     {
@@ -110,23 +120,50 @@ try
     if (switchPositions.Count > 0)
         Console.WriteLine("Switches: " + string.Join(", ", switchPositions.Select(p => $"{p.Key} {p.Value}")) + ".");
 
-    // Automation: each event's sample, checked against the circuit's pots and switches before rendering. Events at the
-    // same time apply in the order given.
+    // Automation, as steps: each sets some parameters at a sample. Events at the same time apply in the order given,
+    // and names and positions are checked before rendering. A pot move with --pot-ramp becomes a line of steps, every
+    // RampStep samples, from where the pot is to its target; a later move of the same pot drops what's left of it.
     var parameters = loaded.Parameters;
-    var events = automation.Select((e, order) => (e, order)).OrderBy(x => x.e.Seconds).ThenBy(x => x.order).Select(x => x.e)
-        .Select(e => (Sample: (long)Math.Round(e.Seconds * sampleRate), e.Pot, e.Name, e.Value)).ToList();
-    void Apply((long Sample, bool Pot, string Name, double Value) e, double[] values)
+    var ordered = automation.Select((e, order) => (e, order)).OrderBy(x => x.e.Seconds).ThenBy(x => x.order).Select(x => x.e).ToList();
+    long ramp = (long)Math.Round(rampMilliseconds / 1000 * sampleRate);
+    var steps = new List<(long Sample, int Order, Action<double[]> Set)>();
+    var timeline = parameters.Select(p => new List<(long Sample, int Order, double Wipe)>
+        { (-1, -1, p is PotParameter pot ? pot.InitialWipe : 0) }).ToArray();
+    for (int index = 0; index < ordered.Count; index++)
     {
-        if (e.Pot)
-            DynamicPots.Set(values, parameters, e.Name, e.Value);
-        else
-            DynamicSwitches.Set(values, parameters, e.Name, (int)e.Value);
+        var e = ordered[index];
+        long at = (long)Math.Round(e.Seconds * sampleRate);
+        // Steps at the same sample apply in event order, and a ramp's own steps after its first.
+        int order = index * 1_000_000;
+        if (!e.Pot)
+        {
+            DynamicSwitches.Set(new double[parameters.Count], parameters, e.Name, (int)e.Value);
+            steps.Add((at, order, values => DynamicSwitches.Set(values, parameters, e.Name, (int)e.Value)));
+            continue;
+        }
+        DynamicPots.Set(new double[parameters.Count], parameters, e.Name, e.Value);
+        foreach (int j in DynamicPots.IndicesOf(parameters, e.Name))
+        {
+            var line = timeline[j];
+            line.RemoveAll(point => point.Sample > at);
+            double start = line[^1].Wipe;
+            int count = ramp == 0 ? 1 : (int)Math.Max(1, (ramp + RampStep - 1) / RampStep);
+            for (int k = 1; k <= count; k++)
+                line.Add((at + (ramp == 0 ? 0 : (long)Math.Round((double)ramp * k / count)), order + k, start + (e.Value - start) * k / count));
+        }
     }
-    foreach (var e in events)
-        Apply(e, new double[parameters.Count]);
-    if (events.Count > 0)
-        Console.WriteLine("Automation: " + string.Join(", ", events.Select(e =>
-            $"{(e.Pot ? "pot" : "switch")} {e.Name} {e.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} at {e.Sample / (double)sampleRate:0.###} s")) + ".");
+    for (int j = 0; j < parameters.Count; j++)
+        foreach (var point in timeline[j].Skip(1))
+        {
+            int index = j;
+            double value = ((PotParameter)parameters[j]).ValueAt(Math.Clamp(point.Wipe, 0, 1));
+            steps.Add((point.Sample, point.Order, values => values[index] = value));
+        }
+    var events = steps.OrderBy(s => s.Sample).ThenBy(s => s.Order).ToList();
+    if (ordered.Count > 0)
+        Console.WriteLine("Automation: " + string.Join(", ", ordered.Select(e =>
+            $"{(e.Pot ? "pot" : "switch")} {e.Name} {e.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} at {e.Seconds:0.###} s"))
+            + (ramp > 0 && ordered.Any(e => e.Pot) ? $"; pot moves ramped over {rampMilliseconds:0.###} ms" : "") + ".");
     int nextEvent = 0;
 
     using var writer = new WaveFileWriter(outputPath, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
@@ -159,7 +196,7 @@ try
             {
                 int start = bounds[part], length = bounds[part + 1] - start;
                 for (; k < events.Count && events[k].Sample <= frames + start; k++)
-                    Apply(events[k], processors[c].Parameters!);
+                    events[k].Set(processors[c].Parameters!);
                 if (bounds.Length == 2)
                     processors[c].Run(blockIn, blockOut);
                 else
@@ -238,11 +275,12 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]... [--pot-at <seconds>:<name>=<position>]...");
+    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]... [--pot-at <seconds>:<name>=<position>]... [--pot-ramp <ms>]");
     Console.Error.WriteLine("  --pot sets a pot, or a group of ganged pots, by name to a wiper position from 0 to 1. Repeat it for more pots.");
     Console.Error.WriteLine("  --switch sets a switch, or a group of ganged switches, to a position: the throw it connects (from 0), or 0/1 for on/off.");
     Console.Error.WriteLine("  --switch-at TIME:NAME=POSITION moves a switch at TIME seconds, exactly on that sample. Repeat it for more changes.");
     Console.Error.WriteLine("  --pot-at TIME:NAME=POSITION moves a pot (or group) to a wiper position from 0 to 1 at TIME seconds, the same way.");
+    Console.Error.WriteLine("  --pot-ramp MS spreads each --pot-at move over MS milliseconds, in a straight line from where the pot is (default 0).");
     Console.Error.WriteLine("  --static-pots bakes pots and switches in instead of making them runtime parameters.");
     return 2;
 }
