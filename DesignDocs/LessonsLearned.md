@@ -540,9 +540,6 @@ Moving the oversampling out of the simulation loop:
   noise (Big Muff 18.7–18.8 µs per sample, Rat 7.6–7.7, Blues Breaker 3.0), and the smallest circuits at most about
   0.04 µs, within their run-to-run noise. The compiled engine keeps its step buffers between blocks, so it still
   allocates nothing.
-- **A copy of the arithmetic drifts.** `CutCheck` interpolated its halves' input itself, restarting each ramp from the
-  exact previous sample where the engine accumulates, so it differed from the uncut circuit's steps by roundoff
-  though its comment said "exactly as the engine does". It now uses `LinearOversampler`, so it is exact.
 
 ## Open issues
 
@@ -573,5 +570,6 @@ Moving the oversampling out of the simulation loop:
   accuracy and aliasing (see Oversampling), and can now be added as another `Oversampler`. It would add latency (a
   linear-phase filter at 8× about 0.3–0.5 ms) that the plugin must report, and it wouldn't match LiveSPICE, so it
   belongs behind an option.
+- `CutCheck` still interpolates and averages on its own instead of using `LinearOversampler` and `RunSteps`.
 - The plugin's default oversampling is still 8×; 4× with its cap of 32 is nearly as accurate for about 40% less CPU,
   but hasn't been made the default.
