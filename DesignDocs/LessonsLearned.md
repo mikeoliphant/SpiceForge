@@ -558,6 +558,9 @@ Moving the oversampling out of the simulation loop:
   noise (Big Muff 18.7–18.8 µs per sample, Rat 7.6–7.7, Blues Breaker 3.0), and the smallest circuits at most about
   0.04 µs, within their run-to-run noise. The compiled engine keeps its step buffers between blocks, so it still
   allocates nothing.
+- **A copy of the arithmetic drifts.** `CutCheck` interpolated its halves' input itself, restarting each ramp from the
+  exact previous sample where the engine accumulates, so it differed from the uncut circuit's steps by roundoff
+  though its comment said "exactly as the engine does". It now uses `LinearOversampler`, so it is exact.
 
 A windowed-sinc oversampler (`SincOversampler`, `Resampling.Sinc` in `SchematicProcessorOptions`, `--resampling sinc`
 in the renderer, a toggle in the plugin):
@@ -608,6 +611,5 @@ in the renderer, a toggle in the plugin):
   won't compensate for it. A minimum-phase or shorter filter would cut it, at some cost in phase or rejection.
 - Sinc resampling is opt-in. Whether it should be the plugin's default (it doesn't match LiveSPICE, and adds latency)
   hasn't been decided.
-- `CutCheck` still interpolates and averages on its own instead of using `LinearOversampler` and `RunSteps`.
 - The plugin's default oversampling is still 8×; 4× with its cap of 32 is nearly as accurate for about 40% less CPU,
   but hasn't been made the default.
