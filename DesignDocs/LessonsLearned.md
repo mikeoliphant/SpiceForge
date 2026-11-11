@@ -608,6 +608,29 @@ in the renderer, a toggle in the plugin):
   `Math.Max(0, NaN)` is NaN, so every N=1 run "diverged". N=1 is now a pass-through with no latency. The study caught
   it because it runs N=1 too.
 
+The plugin's defaults (4×, a cap of 32, sinc) against LiveSPICE's (8×, a cap of 8, linear), on all 18 examples with an
+input, at 1 and 5 kHz against the 64× reference:
+
+| Circuit | 1 kHz error, LiveSPICE → plugin | 5 kHz error | 5 kHz aliasing | CPU µs per sample |
+| --- | --- | --- | --- | --- |
+| Pro Co Rat | −47 → −53 dB | −28 → −30 dB | −22 → −30 dB | 10.9 → 7.4 |
+| Marshall Blues Breaker | −54 → −63 dB | −30 → −39 dB | −48 → −59 dB | 3.8 → 2.5 |
+| Big Muff Pi | −30 → −46 dB | −25 → −41 dB | −36 → −71 dB | 25.2 → 14.6 |
+| Fender 5e3 | −37 → −58 dB | −25 → −37 dB | −28 → −38 dB | 38.4 → 25.2 |
+| Marshall JCM800 2203 Preamp | −32 → −61 dB | −25 → −44 dB | −23 → −27 dB | 21.2 → 12.1 |
+| Ibanez Tube Screamer TS-9 | −50 → −56 dB | −29 → −41 dB | −47 → −59 dB | 0.76 → 0.56 |
+| Boss Super Overdrive SD-1 | −48 → −52 dB | −31 → −38 dB | −47 → −50 dB | 1.37 → 1.11 |
+
+- **The plugin's defaults are better everywhere.** Error and aliasing improved, or stayed at an already negligible
+  level, on every circuit at both frequencies: 1 kHz error by 4 to 60 dB, 5 kHz error by 2 to 88 dB. The smallest
+  gains were the Rat and the Rockerverb at 5 kHz (about 2 to 4 dB), where Newton and the tubes' own error dominate.
+- **And cheaper on every circuit that's expensive.** 4× sinc cost 30 to 45% less than 8× linear on the large
+  circuits; only the tiniest (a passive RC, 0.13 → 0.15 µs) cost slightly more.
+- **8× sinc buys about 12 dB more**, as the 12 dB per doubling suggests (the Rat to −65 dB at 1 kHz, −46 dB at
+  5 kHz), for about 1.6× the CPU of 4× sinc: CPU, not accuracy, is the reason for the 4× default.
+- **An earlier sinc run at a cap of 8 misled.** There the Rat at 4× looked broken (−2 dB at 5 kHz); at the plugin's
+  cap of 32 it's better than LiveSPICE's default. Measure a default with all the settings that go with it.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was
