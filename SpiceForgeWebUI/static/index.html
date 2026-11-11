@@ -11,6 +11,10 @@
     <header class="toolbar">
       <span class="brand">SpiceForge</span>
       <button id="open" disabled title="Open a schematic (Ctrl+O)">Open…</button>
+      <button id="save" disabled title="Save (Ctrl+S)">Save</button>
+      <span class="separator"></span>
+      <button id="undo" disabled title="Undo (Ctrl+Z)">Undo</button>
+      <button id="redo" disabled title="Redo (Ctrl+Y)">Redo</button>
       <span class="separator"></span>
       <button id="zoom-out" title="Zoom out (−)">−</button>
       <span id="zoom" class="zoom">100%</span>
@@ -21,10 +25,12 @@
     <main class="canvas">
       <svg id="schematic" xmlns="http://www.w3.org/2000/svg">
         <g id="drawing"></g>
+        <g id="overlay"></g>
       </svg>
     </main>
     <footer class="statusbar">
       <span id="status">Connecting…</span>
+      <span id="selection" class="selection"></span>
       <span id="pointer" class="pointer"></span>
     </footer>
     <script type="module" src="app.js"></script>

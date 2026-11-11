@@ -791,6 +791,32 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   script using Node's built-in WebSocket, works and also reports console errors.
 - **npm now blocks install scripts by default.** npm 11.20 skipped esbuild's postinstall. The build works without it,
   since that script is only an optimization.
+- **Selecting and moving follow LiveSPICE's selection tool, and its geometry.** Rubber bands use `Wire.Intersects` and
+  `Element.Intersects`, and grid snapping rounds halves to even, as .NET's `Math.Round` does (JavaScript's rounds them
+  up). A scripted session on a copy of the Pro Co Rat checked each rule:
+  - a click selected one element, and a drag moved it live by whole grid steps;
+  - undo and redo restored and re-applied it, with the dirty marker following;
+  - a rubber band selected 12 elements, and Escape cleared them;
+  - a double-click selected all 9 resistors, and Ctrl+click toggled one off;
+  - a right-click in the middle of a drag cancelled it, leaving nothing to undo.
+  The saved file differed from the original by one line: R9's position, moved by (95, 50).
+- **Pointer capture retargets clicks.** Once the SVG captures the pointer on press, the browser aims the following
+  `click` and `dblclick` at the SVG itself, so double-click found no element. Hit-testing by
+  `document.elementFromPoint` works.
+- **A second button pressed during a drag isn't a `pointerdown`.** Pointer events report it as a "chorded"
+  `pointermove`, with the button in `buttons`. The right-click cancel listens for `mousedown` (which does fire) and
+  checks `buttons` in `pointermove`.
+- **Rotate and flip match LiveSPICE's own code, checked against it.** A throwaway program applied LiveSPICE's
+  `Element.RotateAround` and `FlipOver` to whole schematics, with the centre computed as
+  `SelectionTool.GetSelectionCenter` does (C#'s truncating division, then snapping). It compared the result with
+  the files the web editor saved after the same keys. The geometry was identical on every element: the Pro Co Rat
+  (105 elements) after Left, Up, and the Fender 5e3 (166) after Right, Right, Down, Left.
+- **LiveSPICE's flip disconnects symbols turned 90°.** `Symbol.FlipOver` mirrors the position over a horizontal line
+  but toggles the symbol's own flip, which mirrors its local y axis. For a symbol at an odd rotation that axis is
+  horizontal on screen, so the symbol mirrors left-right while its position mirrors top-bottom. On the Pro Co Rat
+  rotated once, a flip left 9 terminals unconnected, in LiveSPICE's own code as in the web editor. The web editor
+  matches it, so files behave the same in both, and the README says how to avoid it. Fixing it (flipping x
+  instead at odd rotations) would be a deliberate departure from LiveSPICE.
 
 ## Open issues
 

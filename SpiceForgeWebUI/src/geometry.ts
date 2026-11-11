@@ -79,6 +79,58 @@ export function pointOnSegment(x: Point, a: Point, b: Point): boolean {
   return inBox && (b[0] - a[0]) * (x[1] - a[1]) === (x[0] - a[0]) * (b[1] - a[1]);
 }
 
+/** LiveSPICE's editing grid, in schematic units. */
+export const Grid = 5;
+
+/** .NET's Math.Round: to the nearest integer, halves to even (JavaScript's Math.round sends halves up). */
+export function roundHalfEven(x: number): number {
+  const r = Math.round(x);
+  return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
+}
+
+/** SchematicControl.SnapToGrid. */
+export function snap([x, y]: Point): Point {
+  return [roundHalfEven(x / Grid) * Grid, roundHalfEven(y / Grid) * Grid];
+}
+
+/** A rectangle given by any two opposite corners, as LiveSPICE's InRect takes it. */
+export function normalize(a: Point, b: Point): Box {
+  return { min: [Math.min(a[0], b[0]), Math.min(a[1], b[1])], max: [Math.max(a[0], b[0]), Math.max(a[1], b[1])] };
+}
+
+/** Element.Intersects, for a symbol: its bounds overlap the rectangle. */
+export function boxIntersects(bounds: Box, rect: Box): boolean {
+  return !(bounds.min[0] > rect.max[0] || bounds.min[1] > rect.max[1] || bounds.max[0] < rect.min[0] || bounds.max[1] < rect.min[1]);
+}
+
+// Wire.Ccw and Wire.SegmentsIntersect.
+function ccw(a: Point, b: Point, c: Point): boolean {
+  return (c[1] - a[1]) * (b[0] - a[0]) >= (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+function segmentsIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
+  return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+}
+
+function pointInBox(x: Point, r: Box): boolean {
+  return r.min[0] <= x[0] && x[0] <= r.max[0] && r.min[1] <= x[1] && x[1] <= r.max[1];
+}
+
+/** Wire.Intersects: an end inside the rectangle, a corner on the wire, or the wire crossing an edge. */
+export function wireIntersects(w: WireElement, rect: Box): boolean {
+  const { min: x1, max: x2 } = rect;
+  if (pointInBox(w.a, rect) || pointInBox(w.b, rect)) return true;
+  if (pointOnSegment(x1, w.a, w.b) || pointOnSegment(x2, w.a, w.b)) return true;
+  const x2y1: Point = [x2[0], x1[1]];
+  const x1y2: Point = [x1[0], x2[1]];
+  return (
+    segmentsIntersect(w.a, w.b, x1, x2y1) ||
+    segmentsIntersect(w.a, w.b, x2, x2y1) ||
+    segmentsIntersect(w.a, w.b, x1, x1y2) ||
+    segmentsIntersect(w.a, w.b, x2, x1y2)
+  );
+}
+
 /** Whether a terminal at this schematic point is connected: some wire passes through it (Schematic.NodeAt). */
 export function onAnyWire(x: Point, wires: readonly WireElement[]): boolean {
   return wires.some((w) => pointOnSegment(x, w.a, w.b));

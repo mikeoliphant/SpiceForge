@@ -58,8 +58,11 @@ export interface Rendered {
   problems: string[];
 }
 
-/** Replaces the contents of `root` with the document's drawing. */
-export function renderDocument(root: SVGGElement, doc: SchematicDocument, layouts: LayoutCache): Rendered {
+/** LiveSPICE's selection colour, DodgerBlue. */
+const SelectedColor = "#1e90ff";
+
+/** Replaces the contents of `root` with the document's drawing, with the elements in `selected` drawn selected. */
+export function renderDocument(root: SVGGElement, doc: SchematicDocument, layouts: LayoutCache, selected: ReadonlySet<string> = new Set()): Rendered {
   root.replaceChildren();
   const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire");
   const symbols = doc.elements.filter((e): e is SymbolElement => e.kind === "symbol");
@@ -69,7 +72,7 @@ export function renderDocument(root: SVGGElement, doc: SchematicDocument, layout
   // Wires underneath, as LiveSPICE layers them.
   const wireLayer = el("g", { class: "wires" });
   for (const w of wires) {
-    wireLayer.append(drawWire(w));
+    wireLayer.append(drawWire(w, selected.has(w.id)));
     boxes.push({ min: [Math.min(w.a[0], w.b[0]), Math.min(w.a[1], w.b[1])], max: [Math.max(w.a[0], w.b[0]), Math.max(w.a[1], w.b[1])] });
   }
 
@@ -84,16 +87,20 @@ export function renderDocument(root: SVGGElement, doc: SchematicDocument, layout
     const m = mappingOf(s);
     const box = mapBox(m, layout.bounds);
     boxes.push(box);
-    symbolLayer.append(drawSymbol(s, layout, m, box, wires));
+    symbolLayer.append(drawSymbol(s, layout, m, box, wires, selected.has(s.id)));
   }
 
   root.append(wireLayer, symbolLayer);
   return { bounds: unionBoxes(boxes), problems };
 }
 
-function drawWire(w: WireElement): SVGGElement {
-  const g = el("g", { class: "wire" });
-  g.append(el("line", { x1: w.a[0], y1: w.a[1], x2: w.b[0], y2: w.b[1], stroke: EdgeColors.wire }));
+function drawWire(w: WireElement, isSelected: boolean): SVGGElement {
+  const g = el("g", { class: isSelected ? "wire selected" : "wire" });
+  g.dataset["id"] = w.id;
+  // A wider, invisible line over the wire, so it can be hit at any zoom.
+  g.append(el("line", { class: "hit", x1: w.a[0], y1: w.a[1], x2: w.b[0], y2: w.b[1] }));
+  // WireControl: DodgerBlue when selected; its end squares keep the wire colour.
+  g.append(el("line", { x1: w.a[0], y1: w.a[1], x2: w.b[0], y2: w.b[1], stroke: isSelected ? SelectedColor : EdgeColors.wire }));
   for (const [x, y] of [w.a, w.b])
     g.append(square([x, y], WireTerminalSize, EdgeColors.wire));
   return g;
@@ -103,8 +110,11 @@ function square([x, y]: Point, size: number, color: string): SVGRectElement {
   return el("rect", { x: x - size / 2, y: y - size / 2, width: size, height: size, fill: color, stroke: color, class: "terminal" });
 }
 
-function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wires: WireElement[]): SVGGElement {
-  const g = el("g", { class: s.component.unresolved || layout.message ? "symbol unresolved" : "symbol" });
+function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wires: WireElement[], isSelected: boolean): SVGGElement {
+  const classes = ["symbol"];
+  if (s.component.unresolved || layout.message) classes.push("unresolved");
+  if (isSelected) classes.push("selected");
+  const g = el("g", { class: classes.join(" ") });
   g.dataset["id"] = s.id;
 
   // A transparent box over the symbol, for hovering, and the dashed outline LiveSPICE draws when highlighted.
