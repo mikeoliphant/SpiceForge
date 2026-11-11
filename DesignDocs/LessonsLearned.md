@@ -276,6 +276,29 @@ Blues Breaker 3.9 vs 3.3, Rat 10.3 vs 9.6, Big Muff 24.2 vs 20.2.
   cap on hundreds of steps where LiveSPICE's caps on at most 10, with a clean noise control. Our own tight reference
   couldn't have shown that, since it runs the same Newton.
 
+## The low-rank rebuild that wasn't
+
+Every folded coefficient of an affected unknown is its static value plus that unknown's row of G·M (kl values, one
+per eliminated port) times a static column. So rebuilding the unknown could read only those kl live values, adding
+them times the eliminated ports' part from the inputs and their coupling to the solved terms, instead of reading every
+folded gain: LiveSPICE pull request 282's "keep the pot-leg block factored".
+
+- **It cut the reads and doubled the time.** On the Big Muff, live reads per step fell from 1,614 to 756, but the step
+  went from 18.9 to 33.4 µs (baked 15.7), and as slow with every live value inlined (31.7): the cost was structural.
+- **Folding cancels.** For affected unknowns, many static gains and G entries cancel exactly against the correction,
+  and the reduction holds those at zero. The low-rank form computes the static entries and the correction separately,
+  so it does both: 32% more expression nodes than baked (18,129 against 13,717), before, in and after the Newton
+  loop, and long sums that spill. Recomputing the port part after the loop instead of holding it across changed
+  nothing.
+- **What's left is small anyway.** Before trying it, the live-coefficient overhead was 14 to 21% of the step on the
+  large circuits (Big Muff 18.7 against 15.4 µs, Fender 5e3 23.9 against 20.8, Rat 7.65 against 6.66), and inlining
+  every live value made the dynamic step as fast as baked (15.25 against 15.66), so a fix can win at most that.
+- **Choosing per unknown finds almost nothing to choose.** Using the low-rank form only where its static entries plus
+  the two through products are fewer than the folded coefficients it replaces picked 1 of 55 affected unknowns on the
+  Big Muff, 1 of 46 on the Fender 5e3, and none on the Rat (37) or Blues Breaker (29). Every check passed, and the
+  step didn't get faster (Big Muff 19.6 µs, about as before): the folded rows are already the sparse form. The live
+  reads cost what they cost because they're reads, not because there are too many terms.
+
 ## Making dynamic pots the default
 
 - **Put loading in one place first.** Thirteen call sites each loaded, solved and extracted a schematic their own
@@ -639,9 +662,10 @@ input, at 1 and 5 kHz against the 64× reference:
 - The renderer can't use lookup tables yet, and tables aren't saved to disk.
 - Approximate cuts exist only as the `cut` experiment (see Stage segmentation). Gauss-Seidel, other black-box solvers
   and the C++ emitter haven't been started.
-- Live coefficient reads remain a cost on large circuits: the Big Muff's dynamic step is about 3 µs slower than baked
-  (18.5 against 15.7). Keeping the solved pot-leg block factored, as LiveSPICE pull request 282 does, might reduce the
-  live set further.
+- Live coefficient reads remain a cost on large circuits: 14 to 21% of the step (the Big Muff's is about 3 µs slower
+  than baked, 18.7 against 15.4). Keeping the pot-leg block factored doesn't help, for every affected unknown or chosen
+  per unknown (see The low-rank rebuild that wasn't): the folded coefficients are already the sparsest form, and
+  what's left is the cost of reading them.
 - Stage cuts across loaded devices (BJT bases, conducting tube grids) need a load model that includes the downstream
   stage's input device; `cut` has only no load and a linear load.
 - Our Newton is less robust than LiveSPICE's on the Fuzz Face (hundreds of capped steps against at most 10), even with
