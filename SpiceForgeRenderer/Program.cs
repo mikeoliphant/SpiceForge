@@ -8,8 +8,8 @@ using Expression = ComputerAlgebra.Expression;
 // Renders a WAV file through a LiveSPICE schematic. Each channel runs through its own copy of the circuit.
 // The input samples drive the schematic's Input component, and the output is the sum of its speakers,
 // both in LiveSPICE's normalized units, so a full-scale sample is the component's 0 dBFS voltage.
-// Pots are runtime parameters by default, held at their schematic positions or those given with --pot;
-// --static-pots bakes them in instead.
+// Pots and switches are runtime parameters by default, held at their schematic positions or those given with --pot
+// and --switch; --switch-at moves a switch at a given time, exactly on that sample. --static-pots bakes them in instead.
 
 const int Oversample = 8;
 const int Iterations = 8;
@@ -19,6 +19,7 @@ string? engine = "compiled";
 bool dynamicPots = true;
 var potPositions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
 var switchPositions = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+var switchEvents = new List<(double Seconds, string Name, int Position)>();
 var positional = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
@@ -43,6 +44,17 @@ for (int i = 0; i < args.Length; i++)
             return Usage($"Expected --switch <name>=<position>, not '{setting}'.");
         switchPositions[setting[..equals]] = position;
     }
+    else if (args[i] == "--switch-at" && i + 1 < args.Length)
+    {
+        // TIME:NAME=POSITION, time in seconds.
+        string setting = args[++i];
+        int colon = setting.IndexOf(':'), equals = setting.LastIndexOf('=');
+        if (colon <= 0 || equals <= colon + 1
+            || !double.TryParse(setting[..colon], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double seconds)
+            || seconds < 0 || !int.TryParse(setting[(equals + 1)..], out int position))
+            return Usage($"Expected --switch-at <seconds>:<name>=<position>, not '{setting}'.");
+        switchEvents.Add((seconds, setting[(colon + 1)..equals], position));
+    }
     else if (args[i].StartsWith("--"))
         return Usage($"Unknown option '{args[i]}'.");
     else
@@ -52,6 +64,8 @@ if (positional.Count != 3)
     return Usage(null);
 if (engine != "compiled" && engine != "stock")
     return Usage($"Unknown engine '{engine}'.");
+if (switchEvents.Count > 0 && (engine != "compiled" || !dynamicPots))
+    return Usage("--switch-at needs the compiled engine with dynamic switches (not --engine stock or --static-pots).");
 
 string schematicPath = positional[0], inputPath = positional[1], outputPath = positional[2];
 
@@ -90,6 +104,15 @@ try
     if (switchPositions.Count > 0)
         Console.WriteLine("Switches: " + string.Join(", ", switchPositions.Select(p => $"{p.Key} {p.Value}")) + ".");
 
+    // Switch automation: each event's sample, checked against the circuit's switches before rendering.
+    var events = switchEvents.OrderBy(e => e.Seconds)
+        .Select(e => (Sample: (long)Math.Round(e.Seconds * sampleRate), e.Name, e.Position)).ToList();
+    foreach (var e in events)
+        DynamicSwitches.Set(new double[loaded.Parameters.Count], loaded.Parameters, e.Name, e.Position);
+    if (events.Count > 0)
+        Console.WriteLine("Switch automation: " + string.Join(", ", events.Select(e => $"{e.Name} {e.Position} at {e.Sample / (double)sampleRate:0.###} s")) + ".");
+    int nextEvent = 0;
+
     using var writer = new WaveFileWriter(outputPath, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
     var interleaved = new float[BlockSize * channels];
     var channelIn = new double[BlockSize];
@@ -105,11 +128,31 @@ try
         double[] blockIn = count == BlockSize ? channelIn : new double[count];
         double[] blockOut = count == BlockSize ? channelOut : new double[count];
 
+        // Split the block where switch events fall, so each takes effect on its own sample.
+        var cuts = new SortedSet<int> { 0, count };
+        for (int k = nextEvent; k < events.Count && events[k].Sample < frames + count; k++)
+            cuts.Add((int)Math.Max(0, events[k].Sample - frames));
+        int[] bounds = cuts.ToArray();
+
         for (int c = 0; c < channels; c++)
         {
             for (int n = 0; n < count; n++)
                 blockIn[n] = interleaved[n * channels + c];
-            processors[c].Run(blockIn, blockOut);
+            int k = nextEvent;
+            for (int part = 0; part + 1 < bounds.Length; part++)
+            {
+                int start = bounds[part], length = bounds[part + 1] - start;
+                for (; k < events.Count && events[k].Sample <= frames + start; k++)
+                    DynamicSwitches.Set(processors[c].Parameters!, loaded.Parameters, events[k].Name, events[k].Position);
+                if (bounds.Length == 2)
+                    processors[c].Run(blockIn, blockOut);
+                else
+                {
+                    double[] partOut = new double[length];
+                    processors[c].Run(blockIn.AsSpan(start, length).ToArray(), partOut);
+                    Array.Copy(partOut, 0, blockOut, start, length);
+                }
+            }
             for (int n = 0; n < count; n++)
             {
                 if (double.IsNaN(blockOut[n]) || double.IsInfinity(blockOut[n]))
@@ -118,6 +161,8 @@ try
                 peak = Math.Max(peak, Math.Abs(blockOut[n]));
             }
         }
+        while (nextEvent < events.Count && events[nextEvent].Sample < frames + count)
+            nextEvent++;
 
         writer.WriteSamples(interleaved, 0, count * channels);
         frames += count;
@@ -146,7 +191,7 @@ static Func<Processor> CompiledFactory(ExtractedSystem system, TransientSolution
     {
         var compiled = new CompiledCircuit(system, input, nodes, h, Oversample, Iterations, solution);
         double[][] buffers = Array.Empty<double[]>();
-        return new Processor((inputBlock, outputBlock) =>
+        return new Processor(compiled.ParameterValues, (inputBlock, outputBlock) =>
         {
             if (buffers.Length == 0 || buffers[0].Length != inputBlock.Length)
                 buffers = nodes.Select(_ => new double[inputBlock.Length]).ToArray();
@@ -169,7 +214,7 @@ static Func<Processor> StockFactory(TransientSolution solution, Expression input
     return () =>
     {
         var simulation = new Simulation(solution) { Oversample = Oversample, Iterations = Iterations, Input = new[] { input }, Output = new[] { output } };
-        return new Processor((inputBlock, outputBlock) => simulation.Run(inputBlock, outputBlock));
+        return new Processor(null, (inputBlock, outputBlock) => simulation.Run(inputBlock, outputBlock));
     };
 }
 
@@ -177,9 +222,10 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]...");
+    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]...");
     Console.Error.WriteLine("  --pot sets a pot, or a group of ganged pots, by name to a wiper position from 0 to 1. Repeat it for more pots.");
     Console.Error.WriteLine("  --switch sets a switch, or a group of ganged switches, to a position: the throw it connects (from 0), or 0/1 for on/off.");
+    Console.Error.WriteLine("  --switch-at TIME:NAME=POSITION moves a switch at TIME seconds, exactly on that sample. Repeat it for more changes.");
     Console.Error.WriteLine("  --static-pots bakes pots and switches in instead of making them runtime parameters.");
     return 2;
 }
@@ -188,6 +234,16 @@ static int Usage(string? problem)
 sealed class Processor
 {
     private readonly Action<double[], double[]> run;
-    public Processor(Action<double[], double[]> run) => this.run = run;
+
+    /// <summary>The engine's runtime parameter values (pots, then switch contacts), or null for LiveSPICE's own engine.
+    /// Changes take effect from the next Run.</summary>
+    public double[]? Parameters { get; }
+
+    public Processor(double[]? parameters, Action<double[], double[]> run)
+    {
+        Parameters = parameters;
+        this.run = run;
+    }
+
     public void Run(double[] input, double[] output) => run(input, output);
 }

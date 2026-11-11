@@ -93,7 +93,10 @@ public static class DynamicSwitches
                 found = true;
             }
         if (!found)
-            throw new ArgumentException($"No dynamic switch named '{nameOrGroup}'.");
+        {
+            string[] names = parameters.OfType<SwitchParameter>().Select(c => c.Switch).Distinct().ToArray();
+            throw new ArgumentException($"No dynamic switch named '{nameOrGroup}'. The switches are: {(names.Length == 0 ? "(none)" : string.Join(", ", names))}.");
+        }
     }
 
     private static void Replace(Circuit.Circuit circuit, string prefix, List<SwitchParameter> parameters, Dictionary<string, SwitchParameter[]> groups)
