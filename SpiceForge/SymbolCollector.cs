@@ -77,6 +77,10 @@ internal sealed class ExpArguments : ExpressionVisitor<bool>
     protected override bool VisitMatrix(Matrix A) => VisitAll(A);
     protected override bool VisitCall(Call F)
     {
+        // An exponential inside a logarithm is a softplus, ln(1 + e^x) (the tube models' Ln1Exp): it grows only
+        // linearly, so Newton doesn't overshoot on it the way it does on a p-n junction's bare e^x.
+        if (F.Target.Name == "Ln")
+            return true;
         if (F.Target.Name == "Exp" && F.Arguments.Count() == 1)
             arguments.Add(F.Arguments.First());
         return VisitAll(F.Arguments);

@@ -253,9 +253,11 @@ Blues Breaker 3.9 vs 3.3, Rat 10.3 vs 9.6, Big Muff 24.2 vs 20.2.
   12 minutes to about a minute.
 - **Have a quick subset for iteration.** Six circuits (`--quick`) cover the main structures: one diode pair, free
   unknowns, a large circuit, high gain, and linear only.
-- **Know which failures are already there.** The Unstable folder (Fuzz Face, Orange Squeezer, Triode stage) fails
-  with pots baked in too, and the Rat's high-drive settings hit the iteration cap either way. Compare against
-  earlier runs before calling something a regression.
+- **Know which failures are already there.** Compare against earlier runs before calling something a regression.
+  Since the tight DC start and junction limiting, the only standing failure in `dynamic`, `livespice`, `jit` and
+  `segment` is the Triode stage, which LiveSPICE itself can't solve. Before them the whole Unstable folder (Fuzz Face,
+  Orange Squeezer, Triode stage) failed with pots baked in too, and the Rat's high-drive settings hit the iteration
+  cap either way; the Rat still caps 24 steps in its sweep.
 - **Know what each reference can and can't catch.** The tightly converged reference is our own engine with a far
   stricter stopping rule. It shares our extraction and discretization, so it only measures Newton stopping error:
   a bug in `Extractor` or in the BDF2 history would show up in it too. LiveSPICE's own `Simulation` is the only
@@ -267,8 +269,11 @@ Blues Breaker 3.9 vs 3.3, Rat 10.3 vs 9.6, Big Muff 24.2 vs 20.2.
 - **Converge both sides, and an independent reference becomes precise.** `livespice` mode runs LiveSPICE's own
   solver (the instrumented copy, with the pull request 284 fix, 1e-10 tolerance and up to 100 iterations) against
   our dynamic engine at the same tolerance, at four pot settings including both end stops. Every circuit in
-  `Circuits` and `Examples` agrees to −147 dB or better, most to −170 to −250 dB. Even the Rat agrees to −170 dB:
-  once neither side has stopping error or the stale-values bug, its sensitivity no longer matters.
+  `Circuits` and `Examples` agrees to −110 dB or better, most to −170 to −250 dB. Even the Rat agrees to −170 dB:
+  once neither side has stopping error or the stale-values bug, its sensitivity no longer matters. The outliers are
+  the Blues Breaker with its pots at 0 (−111 and −124 dB, against a −240 dB control) and the Rockerverb at all 0
+  (−141 dB), so they are real if tiny differences, not sensitivity. (This read −147 dB or better before; the Blues
+  Breaker was already at −111 dB then.)
 - **Keep the reference's changes opt-in and verifiable.** The copy's tolerances and the fix default to stock, and the
   capture tool still confirms it is bit-identical to stock `Simulation` with those defaults. The project references
   only LiveSPICE, so the reference can't reach our code.
@@ -654,6 +659,101 @@ input, at 1 and 5 kHz against the 64× reference:
 - **An earlier sinc run at a cap of 8 misled.** There the Rat at 4× looked broken (−2 dB at 5 kHz); at the plugin's
   cap of 32 it's better than LiveSPICE's default. Measure a default with all the settings that go with it.
 
+## The DC start
+
+Measured with `livespice` (every circuit, four pot settings, 0.5 and 5.0 input, both sides at 1e-10 and a cap of 100)
+and `dynamic`.
+
+- **LiveSPICE's DC solve is loose, and the two sides stop in different places.** NSolve's default stops when the
+  squared residual is under 1e-12·N, which on the Fuzz Face leaves junction voltages about 1e-5 V from the solution.
+  Ours solves equations with the pots as parameters, LiveSPICE's has them baked in, so the iterates differ and each
+  stops at a different point within that tolerance (Fuzz Face `_v7`: −4.62263 against −4.62246). That alone failed
+  the Fuzz Face at schematic and all-0 settings (−93 and −82 dB, worst at sample 0, against a −242 dB control).
+  Handing LiveSPICE's DC point to ours took both to −215 and −219 dB.
+- **So the DC start is now solved to 1e-12** (`Extractor.SteadyStateTolerance`), falling back to the default for a
+  partition that doesn't converge that tightly (two 45-unknown partitions do). The `livespice` reference does the
+  same with LiveSPICE's own DC system, built only from LiveSPICE's API, so the check compares like with like.
+  It's the same root, refined, not a different operating point.
+- **The loose start costs real start-up error.** With only our side tight, the loose LiveSPICE start was −20 dB
+  from it on the Phase 90 with its pots at 0, and −50 to −95 dB on most other circuits. Against our tightly
+  converged sweep, the tight start took the Cry Baby from −105 to −169 dB and the Rockerverb from −84 to −147 dB,
+  and the Fuzz Face sweep from 1,711 capped steps to 342. Every other circuit stayed within 2 dB, and `processor`,
+  `switches`, `rejection`, `jit` and `segment` are unchanged (the last two still fail only on the Orange Squeezer,
+  as before; junction limiting later fixed both, see SPICE's junction limiting).
+- **Many of the Fuzz Face's capped steps came from the start, not from Newton.** Given LiveSPICE's DC point, ours
+  capped 9 steps at schematic/5.0 against LiveSPICE's 10, where it had capped 250. That's not uniform: all-1/5.0
+  went from 291 to 385.
+- **The last Fuzz Face failure is a limit cycle in an ill-conditioned step.** At all 0.3, the first step of sample 1
+  moves Q2's base-collector junction from −3.9 to −0.97 V (LiveSPICE does the same), and the next step's first
+  Newton update overshoots to +1.9 V, past LinExpm1's knee at 50·Vt. There the junction's slope is e⁵⁰, about
+  1e24 times the other entries, and our iterates repeat every 49 iterations without converging. LiveSPICE, solving
+  the same system in different variables, escapes in 50. Both are at the mercy of rounding there.
+- **Junction limiting fixes it there and breaks tube amps.** `JunctionLimit` 10 (or 4) after 3 iterations took
+  the Fuzz Face to 0 problems (all 0.3 / 0.5 from +77 to −214 dB, 0 capped steps), and with the tight start a limit
+  of 4 no longer breaks it at power-up. But it took the JCM2000 at 5.0 input from −155 to −44 and −25 dB, and the
+  Rockerverb at all 1 / 5.0 from −191 to −29 dB. Limiting only after 10 iterations made the Fuzz Face far worse
+  (tens of thousands of capped steps). See SPICE's junction limiting, below, for what fixed both.
+- **The tube amps' capped steps in `livespice` are a roundoff floor, not divergence.** The JCM2000 at all 0
+  capped 3,618 steps against LiveSPICE's 0, yet agrees to −170 dB. Newton converges quadratically (1e-4, 6e-10,
+  3e-12) and then wanders randomly at about 1e-10 on a node at 0.038 V, just above that check's 1e-10·|v| + 1e-12
+  test. That's about 1e4 ulps of the 60 V of terms the node is rebuilt from. At the shipping tolerance it can't
+  show.
+
+## SPICE's junction limiting
+
+Two changes, first tried in the interpreter, now the default in both engines. Measured with `livespice` and with a throwaway harness: 0.5 s of a 440 Hz sine
+at 0.1, 0.5 and 1.0 input, at 4× and at the default tolerance, with caps of 8, 32 and 100. It counted capped steps
+and the error against our own run at 1e-10 and 100 iterations, with the limit off and on.
+
+- **The tube amps were limited because of their softplus terms.** The triode's grid and cathode currents are
+  `Ln1Exp(x) = ln(1 + eˣ)` of an argument linear in the ports, so `JunctionLimit`'s detector took them for junctions.
+  A softplus grows only linearly, so Newton doesn't overshoot on it. `ExpArguments` now skips exponentials inside a
+  logarithm, and no tube port is limited at all (JCM2000 and Rockerverb: 0 of 20). BJTs and diodes keep theirs: the
+  Fuzz Face's 4 junction ports at 39.4 per volt (1/Vt), the Big Muff's 10 at 39.4 and 22.5 (a diode with n ≈ 1.75).
+- **That fixed `livespice`, not the shipping settings.** With the tubes excluded, `JunctionLimit` 10 after 3
+  iterations left `livespice` at 1 problem (the Triode stage) and changed no other circuit. A limit of 4 broke the
+  JFET at 5.0 input (−230 → −31 dB). But at 4×, a cap of 32 and the default tolerance it sent the Fuzz Face
+  non-finite at 0.5 and 1.0 input (78,403 and 86,965 capped steps, from 10 and 141), and at a cap of 8 at every level.
+  The 0.5 V step limit did the same. At 8× it does help at a cap of 32 (256/305/92 → 0/0/161), which is what the
+  earlier experiment measured: at 4× the steps are larger, a limited Newton runs out of iterations partway, and
+  the next step starts badly.
+- **Limit the way SPICE does: per junction, only past a critical voltage, logarithmically.** `JunctionCritical`
+  is pnjlim in units of the exponent. For each port that alone sets an exponential's argument x = s·w + c, it
+  compresses a move that takes x past the critical value by more than 2 to x_old + ln(1 + Δx), or to ln(x_new)
+  from reverse bias. Ordinary moves are untouched, however large, and a limited iteration doesn't count as
+  converged. At 4×, a critical value of 30 and limiting from the first iteration:
+  - The Fuzz Face at a cap of 32: 257/10/141 capped steps to 0/0/0. At a cap of 8: about 93,000 to 580–660, finite
+    at every level.
+  - Across every circuit at a cap of 32: capped steps went from 543 to 29, and none got worse. The Common Emitter
+    amplifier at 1.0 went from −65.6 to −189.0 dB, the Orange Squeezer from −45 to −206 dB, and the Rat at 1.0 from
+    58 capped steps to 29. Every tube amp was bit-identical; the Wien bridge moved by 1 dB.
+  - At a cap of 8: 194,638 capped steps to 5,793, mostly better (Orange Squeezer +10 → −67 dB, Common Emitter
+    −27 → −42 dB). Two small losses: the Op-Amp Model at 1.0 (−52 → −39 dB) and the Rat at 0.5 (−26 → −23 dB).
+  - `livespice`: 1 problem (the Triode stage). The Fuzz Face at all 0.3 / 0.5 went from +76.5 to −213.7 dB with 0
+    capped steps, and nothing else changed status.
+- **30 is the critical value, with little margin below it.** At 25 the limit acts in normal operation: the Op-Amp
+  Model at a cap of 32 fell from −160 to −107 dB and the Rat at 0.5 from −158 to −102 dB. At 40 it caught less (149
+  capped steps left at a cap of 32, against 29). SPICE's vcrit for a 1e-14 A junction is about 28 Vt. 30 is only
+  about 5 Vt above where the Op-Amp Model's transistors normally run.
+- **Now the default, in both engines, bit for bit.** `JunctionCritical` defaults to 30, and `CompiledCircuit` emits
+  the same operations, unrolled over the junction ports it finds at build time. A circuit with no junction port (every
+  tube amp) gets no extra code. `jit` agrees with the interpreter to −∞ dB with the same iteration counts on all 51
+  circuits. All the references that run our own engine (the tight sweep, `livespice`'s side) now limit too.
+- **It fixed most of the Unstable folder, not just the Fuzz Face.** Measured after the change, with the tight
+  reference cache refreshed:
+  - `dynamic`: 26 problems to 1 (the Triode stage, which LiveSPICE can't solve). The Fuzz Face's 15 mismatches
+    between dynamic and baked pots are gone.
+  - Sweeps against the tight reference: Fuzz Face +114 → −41 dB (342 → 88 capped steps), Orange Squeezer +105 →
+    −37 dB (23 → 1), Rat −45 → −55 dB (90 → 24). Every other circuit's sweep was unchanged.
+  - `segment`: from 2 failures (the Orange Squeezer) to none. `jit`: from 1 failure to none. The Orange Squeezer's
+    compiled run had diverged against stock LiveSPICE (∞, 44.7 µs per sample); it now runs at 5.7 µs and is −36 dB
+    from stock.
+  - `livespice`: 1 problem (the Triode stage). `processor`, `switches` and `rejection`: still 0 problems.
+- **It costs 0 to 5% on circuits with junctions, and nothing on the others.** Compiled µs per sample from single
+  `jit` runs: Big Muff 14.33 → 14.66, Phase 90 20.17 → 20.76, Rat 5.75 → 6.02, the tube amps within noise. The
+  Fuzz Face got faster (1.76 → 1.10), since it no longer spends its iterations walking back from overshoots. The
+  oversampling study's table (see Oversampling) predates this and wasn't rerun.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was
@@ -668,11 +768,16 @@ input, at 1 and 5 kHz against the 64× reference:
   what's left is the cost of reading them.
 - Stage cuts across loaded devices (BJT bases, conducting tube grids) need a load model that includes the downstream
   stage's input device; `cut` has only no load and a linear load.
-- Our Newton is less robust than LiveSPICE's on the Fuzz Face (hundreds of capped steps against at most 10), even with
-  the extrapolated guess and restart. Limiting junction ports in units of their exponent, as a fallback at a cap of 32,
-  cuts its capped steps without touching the tube amps (see Limiting Newton's steps), but only in the interpreter, and
-  it can't help at a cap of 8, where the power-up transient needs more limited iterations; starting from a better DC
-  solution, or an unlimited first few steps, might. The Phase 90's sweep also has capped steps that aren't explained.
+- SPICE-style junction limiting (see SPICE's junction limiting) closed the Fuzz Face's robustness gap with
+  LiveSPICE, but its critical value of 30 has a thin margin at the Op-Amp Model (25 already hurts it), and at a cap
+  of 8 it costs that circuit at 1.0 input (−52 → −39 dB) and the Rat at 0.5 (−26 → −23 dB). A critical value
+  per junction, from its saturation current as SPICE's vcrit is, would be the principled fix; the models don't
+  expose Is to the extractor today. The Fuzz Face still caps 88 steps in the `dynamic` sweep.
+- The Phase 90's sweep has capped steps (about 6,200) that aren't explained, and junction limiting doesn't touch them;
+  in `livespice` it caps none at 100 iterations.
+- The Blues Breaker with its pots at 0 is −111 dB from LiveSPICE at 5.0 input, with both sides tightly converged and a
+  −246 dB control: a small, deterministic difference, not yet looked into. A pot at an end stop (a near-zero leg)
+  is the likely place to start.
 - Lookup tables over a pot need recordings that sweep it (`--sweep`), and are built in the table's bounding box, so
   thousands of corner points the circuit never reaches don't converge (harmlessly, so far).
 - A switch that shifts a bias (the JCM2000's OD1/OD2) still pops with a 5 ms ramp, only 5 to 7 dB less; a longer ramp,

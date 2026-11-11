@@ -54,6 +54,10 @@ These didn't contribute code, but they contributed understanding that went direc
   for the N-port, port-reduced approach. Reading its code generation led to extrapolating Newton's starting guess
   (20 to 45% faster on most real circuits), unrolling the small Newton solve into locals, and paying attention to
   register pressure; its junction limiting prompted the step-limiting experiments.
+- Berkeley SPICE3's junction voltage limiting, `DEVpnjlim` in `devsup.c` (carried on in
+  [ngspice](https://ngspice.sourceforge.io/)): limiting each p-n junction only once it is pushed past a critical
+  voltage, vt·ln(vt/(√2·Is)), and then compressing the move logarithmically. `JunctionCritical` is the same rule in
+  units of the junction's exponent. It fixed the Fuzz Face where scaling the whole Newton step did not.
 - [LiveSPICE pull request 284](https://github.com/dsharlet/LiveSPICE/pull/284), "Evaluate the solutions after Newton's
   method with the updated values", by jopdorp: describes the stale cached values LiveSPICE uses after Newton, which
   we had reproduced exactly while matching it. That confirmed it was a real error, led to exact rebuild becoming the

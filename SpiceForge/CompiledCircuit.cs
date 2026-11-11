@@ -159,6 +159,7 @@ public sealed class CompiledCircuit
         private static readonly MethodInfo SolveStep = typeof(CircuitInterpreter).GetMethod(
             nameof(CircuitInterpreter.SolveLinearStep), BindingFlags.Static | BindingFlags.NonPublic)!;
         private static readonly MethodInfo Abs = typeof(Math).GetMethod(nameof(Math.Abs), new[] { typeof(double) })!;
+        private static readonly MethodInfo Log = typeof(Math).GetMethod(nameof(Math.Log), new[] { typeof(double) })!;
 
         private readonly CircuitInterpreter plan;
         private readonly ExtractedSystem system;
@@ -625,6 +626,8 @@ public sealed class CompiledCircuit
                         .Select(g => Local(LinqExpr.ArrayIndex(LinqExpr.Constant(stepSolution), LinqExpr.Constant(kn + g)))).ToArray();
                 }
 
+                ParameterExpression? limited = EmitLimitJunctions(w, next, N, kn, spent, iteration);
+
                 var linearized = new LinqExpr?[TN.Length];
                 for (int c = 0; c < TN.Length; c++)
                 {
@@ -647,6 +650,8 @@ public sealed class CompiledCircuit
                 }
                 if (TN.Length == 0)
                     code.Add(LinqExpr.Assign(done, LinqExpr.Constant(true)));
+                if (limited != null)
+                    code.Add(LinqExpr.AndAssign(done, LinqExpr.Not(limited)));
 
                 for (int j = 0; j < kn; j++)
                     code.Add(LinqExpr.Assign(w[j], next[j]));
@@ -692,6 +697,50 @@ public sealed class CompiledCircuit
             foreach (int i in required.Union(tracked).OrderBy(i => i))
                 code.Add(LinqExpr.Assign(Element(y, i), current.TryGetValue(i, out ParameterExpression? done) ? done : Rebuild(i, finalQ, z)));
             code.Return(result);
+        }
+
+        // CircuitInterpreter.LimitJunctions, unrolled over the ports that set a junction's exponent: the same operations
+        // in the same order. Returns the flag a limited iteration sets, or null when nothing is limited.
+        private ParameterExpression? EmitLimitJunctions(ParameterExpression[] w, ParameterExpression[] next, int[] N, int kn, ParameterExpression spent, ParameterExpression iteration)
+        {
+            double critical = plan.JunctionCritical;
+            int[] ports = Enumerable.Range(0, kn).Where(j => plan.junctionSign[N[j]] != 0).ToArray();
+            if (critical <= 0 || ports.Length == 0)
+                return null;
+
+            ParameterExpression limited = code.DeclInit<bool>("limited", false);
+            var body = new List<LinqExpr>();
+            foreach (int j in ports)
+            {
+                LinqExpr s = LinqExpr.Constant(plan.junctionSign[N[j]]);
+                LinqExpr c = LinqExpr.Constant(plan.junctionOffset[N[j]]);
+                LinqExpr crit = LinqExpr.Constant(critical);
+                ParameterExpression before = code.Decl<double>($"junctionBefore{j}");
+                ParameterExpression after = code.Decl<double>($"junctionAfter{j}");
+                ParameterExpression a = code.Decl<double>($"junctionA{j}");
+                body.Add(LinqExpr.Assign(before, LinqExpr.Add(LinqExpr.Multiply(s, w[j]), c)));
+                body.Add(LinqExpr.Assign(after, LinqExpr.Add(LinqExpr.Multiply(s, next[j]), c)));
+                LinqExpr limitedX = LinqExpr.Condition(
+                    LinqExpr.GreaterThan(before, LinqExpr.Constant(0.0)),
+                    LinqExpr.Block(
+                        LinqExpr.Assign(a, LinqExpr.Add(LinqExpr.Constant(1.0), LinqExpr.Subtract(after, before))),
+                        LinqExpr.Condition(LinqExpr.GreaterThan(a, LinqExpr.Constant(0.0)),
+                            LinqExpr.Add(before, LinqExpr.Call(Log, a)), crit)),
+                    LinqExpr.Call(Log, after));
+                // if (!(after <= critical || |after - before| <= 2)), as the interpreter's continue: NaN limits too.
+                body.Add(LinqExpr.IfThen(
+                    LinqExpr.Not(LinqExpr.OrElse(
+                        LinqExpr.LessThanOrEqual(after, crit),
+                        LinqExpr.LessThanOrEqual(LinqExpr.Call(Abs, LinqExpr.Subtract(after, before)), LinqExpr.Constant(2.0)))),
+                    LinqExpr.Block(
+                        LinqExpr.Assign(next[j], LinqExpr.Divide(LinqExpr.Subtract(limitedX, c), s)),
+                        LinqExpr.Assign(limited, LinqExpr.Constant(true)))));
+            }
+            LinqExpr all = LinqExpr.Block(body);
+            if (plan.StepLimitAfter > 0)
+                all = LinqExpr.IfThen(LinqExpr.GreaterThan(LinqExpr.Add(spent, iteration), LinqExpr.Constant(plan.StepLimitAfter)), all);
+            code.Add(all);
+            return limited;
         }
 
         // CircuitInterpreter.SolveSmall, unrolled on locals: the same operations in the same order.

@@ -193,6 +193,32 @@ public sealed class CircuitInterpreter
                         }
                     }
                 }
+            // For JunctionCritical: an exponential whose argument is s·w + c in one port alone.
+            junctionSign = new double[k];
+            junctionOffset = new double[k];
+            Arrow[] atZero = pivots.Select(p => Arrow.New(p, 0)).ToArray();
+            foreach (Expression term in system.Nonlinear)
+                foreach (Expression argument in ExpArguments.Collect(term))
+                {
+                    Dictionary<Expression, Expression> slope = argument.Gradient(pivots);
+                    int[] used = Enumerable.Range(0, k).Where(p => !slope[pivots[p]].EqualsZero()).ToArray();
+                    if (used.Length != 1 || slope[pivots[used[0]]].DependsOn(pivots))
+                        continue;
+                    try
+                    {
+                        double s = (double)slope[pivots[used[0]]];
+                        double c = (double)argument.Evaluate(atZero);
+                        if (Math.Abs(s) > Math.Abs(junctionSign[used[0]]))
+                        {
+                            junctionSign[used[0]] = s;
+                            junctionOffset[used[0]] = c;
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // Not a number (it reads a runtime parameter, say): leave the port unlimited.
+                    }
+                }
             parameterSymbols = system.RuntimeParameters.Select(r => Array.IndexOf(nonlinearSymbols, (Expression)r.Symbol)).ToArray();
 
             // When every term is linear in the ports (only pot legs, say), one Newton step is exact.
@@ -1178,6 +1204,8 @@ public sealed class CircuitInterpreter
                 if (scale < 1)
                     damped = Damp(scale, kn, N);
             }
+            if (JunctionCritical > 0 && spent + iteration > StepLimitAfter)
+                damped |= LimitJunctions(kn, N);
 
             for (int c = 0; c < TN.Length; c++)
             {
@@ -1231,6 +1259,51 @@ public sealed class CircuitInterpreter
             }
         }
     }
+
+    // SPICE's pnjlim, in units of each junction's exponent x = s·w + c: a move that takes x past JunctionCritical by
+    // more than 2 is compressed to x_old + ln(1 + Δx) (or to ln(x_new) from below 0), port by port. Moves below the
+    // critical value, and ports that drive no junction of their own, are left alone.
+    private bool LimitJunctions(int kn, int[] N)
+    {
+        bool limited = false;
+        for (int j = 0; j < kn; j++)
+        {
+            int p = N[j];
+            double s = junctionSign[p];
+            if (s == 0)
+                continue;
+            double before = s * w[p] + junctionOffset[p];
+            double after = s * reducedSolution[j] + junctionOffset[p];
+            if (after <= JunctionCritical || Math.Abs(after - before) <= 2)
+                continue;
+            double limitedX;
+            if (before > 0)
+            {
+                double a = 1 + (after - before);
+                limitedX = a > 0 ? before + Math.Log(a) : JunctionCritical;
+            }
+            else
+                limitedX = Math.Log(after);
+            reducedSolution[j] = (limitedX - junctionOffset[p]) / s;
+            limited = true;
+        }
+        return limited;
+    }
+
+    /// <summary>
+    /// SPICE-style junction limiting (pnjlim), in units of the exponent: a port that alone sets an exponential's argument
+    /// x (a BJT's or diode's V/(n·Vt)) may not jump past this x in one iteration; the move is compressed logarithmically
+    /// instead, and the iteration doesn't count as converged. A softplus, ln(1 + eˣ) (a tube's grid or cathode), isn't
+    /// a junction and isn't limited. About 28 is SPICE's vcrit for a 1e-14 A junction; 30 leaves normal operation alone
+    /// on the test circuits (25 doesn't) and removes nearly all of the Fuzz Face's capped steps. 0 doesn't limit.
+    /// Compiled circuits read it when they are built.
+    /// </summary>
+    public double JunctionCritical { get; set; } = 30;
+
+    // For JunctionCritical: each port's slope and offset in the argument of an exponential that depends on it alone
+    // (0 slope: the port isn't limited).
+    internal readonly double[] junctionSign = Array.Empty<double>();
+    internal readonly double[] junctionOffset = Array.Empty<double>();
 
     // Scales this iteration's step (the new ports and free unknowns, from the current ones) by scale.
     private bool Damp(double scale, int kn, int[] N)

@@ -88,7 +88,7 @@ internal static class LiveSpiceCheck
             if (setting.Wipe is double wipe)
                 foreach (IPotControl pot in PotsOf(theirs))
                     pot.PotValue = wipe;
-            TransientSolution solution = TransientSolution.Solve(theirs.Analyze(), h);
+            TransientSolution solution = TightSteadyState(theirs.Analyze(), TransientSolution.Solve(theirs.Analyze(), h));
             Expression input = theirs.Components.OfType<Input>().Select(i => Component.DependentVariable(i.Name, Component.t)).DefaultIfEmpty("V[t]").Single();
             // Only nodes LiveSPICE's own equations determine: one that only an open switch contact touches appears in no
             // equation once open contacts are infinite, so it is undetermined, and LiveSPICE reports 0 for it where ours
@@ -130,6 +130,45 @@ internal static class LiveSpiceCheck
             }
         }
         return problems;
+    }
+
+    /// <summary>
+    /// LiveSPICE's solution with its DC start solved to <see cref="Extractor.SteadyStateTolerance"/>, as ours is, rather
+    /// than to NSolve's default. With the default, the two sides stop at different points within its tolerance (the
+    /// equations differ: ours has the pots as parameters), and the Fuzz Face's start-up alone misses the threshold. The
+    /// DC system is built as TransientSolution.Solve builds it, from LiveSPICE alone; a partition that doesn't converge
+    /// this tightly keeps LiveSPICE's own start.
+    /// </summary>
+    private static TransientSolution TightSteadyState(Analysis analysis, TransientSolution solution)
+    {
+        Variable t = Component.t;
+        List<Equal> mna = analysis.Equations.ToList();
+        List<Expression> y = analysis.Unknowns.ToList();
+        var globals = new DynamicNamespace();
+        globals.Add("T", solution.TimeStep);
+        globals.Add(ExprFunction.New("d", Call.If((0 <= t) & (t < solution.TimeStep), 1, 0), t));
+        globals.Add(ExprFunction.New("u", Call.If(t >= 0, 1, 0), t));
+        mna = mna.Resolve(analysis).Resolve(globals).OfType<Equal>().ToList();
+        List<Expression> dy_dt = y.Where(i => mna.Any(j => j.DependsOn(Call.D(i, t)))).Select(i => Call.D(i, t)).ToList();
+        var dc = new SystemOfEquations(mna
+            .Substitute(dy_dt.Select(i => Arrow.New(i, 0)).Append(Arrow.New(t, 0), Arrow.New(Component.T, 0), SinglePoleSwitch.IncludeOpen))
+            .Substitute(analysis.InitialConditions)
+            .OfType<Equal>(), y.Select(j => j.Substitute(t, 0)));
+
+        var initial = solution.InitialConditions.ToDictionary(a => a.Left, a => a);
+        foreach (SystemOfEquations partition in dc.Partition())
+        {
+            try
+            {
+                foreach (Arrow a in partition.Equations.Select(j => Equal.New(j, 0))
+                             .NSolve(partition.Unknowns.Select(j => Arrow.New(j, 0)), Extractor.SteadyStateTolerance, 64))
+                    initial[a.Left] = a;
+            }
+            catch (Exception)
+            {
+            }
+        }
+        return new TransientSolution(solution.TimeStep, solution.Solutions, initial.Values);
     }
 
     private static (double[][] Outputs, int Capped) RunLiveSpice(TransientSolution solution, Expression input, Expression[] nodes, double[] signal)

@@ -62,6 +62,14 @@ public static class Extractor
         return system;
     }
 
+    /// <summary>
+    /// The DC start's NSolve tolerance. LiveSPICE's default (1e-6, on the residual) stops far enough from the solution
+    /// that high-gain circuits start up differently depending on how the equations are written (pots baked or
+    /// dynamic), and up to −20 dB from the true start (the Phase 90 with its pots at 0). A partition that doesn't
+    /// converge this tightly falls back to the default.
+    /// </summary>
+    public const double SteadyStateTolerance = 1e-12;
+
     private static Arrow[] SolveSteadyState(Analysis analysis, List<Equal> mna, List<Expression> y, List<Expression> dy_dt, Arrow[] parameterValues)
     {
         var initial = new List<Arrow>();
@@ -73,9 +81,18 @@ public static class Extractor
 
         foreach (SystemOfEquations partition in dc.Partition())
         {
+            List<Equal> equations = partition.Equations.Select(j => Equal.New(j, 0)).ToList();
             try
             {
-                initial.AddRange(partition.Equations.Select(j => Equal.New(j, 0)).NSolve(partition.Unknowns.Select(j => Arrow.New(j, 0))));
+                initial.AddRange(equations.NSolve(partition.Unknowns.Select(j => Arrow.New(j, 0)), SteadyStateTolerance, 64));
+                continue;
+            }
+            catch (Exception)
+            {
+            }
+            try
+            {
+                initial.AddRange(equations.NSolve(partition.Unknowns.Select(j => Arrow.New(j, 0))));
             }
             catch (Exception)
             {
