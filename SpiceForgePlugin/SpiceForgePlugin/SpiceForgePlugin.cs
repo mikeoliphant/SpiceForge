@@ -62,6 +62,9 @@ namespace SpiceForgePlugin
         /// <summary>Bumped whenever <see cref="CurrentProcessor"/> or <see cref="Status"/> changes.</summary>
         public int Version => Volatile.Read(ref version);
 
+        /// <summary>Whether a build has been started and hasn't finished (succeeded or failed) yet.</summary>
+        public bool IsBuilding => Volatile.Read(ref finishedRequest) != Volatile.Read(ref buildRequest);
+
         DoubleAudioIOPort stereoInput;
         DoubleAudioIOPort stereoOutput;
 
@@ -79,6 +82,8 @@ namespace SpiceForgePlugin
         // before swapping in.
         readonly object buildLock = new object();
         int buildRequest;
+        // The last request that finished, or needed no build; IsBuilding while it's behind buildRequest.
+        int finishedRequest;
 
         // Positions to start the next build at, when there's no processor to take them from.
         Dictionary<string, double> pendingPots = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -192,12 +197,14 @@ namespace SpiceForgePlugin
             if (string.IsNullOrEmpty(path))
             {
                 Volatile.Write(ref processor, null);
+                Volatile.Write(ref finishedRequest, request);
                 SetStatus(null);
                 return;
             }
             // Without a sample rate yet (the host restored state before starting processing), InitializeProcessing builds.
             if (sampleRate <= 0)
             {
+                Volatile.Write(ref finishedRequest, request);
                 SetStatus("Waiting for the host to start processing.");
                 return;
             }
@@ -227,6 +234,7 @@ namespace SpiceForgePlugin
                             return;
                         Volatile.Write(ref processor, built);
                         failed = false;
+                        Volatile.Write(ref finishedRequest, request);
                         SetStatus(null);
                     }
                     catch (Exception ex)
@@ -235,6 +243,7 @@ namespace SpiceForgePlugin
                         if (request != Volatile.Read(ref buildRequest))
                             return;
                         Volatile.Write(ref processor, null);
+                        Volatile.Write(ref finishedRequest, request);
                         SetStatus($"Couldn't build {Path.GetFileName(path)}: {ex.Message}");
                     }
                 }
