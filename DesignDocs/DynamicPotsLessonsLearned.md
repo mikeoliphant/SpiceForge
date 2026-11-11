@@ -313,6 +313,39 @@ the error against the uncut circuit, with no load or a linear copy of the downst
   starts, so a misspelt pot or an out-of-range position fails at once with the list of what exists, rather than
   partway through a long file.
 
+## A processor for hosts, without allocation
+
+`SchematicProcessor` is the interface a host (the VST plugin) uses: it loads and compiles a schematic, lists its pots
+and switches as controls, and processes blocks. The renderer now runs through it, with bit-identical output.
+
+- **Controls are latched at the start of a block.** A UI thread sets a control's position; the audio thread reads the
+  targets once per block, so every channel sees the same ones, and pot moves are smoothed in 32-sample steps. Writing
+  straight into an engine's parameter array mid-block would race with the step reading it.
+- **Starting positions belong to loading.** A preset's pot and switch positions are applied before the DC operating
+  point is solved. Setting them on a running processor would start the circuit at the schematic's settings and then
+  move it, with a transient.
+- **A log that's harmless in a test leaks in a host.** The engines recorded one byte of Newton iteration count per
+  oversampled step, about 380 KB a second at 48 kHz, which a plugin left running for hours can't afford. A host turns
+  it off.
+- **Compare the same arithmetic.** The processor first looked wrong on every switched circuit; the reference divided
+  each speaker's voltage by V0dBFS where the processor multiplies by its reciprocal, a one-ulp difference.
+
+Making pot and switch changes allocation-free:
+
+- **Measure bytes, after a warm-up.** `GC.GetAllocatedBytesForCurrentThread` around blocks that move every pot and
+  switch, after a few blocks to JIT everything and size the buffers, gives a number that must be exactly 0. Then
+  measure the pieces separately (engine, coefficient update, processor) to find where it comes from.
+- **The folded-coefficient update was the big one.** It allocated work matrices, a copy of the parameters, and a
+  closure for every small lambda reading a port value. Work arrays are now allocated once, and the port values come
+  from column vectors precomputed when the reduction is built.
+- **Small things allocate too.** Converting a method to a delegate on every call (`Update(values, LinearJacobian)`)
+  allocates each time; `foreach` over an `IReadOnlyList` boxes its enumerator, except over an empty array, which hid
+  it on circuits without controls; and `Any(p => ...)` allocates a closure.
+- **A lambda's closure is created where its captured variables live.** A buffer-growing lambda that captured a
+  method's parameter made the compiler allocate the closure at the start of every call, though the branch using it
+  almost never ran. Moving the allocation into its own method fixed the last 24 bytes per call.
+- **The test can be the allocator.** The final 64 bytes a block were the check's own `foreach` over the controls.
+
 ## Open issues
 
 - Live coefficient reads remain a cost on large circuits: the Big Muff's dynamic step is about 3 µs slower than baked
@@ -328,5 +361,7 @@ the error against the uncut circuit, with no load or a linear copy of the downst
 - Switches move instantly, even with `--pot-ramp`, which only ramps pots. The jump causes a large transient, and on the
   Blues Breaker and JCM2000 Newton caps a few steps there (a switched run is -22 and -70 dB from a tightly converged
   one). Real switches pop too, but a short crossfade, or ramping the contact's δ, may be worth having.
-- Automation lives in the renderer only; a host (the VST plugin, say) would drive ParameterValues the same way.
+- Automation lives in the renderer; a host drives SchematicProcessor's controls itself.
 - The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.
+- Control changes are allocation-free, but if a pot setting made the reduction's small system exactly singular, the
+  coefficient update would throw on the audio thread. It never has on the test circuits.
