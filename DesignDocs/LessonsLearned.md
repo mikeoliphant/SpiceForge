@@ -506,6 +506,24 @@ gain, non-harmonic in-band energy ("aliasing") and CPU time.
   and the tests used steady sines, two frequencies and one drive level per circuit. The reference uses the same device
   models, so it shows how close each setting gets to a converged simulation, not to real hardware.
 
+Oversampling against the iteration cap, on all 19 examples (1 and 5 kHz at 0.3 input, linear resampling, against
+the 64× reference):
+
+- **Raising the cap is free.** At N=8 a cap of 32 matched a cap of 8 exactly on 17 circuits, at the same CPU, because
+  the cap only costs anything on steps that would hit it. On the Rat it took 5 kHz error from −27.5 to −31.2 dB and
+  aliasing from −22 to −39 dB; on the SD-1, 5 kHz aliasing from −47.1 to −48.7. The plugin now defaults to 32;
+  `SchematicProcessorOptions` and the renderer keep LiveSPICE's 8.
+- **Half the substeps nearly match, once the cap is raised.** N=4 with a cap of 32 was within about 1 to 3 dB of the
+  default (N=8, cap 8) on every circuit, and better on the Rat's 5 kHz aliasing (−28.6 against −22.4 dB), for 35 to
+  45% less CPU (Fender 5e3 24.1 against 37.9 µs per sample, Big Muff 14.3 against 25.3, Rat 7.2 against 10.7). With
+  linear resampling, the rolloff of the interpolation and average dominates the error at 5 kHz (−25 to −30 dB on most
+  circuits) whatever N is.
+- **But N=4 needs the higher cap, and N=2 is too few.** At N=4 with a cap of 8 the Rat breaks down (−2 dB at 5 kHz)
+  and the SD-1's 5 kHz aliasing falls to −28 dB. At N=2 even a cap of 32 loses the Rat, and costs the TS-9, Blues
+  Breaker and Rockerverb 5 to 15 dB at 5 kHz.
+- **With sinc resampling the trade changes.** Its error falls about 12 dB per doubling of N (see below), so N buys
+  accuracy there, where with linear resampling it mostly buys aliasing and Newton convergence.
+
 Moving the oversampling out of the simulation loop:
 
 - **The engines now step at one rate, and an `Oversampler` resamples around them.** `RunSteps` takes one timestep per
@@ -522,6 +540,9 @@ Moving the oversampling out of the simulation loop:
   noise (Big Muff 18.7–18.8 µs per sample, Rat 7.6–7.7, Blues Breaker 3.0), and the smallest circuits at most about
   0.04 µs, within their run-to-run noise. The compiled engine keeps its step buffers between blocks, so it still
   allocates nothing.
+- **A copy of the arithmetic drifts.** `CutCheck` interpolated its halves' input itself, restarting each ramp from the
+  exact previous sample where the engine accumulates, so it differed from the uncut circuit's steps by roundoff
+  though its comment said "exactly as the engine does". It now uses `LinearOversampler`, so it is exact.
 
 ## Open issues
 
@@ -552,6 +573,5 @@ Moving the oversampling out of the simulation loop:
   accuracy and aliasing (see Oversampling), and can now be added as another `Oversampler`. It would add latency (a
   linear-phase filter at 8× about 0.3–0.5 ms) that the plugin must report, and it wouldn't match LiveSPICE, so it
   belongs behind an option.
-- At the default iteration cap of 8, oversampling partly compensates for Newton not converging; a higher cap with a
-  lower factor was cheaper and more accurate on the Rat. The defaults haven't been revisited.
-- `CutCheck` still interpolates and averages on its own instead of using `LinearOversampler` and `RunSteps`.
+- The plugin's default oversampling is still 8×; 4× with its cap of 32 is nearly as accurate for about 40% less CPU,
+  but hasn't been made the default.

@@ -43,7 +43,9 @@ namespace SpiceForgePlugin
     public class SpiceForgePlugin : AudioPluginBase
     {
         public const int DefaultOversample = 8;
-        public const int DefaultIterations = 8;
+        // A cap of 32 rather than LiveSPICE's 8: it only costs anything on steps that would hit the cap, and at 8× it
+        // took the Rat's 5 kHz aliasing from -22 to -39 dB at the same CPU (see Oversampling in LessonsLearned.md).
+        public const int DefaultIterations = 32;
         public static readonly int[] OversampleChoices = { 1, 2, 4, 8, 16 };
         public static readonly int[] IterationChoices = { 1, 2, 4, 8, 16, 32, 64 };
 
