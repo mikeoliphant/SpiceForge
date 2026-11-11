@@ -627,7 +627,7 @@ input, at 1 and 5 kHz against the 64× reference:
 - **And cheaper on every circuit that's expensive.** 4× sinc cost 30 to 45% less than 8× linear on the large
   circuits; only the tiniest (a passive RC, 0.13 → 0.15 µs) cost slightly more.
 - **8× sinc buys about 12 dB more**, as the 12 dB per doubling suggests (the Rat to −65 dB at 1 kHz, −46 dB at
-  5 kHz), for about 1.6× the CPU of 4× sinc: CPU, not accuracy, is the reason for the 4× default.
+  5 kHz), for 1.5 to 1.9× the CPU of 4× sinc: CPU, not accuracy, is the reason for the 4× default.
 - **An earlier sinc run at a cap of 8 misled.** There the Rat at 4× looked broken (−2 dB at 5 kHz); at the plugin's
   cap of 32 it's better than LiveSPICE's default. Measure a default with all the settings that go with it.
 
