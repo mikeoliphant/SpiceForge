@@ -30,6 +30,10 @@ public sealed class SchematicProcessorOptions
     /// <summary>Starting switch positions by switch name or group, in place of the schematic's, the same way.</summary>
     public IReadOnlyDictionary<string, int>? SwitchPositions { get; init; }
 
+    /// <summary>Whether starting positions for names the schematic doesn't have (or out of range) are skipped rather
+    /// than throwing: for restoring saved settings onto a schematic that may have been edited since.</summary>
+    public bool IgnoreUnknownControls { get; init; }
+
     /// <summary>Whether pots and switches are runtime parameters, as controls. False bakes them in at their starting
     /// positions, which is slightly faster but leaves <see cref="SchematicProcessor.Pots"/> and
     /// <see cref="SchematicProcessor.Switches"/> empty.</summary>
@@ -84,7 +88,7 @@ public sealed class SchematicProcessor
         SampleRate = sampleRate;
         Expression h = 1 / ((Real)sampleRate * options.Oversample);
         LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, options.DynamicControls, options.Log, options.PotPositions,
-            options.DynamicControls, options.SwitchPositions);
+            options.DynamicControls, options.SwitchPositions, options.IgnoreUnknownControls);
         Circuit.Circuit circuit = loaded.Circuit;
         Name = circuit.Name;
         parameters = loaded.Parameters;

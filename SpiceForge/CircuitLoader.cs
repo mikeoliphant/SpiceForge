@@ -45,19 +45,21 @@ public static class CircuitLoader
     /// (0 to 1) in place of the schematic's, by pot name or group (case-insensitive); see <see cref="SetPots"/>.
     /// </summary>
     /// <remarks>Switches are runtime parameters too unless <paramref name="dynamicSwitches"/> is false (see
-    /// <see cref="DynamicSwitches"/>); <paramref name="switchPositions"/> sets positions by switch name or group.</remarks>
+    /// <see cref="DynamicSwitches"/>); <paramref name="switchPositions"/> sets positions by switch name or group. With
+    /// <paramref name="ignoreUnknownControls"/>, positions for names the schematic doesn't have, or out of range, are
+    /// skipped instead of throwing (for restoring saved settings onto a schematic that may have changed).</remarks>
     public static LoadedCircuit Load(string schematicPath, Expression h, bool dynamicPots = true, ILog? log = null,
         IReadOnlyDictionary<string, double>? potPositions = null, bool dynamicSwitches = true,
-        IReadOnlyDictionary<string, int>? switchPositions = null)
+        IReadOnlyDictionary<string, int>? switchPositions = null, bool ignoreUnknownControls = false)
     {
         log ??= new NullLog();
         Circuit.Circuit Build()
         {
             Circuit.Circuit built = BuildSchematic(schematicPath, log);
             if (potPositions != null)
-                SetPots(built, potPositions);
+                SetPots(built, potPositions, ignoreUnknownControls);
             if (switchPositions != null)
-                SetSwitches(built, switchPositions);
+                SetSwitches(built, switchPositions, ignoreUnknownControls);
             return built;
         }
 
@@ -91,17 +93,20 @@ public static class CircuitLoader
 
     /// <summary>
     /// Sets wiper positions (0 to 1) by pot name or group, case-insensitively, including inside subcircuits. A group
-    /// sets every pot in it, so ganged pots move together. Throws if a name matches no pot or a position is out of range.
+    /// sets every pot in it, so ganged pots move together. Throws if a name matches no pot or a position is out of range,
+    /// unless <paramref name="ignoreUnknown"/>, which skips them.
     /// </summary>
-    public static void SetPots(Circuit.Circuit circuit, IReadOnlyDictionary<string, double> positions)
+    public static void SetPots(Circuit.Circuit circuit, IReadOnlyDictionary<string, double> positions, bool ignoreUnknown = false)
     {
         var pots = PotsOf(circuit).ToList();
         foreach ((string name, double position) in positions)
         {
-            if (!(position >= 0 && position <= 1))
-                throw new ArgumentException($"Pot '{name}' position {position} isn't between 0 and 1.");
             var matches = pots.Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)
                 || (!string.IsNullOrEmpty(p.Group) && string.Equals(p.Group, name, StringComparison.OrdinalIgnoreCase))).ToList();
+            if (ignoreUnknown && (matches.Count == 0 || !(position >= 0 && position <= 1)))
+                continue;
+            if (!(position >= 0 && position <= 1))
+                throw new ArgumentException($"Pot '{name}' position {position} isn't between 0 and 1.");
             if (matches.Count == 0)
                 throw new ArgumentException($"No pot or pot group is named '{name}'. The pots are: "
                     + (pots.Count == 0 ? "(none)" : string.Join(", ", PotNames(circuit))) + ".");
@@ -113,15 +118,18 @@ public static class CircuitLoader
     /// <summary>
     /// Sets switch positions by switch name or group, case-insensitively, including inside subcircuits: for a
     /// multi-throw switch the throw it connects (from 0), for an on/off switch 0 open or 1 closed. Throws if a name
-    /// matches no switch or a position is out of range.
+    /// matches no switch or a position is out of range, unless <paramref name="ignoreUnknown"/>, which skips them.
     /// </summary>
-    public static void SetSwitches(Circuit.Circuit circuit, IReadOnlyDictionary<string, int> positions)
+    public static void SetSwitches(Circuit.Circuit circuit, IReadOnlyDictionary<string, int> positions, bool ignoreUnknown = false)
     {
         var all = SwitchesOf(circuit).ToList();
         foreach ((string name, int position) in positions)
         {
             var matches = all.Where(sw => string.Equals(sw.Name, name, StringComparison.OrdinalIgnoreCase)
                 || (sw is SinglePoleSwitch pole && !string.IsNullOrEmpty(pole.Group) && string.Equals(pole.Group, name, StringComparison.OrdinalIgnoreCase))).ToList();
+            if (ignoreUnknown && (matches.Count == 0
+                || matches.Any(sw => position < 0 || position >= (sw is SinglePoleSwitch pole ? pole.Throws.Length : 2))))
+                continue;
             if (matches.Count == 0)
                 throw new ArgumentException($"No switch or switch group is named '{name}'. The switches are: "
                     + (all.Count == 0 ? "(none)" : string.Join(", ", all.Select(sw => sw is SinglePoleSwitch p && !string.IsNullOrEmpty(p.Group) ? p.Group : sw.Name).Distinct())) + ".");

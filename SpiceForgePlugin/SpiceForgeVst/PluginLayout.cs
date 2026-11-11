@@ -1,17 +1,34 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Windows.Forms;
+using SpiceForge;
 using UILayout;
+using Menu = UILayout.Menu;
+using MenuItem = UILayout.MenuItem;
 
 namespace SpiceForgeVst
 {
+    /// <summary>
+    /// The plugin's editor, laid out like LiveSPICE's VST: the schematic and its file buttons, the engine settings, and
+    /// then a dial for every pot and a button for every switch, labelled with their names.
+    /// </summary>
     public class SpiceForgeLayout : MonoGameLayout
     {
+        // Controls per row before wrapping to the next.
+        const int ControlsPerRow = 8;
+
         SpiceForgeVst plugin;
         Dock mainDock;
-        HorizontalStack paramStack;
-        TextBlock pluginFileText;
+        UIElementWrapper controlWrapper;
+        TextBlock schematicText;
+        TextToggleButton autoReloadButton;
+        TextButton oversampleButton;
+        TextButton iterationsButton;
         UIColor foregroundColor = UIColor.Black;
+
+        // The plugin version the controls were last built for.
+        int shownVersion = -1;
 
         public SpiceForgeLayout(SpiceForgeVst plugin)
         {
@@ -62,370 +79,351 @@ namespace SpiceForgeVst
             VerticalStack vStack = new VerticalStack()
             {
                 HorizontalAlignment = EHorizontalAlignment.Stretch,
-                VerticalAlignment = EVerticalAlignment.Stretch
+                VerticalAlignment = EVerticalAlignment.Stretch,
+                ChildSpacing = 10
             };
             mainDock.Children.Add(vStack);
 
-            HorizontalStack pluginLoadStack = new HorizontalStack()
+            // The schematic, and buttons to load, edit and reload it.
+            HorizontalStack schematicStack = new HorizontalStack()
             {
                 HorizontalAlignment = EHorizontalAlignment.Right,
                 DesiredHeight = 80
             };
+            vStack.Children.Add(schematicStack);
 
-            vStack.Children.Add(pluginLoadStack);
-
-            pluginFileText = new TextBlock()
+            schematicText = new TextBlock()
             {
                 Margin = new LayoutPadding(10),
                 VerticalAlignment = EVerticalAlignment.Center
             };
+            schematicStack.Children.Add(schematicText);
 
-            pluginLoadStack.Children.Add(pluginFileText);
-
-            pluginLoadStack.Children.Add(new ImageButton("FileOpen")
+            schematicStack.Children.Add(new ImageButton("FileOpen")
             {
                 VerticalAlignment = EVerticalAlignment.Stretch,
-                ClickAction = LoadPlugin
+                ClickAction = LoadSchematic
             });
 
-            pluginLoadStack.Children.Add(new ImageButton("FileEdit")
+            schematicStack.Children.Add(new ImageButton("FileEdit")
             {
                 VerticalAlignment = EVerticalAlignment.Stretch,
-                ClickAction = EditPlugin
+                ClickAction = plugin.EditSchematic
             });
 
-            pluginLoadStack.Children.Add(new ImageButton("Reload")
+            schematicStack.Children.Add(new ImageButton("Reload")
             {
                 VerticalAlignment = EVerticalAlignment.Stretch,
-                ClickAction = ReloadPlugin
+                ClickAction = plugin.ReloadSchematic
             });
 
-            UIElementWrapper wrapper = new UIElementWrapper()
+            // Engine settings: auto reload, oversampling and the iteration cap.
+            HorizontalStack settingsStack = new HorizontalStack()
+            {
+                HorizontalAlignment = EHorizontalAlignment.Center,
+                ChildSpacing = 10
+            };
+            vStack.Children.Add(settingsStack);
+
+            autoReloadButton = new TextToggleButton("Auto Reload: On", "Auto Reload: Off")
+            {
+                VerticalAlignment = EVerticalAlignment.Center
+            };
+            autoReloadButton.SetPressed(plugin.AutoReload);
+            autoReloadButton.PressAction = delegate { plugin.SetAutoReload(autoReloadButton.IsPressed); };
+            settingsStack.Children.Add(autoReloadButton);
+
+            settingsStack.Children.Add(new TextBlock("Oversample:")
+            {
+                Margin = new LayoutPadding(20, 0, 0, 0),
+                VerticalAlignment = EVerticalAlignment.Center
+            });
+            oversampleButton = new TextButton(plugin.Oversample.ToString()) { VerticalAlignment = EVerticalAlignment.Center };
+            oversampleButton.ClickAction = delegate
+            {
+                ShowChoices(oversampleButton, SpiceForgeVst.OversampleChoices, plugin.SetOversample);
+            };
+            settingsStack.Children.Add(oversampleButton);
+
+            settingsStack.Children.Add(new TextBlock("Iterations:")
+            {
+                Margin = new LayoutPadding(20, 0, 0, 0),
+                VerticalAlignment = EVerticalAlignment.Center
+            });
+            iterationsButton = new TextButton(plugin.Iterations.ToString()) { VerticalAlignment = EVerticalAlignment.Center };
+            iterationsButton.ClickAction = delegate
+            {
+                ShowChoices(iterationsButton, SpiceForgeVst.IterationChoices, plugin.SetIterations);
+            };
+            settingsStack.Children.Add(iterationsButton);
+
+            // The circuit's controls, or what the plugin is doing instead.
+            controlWrapper = new UIElementWrapper()
             {
                 HorizontalAlignment = EHorizontalAlignment.Stretch,
                 VerticalAlignment = EVerticalAlignment.Stretch
             };
-            vStack.Children.Add(wrapper);
-
-            paramStack = new HorizontalStack()
-            {
-                HorizontalAlignment = EHorizontalAlignment.Center,
-                VerticalAlignment = EVerticalAlignment.Center
-            };
-
-            wrapper.Child = paramStack;
+            vStack.Children.Add(controlWrapper);
 
             UpdateParameters();
         }
 
+        public override void Update(float secondsElapsed)
+        {
+            base.Update(secondsElapsed);
+
+            // A new processor or status (a build finished, or failed) rebuilds the controls.
+            if (plugin.Version != shownVersion)
+                UpdateParameters();
+        }
+
+        // A popup menu of numeric choices under a button; choosing one shows it on the button and passes it on.
+        void ShowChoices(TextButton button, int[] choices, Action<int> choose)
+        {
+            List<MenuItem> items = new List<MenuItem>();
+
+            foreach (int choice in choices)
+            {
+                items.Add(new ContextMenuItem
+                {
+                    Text = choice.ToString(),
+                    SelectAction = delegate
+                    {
+                        button.Text = choice.ToString();
+                        button.UpdateContentLayout();
+                        choose(choice);
+                    }
+                });
+            }
+
+            ShowPopup(new Menu(items), button.ContentBounds.Center);
+        }
+
         void UpdateParameters()
         {
-            pluginFileText.Text = String.IsNullOrEmpty(plugin.PluginFilePath) ? "No Plugin Loaded" : Path.GetFileName(plugin.PluginFilePath);
+            shownVersion = plugin.Version;
 
-            paramStack.Children.Clear();
+            SchematicProcessor processor = plugin.CurrentProcessor;
 
-            //if (plugin.FaustDsp != null)
-            //    AddParameters(plugin.FaustDsp.UIDefinition.RootElement, paramStack);
+            schematicText.Text = String.IsNullOrEmpty(plugin.SchematicPath) ? "No Schematic Loaded" : Path.GetFileNameWithoutExtension(plugin.SchematicPath);
+            oversampleButton.Text = plugin.Oversample.ToString();
+            iterationsButton.Text = plugin.Iterations.ToString();
+            autoReloadButton.SetPressed(plugin.AutoReload);
+
+            if (processor == null || plugin.Status != null)
+            {
+                controlWrapper.Child = new TextBlock(plugin.Status ?? (String.IsNullOrEmpty(plugin.SchematicPath) ? "Load a schematic (.schx) to run audio through it." : ""))
+                {
+                    HorizontalAlignment = EHorizontalAlignment.Center,
+                    VerticalAlignment = EVerticalAlignment.Center,
+                    TextColor = foregroundColor
+                };
+
+                // A failure leaves the last circuit's controls useless; a build in progress leaves them working, so
+                // keep showing them under the status.
+                if (processor != null && plugin.Status != null && plugin.Status.StartsWith("Building"))
+                    controlWrapper.Child = WithStatus(AddControls(processor), plugin.Status);
+            }
+            else
+            {
+                controlWrapper.Child = AddControls(processor);
+            }
 
             mainDock.UpdateContentLayout();
         }
 
-        //void AddParameters(FaustUIElement element, ListUIElement container)
-        //{
-            //if (element is FaustBoxElement)
-            //{
-            //    NinePatchWrapper outline = new NinePatchWrapper(Layout.Current.GetImage("PluginBackground"))
-            //    {
-            //        HorizontalAlignment = EHorizontalAlignment.Stretch,
-            //        VerticalAlignment = EVerticalAlignment.Stretch,
-            //        Padding = new LayoutPadding(30)
-            //    };
-            //    container.Children.Add(outline);
-
-            //    VerticalStack verticalStack = new VerticalStack()
-            //    {
-            //        HorizontalAlignment = EHorizontalAlignment.Stretch,
-            //        VerticalAlignment = EVerticalAlignment.Stretch,
-            //        ChildSpacing = 10
-            //    };
-
-            //    outline.Child = verticalStack;
-
-            //    verticalStack.Children.Add(new TextBlock(element.Label));
-
-            //    UIElementWrapper wrapper = new UIElementWrapper()
-            //    {
-            //        HorizontalAlignment = EHorizontalAlignment.Stretch,
-            //        VerticalAlignment = EVerticalAlignment.Stretch
-            //    };
-            //    verticalStack.Children.Add(wrapper);
-
-            //    ListUIElement stack = element.ElementType == EFaustUIElementType.HorizontalBox ? new HorizontalStack() : new VerticalStack();
-            //    stack.HorizontalAlignment = EHorizontalAlignment.Center;
-            //    stack.VerticalAlignment = EVerticalAlignment.Center;
-            //    wrapper.Child = stack;
-
-            //    foreach (FaustUIElement child in (element as FaustBoxElement).Children)
-            //    {
-            //        AddParameters(child, stack);
-            //    }
-            //}
-            //else
-            //{
-            //    if (element is FaustUIVariableElement)
-            //    {
-            //        if ((element.ElementType == EFaustUIElementType.Button) || (element.ElementType == EFaustUIElementType.CheckBox))
-            //        {
-            //            FaustUIVariableElement variableElement = element as FaustUIVariableElement;
-
-            //            TextButton button = new TextButton(element.Label)
-            //            {
-            //                HorizontalAlignment = EHorizontalAlignment.Center,
-            //                VerticalAlignment = EVerticalAlignment.Center
-            //            };
-
-            //            button.IsToggleButton = (element.ElementType == EFaustUIElementType.CheckBox);
-
-            //            button.SetPressed(variableElement.VariableAccessor.GetValue() == 1.0f);
-
-            //            button.PressAction = delegate
-            //            {
-            //                variableElement.VariableAccessor.SetValue(button.IsPressed ? 1.0 : 0.0);
-            //            };
-
-            //            container.Children.Add(button);
-            //        }
-            //        else if ((element.ElementType == EFaustUIElementType.HorizontalBargraph) || (element.ElementType == EFaustUIElementType.VerticalBargraph))
-            //        {
-            //            FaustUIFloatElement floatElement = element as FaustUIFloatElement;
-
-            //            VerticalStack controlVStack = new VerticalStack()
-            //            {
-            //                HorizontalAlignment = EHorizontalAlignment.Stretch,
-            //                VerticalAlignment = EVerticalAlignment.Stretch
-            //            };
-
-            //            controlVStack.Children.Add(new TextBlock(element.Label)
-            //            {
-            //                Margin = new LayoutPadding(5, 0),
-            //                HorizontalAlignment = EHorizontalAlignment.Center,
-            //                TextColor = foregroundColor,
-            //                TextFont = Layout.Current.GetFont("SmallFont")
-            //            });
-
-            //            LevelBar levelBar = null;
-
-            //            if (element.ElementType == EFaustUIElementType.HorizontalBargraph)
-            //            {
-            //                levelBar = new HorizontalLevelBar()
-            //                {
-            //                    DesiredHeight = 40,
-            //                    DesiredWidth = 300,
-            //                    HorizontalAlignment = EHorizontalAlignment.Center,
-            //                    VerticalAlignment = EVerticalAlignment.Center,
-            //                    Margin = new LayoutPadding(20),
-            //                };
-            //            }
-            //            else
-            //            {
-            //                levelBar = new VerticalLevelBar()
-            //                {
-            //                    DesiredHeight = 300,
-            //                    DesiredWidth = 40,
-            //                    HorizontalAlignment = EHorizontalAlignment.Center,
-            //                    VerticalAlignment = EVerticalAlignment.Center,
-            //                    Margin = new LayoutPadding(20),
-            //                };
-            //            }
-
-            //            if (element.GetMetaData("unit") == "dB")
-            //            {
-            //                levelBar.GetValue = delegate
-            //                {
-            //                    return DB2Linear(floatElement.VariableAccessor.GetValue());
-            //                };
-
-            //                levelBar.DoLogDisplay = true;
-            //            }
-            //            else
-            //            {
-            //                levelBar.GetValue = delegate
-            //                {
-            //                    return floatElement.GetNormalizedValue(floatElement.VariableAccessor.GetValue());
-            //                };
-            //            }
-
-            //            controlVStack.Children.Add(levelBar);
-
-            //            container.Children.Add(controlVStack);
-            //        }
-            //    }
-                
-            //    if (element is FaustUIWriteableFloatElement)
-            //    {
-            //        FaustUIWriteableFloatElement floatElement = element as FaustUIWriteableFloatElement;
-
-            //        VerticalStack controlVStack = new VerticalStack()
-            //        {
-            //            HorizontalAlignment = EHorizontalAlignment.Stretch,
-            //            VerticalAlignment = EVerticalAlignment.Stretch
-            //        };
-
-            //        controlVStack.Children.Add(new TextBlock(floatElement.Label)
-            //        {
-            //            Margin = new LayoutPadding(5, 0),
-            //            HorizontalAlignment = EHorizontalAlignment.Center,
-            //            TextColor = foregroundColor,
-            //            TextFont = Layout.Current.GetFont("SmallFont")
-            //        });
-
-            //        int decimals = GetDecimalPlaces((Decimal)(element as FaustUIWriteableFloatElement).Step);
-
-            //        string valueFormat = "{0:0." + 0.ToString("D" + decimals) + "}";
-
-            //        string unit = element.GetMetaData("unit");
-
-            //        if (!string.IsNullOrEmpty(unit))
-            //        {
-            //            valueFormat += unit;
-            //        }
-
-            //        Dock controlDock = new Dock() { HorizontalAlignment = EHorizontalAlignment.Stretch, VerticalAlignment = EVerticalAlignment.Center };
-            //        controlVStack.Children.Add(controlDock);
-
-            //        float strWidthMax;
-            //        float strHeightMax;
-            //        Layout.Current.GetFont("SmallFont").MeasureString(String.Format(valueFormat, floatElement.MaxValue), out strWidthMax, out strHeightMax);
-            //        float strWidthMin;
-            //        float strHeightMin;
-            //        Layout.Current.GetFont("SmallFont").MeasureString(String.Format(valueFormat, floatElement.MinValue), out strWidthMin, out strHeightMin);
-
-            //        ParameterValueDisplay valueDisplay = new ParameterValueDisplay()
-            //        {
-            //            HorizontalAlignment = EHorizontalAlignment.Absolute,
-            //            VerticalAlignment = EVerticalAlignment.Absolute,
-            //            Margin = new LayoutPadding(-Math.Max(strWidthMin, strWidthMax), -Math.Max(strHeightMin, strHeightMax)),
-            //            ValueFormat = valueFormat
-            //        };
-
-            //        if (element.GetMetaData("style") == "knob")
-            //        {
-            //            ParameterDial dial = new ParameterDial()
-            //            {
-            //                MinValue = floatElement.MinValue,
-            //                MaxValue = floatElement.MaxValue,
-            //                DefaultValue = floatElement.DefaultValue
-            //            };
-
-            //            controlDock.Children.Add(dial);
-
-            //            dial.SetDialColor(UIColor.Black);
-
-            //            dial.SetPointerColor(((foregroundColor.R + foregroundColor.G + foregroundColor.B) / 3) > 128 ? UIColor.Black : UIColor.White);
-
-            //            dial.SetValue(floatElement.VariableAccessor.GetValue());
-
-            //            dial.ValueChangedAction = delegate (double val)
-            //            {
-            //                floatElement.VariableAccessor.SetValue(val);
-
-            //                valueDisplay.SetValue(val);
-            //            };
-            //        }
-            //        else if ((element.ElementType == EFaustUIElementType.HorizontalSlider) || (element.ElementType == EFaustUIElementType.VerticalSlider))
-            //        {
-            //            Slider slider = null;
-
-            //            if (element.ElementType == EFaustUIElementType.HorizontalSlider)
-            //            {
-            //                slider = new HorizontalSlider("VerticalSlider")
-            //                {
-            //                    HorizontalAlignment = EHorizontalAlignment.Center,
-            //                    DesiredWidth = 300
-            //                };
-            //            }
-            //            else
-            //            {
-            //                slider = new VerticalSlider("VerticalSlider")
-            //                {
-            //                    InvertLevel = true,
-            //                    HorizontalAlignment = EHorizontalAlignment.Center,
-            //                    DesiredHeight = 300
-            //                };
-            //            };
-
-            //            slider.ChangeAction = delegate (float value)
-            //            {
-            //                value = (float)floatElement.GetDenormalizedValue(value);
-
-            //                floatElement.VariableAccessor.SetValue(value);
-
-            //                valueDisplay.SetValue(value);
-            //            };
-
-            //            slider.SetLevel((float)floatElement.GetNormalizedValue(floatElement.VariableAccessor.GetValue()));
-
-            //            controlDock.Children.Add(slider);
-            //        }
-
-            //        controlDock.Children.Add(valueDisplay);
-
-            //        container.Children.Add(controlVStack);
-            //    }
-            //}
-        //}
-
-        double DB2Linear(double value)
+        UIElement WithStatus(UIElement controls, string status)
         {
-            return Math.Pow(10.0f, value / 20.0f);
-        }
-
-        void ReloadPlugin()
-        {
-            if (!string.IsNullOrEmpty(plugin.PluginFilePath))
+            VerticalStack stack = new VerticalStack()
             {
-                LoadPlugin(plugin.PluginFilePath);
-            }
+                HorizontalAlignment = EHorizontalAlignment.Stretch,
+                VerticalAlignment = EVerticalAlignment.Stretch,
+                ChildSpacing = 10
+            };
+            stack.Children.Add(new TextBlock(status)
+            {
+                HorizontalAlignment = EHorizontalAlignment.Center,
+                TextColor = foregroundColor,
+                TextFont = GetFont("SmallFont")
+            });
+            stack.Children.Add(controls);
+
+            return stack;
         }
 
-        void EditPlugin()
+        // The circuit's pots and switches in a box titled with its name, in rows.
+        UIElement AddControls(SchematicProcessor processor)
         {
+            NinePatchWrapper outline = new NinePatchWrapper(GetImage("PluginBackground"))
+            {
+                HorizontalAlignment = EHorizontalAlignment.Center,
+                VerticalAlignment = EVerticalAlignment.Center,
+                Padding = new LayoutPadding(30)
+            };
+
+            VerticalStack verticalStack = new VerticalStack()
+            {
+                HorizontalAlignment = EHorizontalAlignment.Stretch,
+                VerticalAlignment = EVerticalAlignment.Stretch,
+                ChildSpacing = 10
+            };
+            outline.Child = verticalStack;
+
+            verticalStack.Children.Add(new TextBlock(processor.Name)
+            {
+                HorizontalAlignment = EHorizontalAlignment.Center,
+                TextColor = foregroundColor
+            });
+
+            List<UIElement> controls = new List<UIElement>();
+
+            for (int i = 0; i < processor.Pots.Count; i++)
+                controls.Add(AddPot(processor.Pots[i]));
+
+            for (int i = 0; i < processor.Switches.Count; i++)
+                controls.Add(AddSwitch(processor.Switches[i]));
+
+            if (controls.Count == 0)
+            {
+                verticalStack.Children.Add(new TextBlock("(no pots or switches)")
+                {
+                    HorizontalAlignment = EHorizontalAlignment.Center,
+                    TextColor = foregroundColor,
+                    TextFont = GetFont("SmallFont")
+                });
+            }
+
+            HorizontalStack row = null;
+
+            for (int i = 0; i < controls.Count; i++)
+            {
+                if (i % ControlsPerRow == 0)
+                {
+                    row = new HorizontalStack()
+                    {
+                        HorizontalAlignment = EHorizontalAlignment.Center,
+                        ChildSpacing = 10
+                    };
+                    verticalStack.Children.Add(row);
+                }
+
+                row.Children.Add(controls[i]);
+            }
+
+            return outline;
         }
 
+        VerticalStack ControlStack(string name)
+        {
+            VerticalStack controlVStack = new VerticalStack()
+            {
+                HorizontalAlignment = EHorizontalAlignment.Stretch,
+                VerticalAlignment = EVerticalAlignment.Stretch
+            };
 
-        void LoadPlugin()
+            controlVStack.Children.Add(new TextBlock(name)
+            {
+                Margin = new LayoutPadding(5, 0),
+                HorizontalAlignment = EHorizontalAlignment.Center,
+                TextColor = foregroundColor,
+                TextFont = GetFont("SmallFont")
+            });
+
+            return controlVStack;
+        }
+
+        // A pot: a dial from 0 to 1 (double-click for the schematic's setting), showing its value while it moves.
+        UIElement AddPot(PotControl pot)
+        {
+            VerticalStack controlVStack = ControlStack(pot.Name);
+
+            Dock controlDock = new Dock() { HorizontalAlignment = EHorizontalAlignment.Stretch, VerticalAlignment = EVerticalAlignment.Center };
+            controlVStack.Children.Add(controlDock);
+
+            ParameterValueDisplay valueDisplay = new ParameterValueDisplay()
+            {
+                ValueFormat = "{0:0.00}"
+            };
+
+            ParameterDial dial = new ParameterDial()
+            {
+                MinValue = 0,
+                MaxValue = 1,
+                DefaultValue = pot.DefaultPosition
+            };
+
+            dial.SetDialColor(UIColor.Black);
+            dial.SetPointerColor(UIColor.White);
+            dial.SetValue(pot.Position);
+
+            dial.ValueChangedAction = delegate (double value)
+            {
+                pot.Position = value;
+
+                valueDisplay.SetValue(value);
+            };
+
+            controlDock.Children.Add(dial);
+            controlDock.Children.Add(valueDisplay);
+
+            return controlVStack;
+        }
+
+        // A switch: on/off as a toggle button, more positions as a button that pops up a menu of them.
+        UIElement AddSwitch(SwitchControl sw)
+        {
+            VerticalStack controlVStack = ControlStack(sw.Name);
+
+            if (sw.Positions == 2)
+            {
+                TextToggleButton button = new TextToggleButton("On", "Off")
+                {
+                    HorizontalAlignment = EHorizontalAlignment.Center,
+                    VerticalAlignment = EVerticalAlignment.Center,
+                    Margin = new LayoutPadding(5)
+                };
+                button.SetPressed(sw.Position == 1);
+                button.PressAction = delegate { sw.Position = button.IsPressed ? 1 : 0; };
+
+                controlVStack.Children.Add(button);
+            }
+            else
+            {
+                TextButton button = new TextButton(sw.Position.ToString())
+                {
+                    HorizontalAlignment = EHorizontalAlignment.Center,
+                    VerticalAlignment = EVerticalAlignment.Center,
+                    Margin = new LayoutPadding(5)
+                };
+
+                int[] positions = new int[sw.Positions];
+                for (int i = 0; i < positions.Length; i++)
+                    positions[i] = i;
+
+                button.ClickAction = delegate
+                {
+                    ShowChoices(button, positions, position => sw.Position = position);
+                };
+
+                controlVStack.Children.Add(button);
+            }
+
+            return controlVStack;
+        }
+
+        void LoadSchematic()
         {
             OpenFileDialog openFileDialog = new OpenFileDialog();
 
-            openFileDialog.Filter = "Schema Files|*.schx";
+            openFileDialog.Filter = "LiveSPICE Schematics|*.schx";
 
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
                 if (!string.IsNullOrEmpty(openFileDialog.FileName))
                 {
-                    LoadPlugin(openFileDialog.FileName);
+                    plugin.LoadSchematic(openFileDialog.FileName);
                 }
             }
-        }
-
-        void LoadPlugin(string pluginFilePath)
-        {
-
-            UpdateParameters();
-        }
-
-        public static int GetDecimalPlaces(decimal n)
-        {
-            n = Math.Abs(n); //make sure it is positive.
-            n -= (int)n;     //remove the integer part of the number.
-            var decimalPlaces = 0;
-            while (n > 0)
-            {
-                decimalPlaces++;
-                n *= 10;
-                n -= (int)n;
-            }
-            return decimalPlaces;
         }
     }
 }
