@@ -86,10 +86,10 @@ internal static class CutCheck
             // Back to the sample rate the way the engine averages its outputs, and compare on the nodes each side has.
             var chained = new Dictionary<Expression, double[]>();
             for (int i = 0; i < upNodes.Length; i++)
-                chained[upNodes[i]] = Decimate(upOut[i]);
+                chained[upNodes[i]] = Downsample(upOut[i]);
             for (int i = 0; i < downNodes.Length; i++)
                 if (!chained.ContainsKey(downNodes[i]))
-                    chained[downNodes[i]] = Decimate(downOut[i]);
+                    chained[downNodes[i]] = Downsample(downOut[i]);
             Report(load, original, originalNodes, reference, chained, cut, rate);
         }
         return 0;
@@ -225,33 +225,19 @@ internal static class CutCheck
         return result;
     }
 
-    // The input at each oversampled step, interpolated as the engine does: from the previous sample to this one.
+    // The input at each oversampled step and each output's samples from its steps, by the engine's own oversampler,
+    // so the halves see exactly what the uncut circuit's steps see.
     private static double[] Upsample(double[] input)
     {
         var fine = new double[input.Length * Oversample];
-        double previous = 0;
-        for (int n = 0; n < input.Length; n++)
-        {
-            double delta = (input[n] - previous) / Oversample;
-            double value = previous;
-            for (int j = 0; j < Oversample; j++)
-                fine[n * Oversample + j] = value += delta;
-            previous = input[n];
-        }
+        new LinearOversampler(Oversample).Upsample(input, fine);
         return fine;
     }
 
-    // Averages each sample's oversampled steps, as the engine averages its outputs.
-    private static double[] Decimate(double[] fine)
+    private static double[] Downsample(double[] fine)
     {
         var coarse = new double[fine.Length / Oversample];
-        for (int n = 0; n < coarse.Length; n++)
-        {
-            double sum = 0;
-            for (int j = 0; j < Oversample; j++)
-                sum += fine[n * Oversample + j];
-            coarse[n] = sum / Oversample;
-        }
+        new LinearOversampler(Oversample).Downsample(0, fine, coarse);
         return coarse;
     }
 
