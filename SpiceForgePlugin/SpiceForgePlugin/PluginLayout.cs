@@ -26,6 +26,7 @@ namespace SpiceForgePlugin
         TextToggleButton autoReloadButton;
         TextButton oversampleButton;
         TextButton iterationsButton;
+        TextToggleButton resamplingButton;
         UIColor foregroundColor = UIColor.White;
 
         // The plugin version the controls were last built for.
@@ -158,6 +159,15 @@ namespace SpiceForgePlugin
             };
             settingsStack.Children.Add(iterationsButton);
 
+            resamplingButton = new TextToggleButton("Resampling: Sinc", "Resampling: Linear")
+            {
+                Margin = new LayoutPadding(20, 0, 0, 0),
+                VerticalAlignment = EVerticalAlignment.Center
+            };
+            resamplingButton.SetPressed(plugin.SincResampling);
+            resamplingButton.PressAction = delegate { plugin.SetSincResampling(resamplingButton.IsPressed); };
+            settingsStack.Children.Add(resamplingButton);
+
             // The circuit's controls, or what the plugin is doing instead.
             controlWrapper = new UIElementWrapper()
             {
@@ -210,6 +220,7 @@ namespace SpiceForgePlugin
             oversampleButton.Text = plugin.Oversample.ToString();
             iterationsButton.Text = plugin.Iterations.ToString();
             autoReloadButton.SetPressed(plugin.AutoReload);
+            resamplingButton.SetPressed(plugin.SincResampling);
 
             if (processor == null || plugin.Status != null)
             {

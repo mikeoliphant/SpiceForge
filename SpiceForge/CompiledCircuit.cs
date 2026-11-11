@@ -105,7 +105,14 @@ public sealed class CompiledCircuit
         oversampler.Upsample(inputSamples.AsSpan(0, count), stepInput.AsSpan(0, steps));
         RunSteps(stepInput, stepOutputs, steps);
         for (int o = 0; o < outputs.Length; o++)
-            oversampler.Downsample(o, stepOutputs[o].AsSpan(0, steps), outputBuffers[o].AsSpan(0, count));
+        {
+            // An output that isn't an unknown (a grounded speaker terminal) is zero at every step, so it's zero after
+            // any resampling: skip the filter. LiveSPICE's average of zeros is zero too, so this is bit-identical.
+            if (outputs[o] >= 0)
+                oversampler.Downsample(o, stepOutputs[o].AsSpan(0, steps), outputBuffers[o].AsSpan(0, count));
+            else
+                outputBuffers[o].AsSpan(0, count).Clear();
+        }
     }
 
     private void GrowStepBuffers(int steps)

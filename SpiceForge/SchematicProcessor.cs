@@ -6,6 +6,18 @@ using Expression = ComputerAlgebra.Expression;
 namespace SpiceForge;
 
 /// <summary>Options for <see cref="SchematicProcessor"/>.</summary>
+/// <summary>How a processor converts between the sample rate and its internal step rate (see <see cref="Oversampler"/>).</summary>
+public enum Resampling
+{
+    /// <summary>LiveSPICE's: linear interpolation in, the average of each sample's steps out (<see cref="LinearOversampler"/>).
+    /// No latency, but it rolls off the top of the band and lets harmonics near it fold back.</summary>
+    Linear,
+
+    /// <summary>Windowed-sinc filters in and out (<see cref="SincOversampler"/>): a flat band and little aliasing, for
+    /// <see cref="SchematicProcessor.Latency"/> samples of delay.</summary>
+    Sinc,
+}
+
 public sealed class SchematicProcessorOptions
 {
     /// <summary>Independent copies of the circuit, one per audio channel.</summary>
@@ -13,6 +25,9 @@ public sealed class SchematicProcessorOptions
 
     /// <summary>Internal steps per sample. LiveSPICE's default.</summary>
     public int Oversample { get; init; } = 8;
+
+    /// <summary>How samples are converted to and from the internal steps. LiveSPICE's by default.</summary>
+    public Resampling Resampling { get; init; } = Resampling.Linear;
 
     /// <summary>Newton's iteration cap per step. LiveSPICE's default.</summary>
     public int IterationCap { get; init; } = 8;
@@ -72,6 +87,10 @@ public sealed class SchematicProcessor
 
     public double SampleRate { get; }
 
+    /// <summary>How many samples the output lags the input by from the resampling (0 for LiveSPICE's), for a host to
+    /// report.</summary>
+    public int Latency { get; }
+
     public int Channels => engines.Length;
 
     /// <summary>One control per pot, or per group of ganged pots, in schematic order.</summary>
@@ -110,6 +129,10 @@ public sealed class SchematicProcessor
         engines = Enumerable.Range(0, options.Channels)
             .Select(_ => new CompiledCircuit(loaded.System, input, nodes, h, options.Oversample, options.IterationCap, loaded.Solution) { RecordIterations = false })
             .ToArray();
+        if (options.Resampling == Resampling.Sinc)
+            foreach (CompiledCircuit engine in engines)
+                engine.Oversampler = new SincOversampler(options.Oversample);
+        Latency = engines[0].Oversampler.Latency;
         smoothingSamples = (long)Math.Round(options.PotSmoothingMilliseconds / 1000 * sampleRate);
 
         var pots = new List<PotControl>();
