@@ -1,4 +1,4 @@
-namespace SpiceForge;
+﻿namespace SpiceForge;
 
 /// <summary>
 /// Removes the ports that only linear terms read (pot legs, for example) from the step, by folding them into the
@@ -93,6 +93,11 @@ internal sealed class LinearPortReduction
 
     /// <summary>How many times the coefficients have been recomputed.</summary>
     public long Updates { get; private set; }
+
+    /// <summary>How many updates were rejected because the linear ports' system was singular, or gave non-finite
+    /// coefficients, at the new parameter values. The previous coefficients stay in use, so the circuit keeps running
+    /// at its last good setting instead of failing on the audio thread.</summary>
+    public long Rejected { get; private set; }
 
     public LinearPortReduction(int[] n, int[] l, int[] tn, int[] tl, double[,] Z, double[,] Qz, double[,] CP,
         double[,] Q, double[,] parameterGain, double[] constant, double[,] sourceGain, double[,] G, double[,] Nz,
@@ -191,6 +196,8 @@ internal sealed class LinearPortReduction
     /// <summary>
     /// Recomputes the coefficients if the parameters changed since the last call. <paramref name="linearJacobian"/>
     /// gives Jl[t, l]: the derivative of linear term TL[t] with respect to port L[l] at the current parameters.
+    /// Returns whether the coefficients changed: an update the system can't solve (see <see cref="Rejected"/>) leaves
+    /// them as they were, except while learning, when it throws.
     /// </summary>
     public bool Update(double[] parameters, Func<double[,]> linearJacobian)
     {
@@ -226,7 +233,7 @@ internal sealed class LinearPortReduction
                 if (Math.Abs(a[i, col]) > Math.Abs(a[pivot, col]))
                     pivot = i;
             if (a[pivot, col] == 0)
-                throw new SingularSystemException("The linear ports' system is singular at these parameter values.");
+                return Reject("The linear ports' system is singular at these parameter values.");
             if (pivot != col)
                 for (int j = 0; j < 2 * kl; j++)
                     (a[col, j], a[pivot, j]) = (a[pivot, j], a[col, j]);
@@ -252,6 +259,11 @@ internal sealed class LinearPortReduction
                     value += jl[t, i] * a[i, kl + j];
                 m[t, j] = value;
             }
+        // Nothing has been written to the coefficients yet, so a bad solve can still be turned away.
+        for (int t = 0; t < ml; t++)
+            for (int j = 0; j < kl; j++)
+                if (!double.IsFinite(m[t, j]))
+                    return Reject("The linear ports' system gives non-finite coefficients at these parameter values.");
 
         // Each row type below is its static coefficient plus (row·M)·(the eliminated ports' version of the column).
         for (int r = 0; r < kn; r++)
@@ -294,6 +306,15 @@ internal sealed class LinearPortReduction
         if (Learning)
             MarkLearned();
         return true;
+    }
+
+    // Turns an update away, keeping the previous coefficients. While learning (at construction) there are none to keep.
+    private bool Reject(string why)
+    {
+        if (Learning)
+            throw new SingularSystemException(why);
+        Rejected++;
+        return false;
     }
 
     // Work space for Update, allocated once.

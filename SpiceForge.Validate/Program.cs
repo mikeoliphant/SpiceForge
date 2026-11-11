@@ -57,6 +57,9 @@ if (args.Length > 2 && args[0] == "cut")
 if (args.Length > 0 && args[0] == "processor")
     return ProcessorCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
+if (args.Length > 0 && args[0] == "rejection")
+    return RejectionCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
+
 if (args.Length > 0 && args[0] == "switches")
     return DynamicSwitchCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 

@@ -465,6 +465,12 @@ Making pot and switch changes allocation-free:
   method's parameter made the compiler allocate the closure at the start of every call, though the branch using it
   almost never ran. Moving the allocation into its own method fixed the last 24 bytes per call.
 - **The test can be the allocator.** The final 64 bytes a block were the check's own `foreach` over the controls.
+- **Turn a bad setting away; don't fail the circuit.** A pot setting that made the reduction's small system singular
+  threw on the audio thread, and a nearly singular one would have filled the coefficients with NaN. The update now
+  checks the solve before writing anything and, if it's singular or gives non-finite values, keeps the previous
+  coefficients and counts a rejection (it still throws while learning at construction, when there's nothing to keep).
+  `validate rejection` makes every parameter NaN, then infinite, on each of the 20 circuits with eliminated ports,
+  and checks the coefficients stay bit-identical and come back exactly when the parameters do.
 
 ## Oversampling
 
@@ -546,8 +552,8 @@ Moving the oversampling out of the simulation loop:
   one). Real switches pop too, but a short crossfade, or ramping the contact's δ, may be worth having.
 - Automation lives in the renderer; a host drives SchematicProcessor's controls itself.
 - The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.
-- Control changes are allocation-free, but if a pot setting made the reduction's small system exactly singular, the
-  coefficient update would throw on the audio thread. It never has on the test circuits.
+- A rejected control setting keeps the circuit at its last good coefficients, but nothing reports it to the host
+  (`LinearPortReduction.Rejected` counts them). It has never happened on the test circuits.
 - A windowed-sinc oversampler (an interpolating filter in, a decimating lowpass out) should beat more substeps for
   accuracy and aliasing (see Oversampling), and can now be added as another `Oversampler`. It would add latency (a
   linear-phase filter at 8× about 0.3–0.5 ms) that the plugin must report, and it wouldn't match LiveSPICE, so it
