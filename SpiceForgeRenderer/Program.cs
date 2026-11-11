@@ -9,7 +9,7 @@ using Expression = ComputerAlgebra.Expression;
 // The input samples drive the schematic's Input component, and the output is the sum of its speakers,
 // both in LiveSPICE's normalized units, so a full-scale sample is the component's 0 dBFS voltage.
 // Pots and switches are runtime parameters by default, held at their schematic positions or those given with --pot
-// and --switch; --switch-at moves a switch at a given time, exactly on that sample. --static-pots bakes them in instead.
+// and --switch; --pot-at and --switch-at move them at given times, exactly on that sample. --static-pots bakes them in.
 
 const int Oversample = 8;
 const int Iterations = 8;
@@ -19,7 +19,8 @@ string? engine = "compiled";
 bool dynamicPots = true;
 var potPositions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
 var switchPositions = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-var switchEvents = new List<(double Seconds, string Name, int Position)>();
+// Automation: a pot (wipe from 0 to 1) or a switch (position) set at a time in seconds.
+var automation = new List<(double Seconds, bool Pot, string Name, double Value)>();
 var positional = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
@@ -44,16 +45,21 @@ for (int i = 0; i < args.Length; i++)
             return Usage($"Expected --switch <name>=<position>, not '{setting}'.");
         switchPositions[setting[..equals]] = position;
     }
-    else if (args[i] == "--switch-at" && i + 1 < args.Length)
+    else if ((args[i] == "--switch-at" || args[i] == "--pot-at") && i + 1 < args.Length)
     {
-        // TIME:NAME=POSITION, time in seconds.
+        // TIME:NAME=VALUE, time in seconds; a switch position, or a pot's wiper position from 0 to 1.
+        bool pot = args[i] == "--pot-at";
         string setting = args[++i];
         int colon = setting.IndexOf(':'), equals = setting.LastIndexOf('=');
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        double value = 0;
+        int position = 0;
         if (colon <= 0 || equals <= colon + 1
-            || !double.TryParse(setting[..colon], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double seconds)
-            || seconds < 0 || !int.TryParse(setting[(equals + 1)..], out int position))
-            return Usage($"Expected --switch-at <seconds>:<name>=<position>, not '{setting}'.");
-        switchEvents.Add((seconds, setting[(colon + 1)..equals], position));
+            || !double.TryParse(setting[..colon], System.Globalization.NumberStyles.Float, invariant, out double seconds) || seconds < 0
+            || (pot ? !double.TryParse(setting[(equals + 1)..], System.Globalization.NumberStyles.Float, invariant, out value)
+                    : !int.TryParse(setting[(equals + 1)..], out position)))
+            return Usage($"Expected {args[i - 1]} <seconds>:<name>=<position>, not '{setting}'.");
+        automation.Add((seconds, pot, setting[(colon + 1)..equals], pot ? value : position));
     }
     else if (args[i].StartsWith("--"))
         return Usage($"Unknown option '{args[i]}'.");
@@ -64,8 +70,8 @@ if (positional.Count != 3)
     return Usage(null);
 if (engine != "compiled" && engine != "stock")
     return Usage($"Unknown engine '{engine}'.");
-if (switchEvents.Count > 0 && (engine != "compiled" || !dynamicPots))
-    return Usage("--switch-at needs the compiled engine with dynamic switches (not --engine stock or --static-pots).");
+if (automation.Count > 0 && (engine != "compiled" || !dynamicPots))
+    return Usage("--pot-at and --switch-at need the compiled engine with dynamic pots and switches (not --engine stock or --static-pots).");
 
 string schematicPath = positional[0], inputPath = positional[1], outputPath = positional[2];
 
@@ -104,13 +110,23 @@ try
     if (switchPositions.Count > 0)
         Console.WriteLine("Switches: " + string.Join(", ", switchPositions.Select(p => $"{p.Key} {p.Value}")) + ".");
 
-    // Switch automation: each event's sample, checked against the circuit's switches before rendering.
-    var events = switchEvents.OrderBy(e => e.Seconds)
-        .Select(e => (Sample: (long)Math.Round(e.Seconds * sampleRate), e.Name, e.Position)).ToList();
+    // Automation: each event's sample, checked against the circuit's pots and switches before rendering. Events at the
+    // same time apply in the order given.
+    var parameters = loaded.Parameters;
+    var events = automation.Select((e, order) => (e, order)).OrderBy(x => x.e.Seconds).ThenBy(x => x.order).Select(x => x.e)
+        .Select(e => (Sample: (long)Math.Round(e.Seconds * sampleRate), e.Pot, e.Name, e.Value)).ToList();
+    void Apply((long Sample, bool Pot, string Name, double Value) e, double[] values)
+    {
+        if (e.Pot)
+            DynamicPots.Set(values, parameters, e.Name, e.Value);
+        else
+            DynamicSwitches.Set(values, parameters, e.Name, (int)e.Value);
+    }
     foreach (var e in events)
-        DynamicSwitches.Set(new double[loaded.Parameters.Count], loaded.Parameters, e.Name, e.Position);
+        Apply(e, new double[parameters.Count]);
     if (events.Count > 0)
-        Console.WriteLine("Switch automation: " + string.Join(", ", events.Select(e => $"{e.Name} {e.Position} at {e.Sample / (double)sampleRate:0.###} s")) + ".");
+        Console.WriteLine("Automation: " + string.Join(", ", events.Select(e =>
+            $"{(e.Pot ? "pot" : "switch")} {e.Name} {e.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} at {e.Sample / (double)sampleRate:0.###} s")) + ".");
     int nextEvent = 0;
 
     using var writer = new WaveFileWriter(outputPath, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
@@ -128,7 +144,7 @@ try
         double[] blockIn = count == BlockSize ? channelIn : new double[count];
         double[] blockOut = count == BlockSize ? channelOut : new double[count];
 
-        // Split the block where switch events fall, so each takes effect on its own sample.
+        // Split the block where events fall, so each takes effect on its own sample.
         var cuts = new SortedSet<int> { 0, count };
         for (int k = nextEvent; k < events.Count && events[k].Sample < frames + count; k++)
             cuts.Add((int)Math.Max(0, events[k].Sample - frames));
@@ -143,7 +159,7 @@ try
             {
                 int start = bounds[part], length = bounds[part + 1] - start;
                 for (; k < events.Count && events[k].Sample <= frames + start; k++)
-                    DynamicSwitches.Set(processors[c].Parameters!, loaded.Parameters, events[k].Name, events[k].Position);
+                    Apply(events[k], processors[c].Parameters!);
                 if (bounds.Length == 2)
                     processors[c].Run(blockIn, blockOut);
                 else
@@ -222,10 +238,11 @@ static int Usage(string? problem)
 {
     if (problem != null)
         Console.Error.WriteLine(problem);
-    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]...");
+    Console.Error.WriteLine("Usage: SpiceForgeRenderer <schematic.schx> <input.wav> <output.wav> [--engine compiled|stock] [--static-pots] [--pot <name>=<position>]... [--switch <name>=<position>]... [--switch-at <seconds>:<name>=<position>]... [--pot-at <seconds>:<name>=<position>]...");
     Console.Error.WriteLine("  --pot sets a pot, or a group of ganged pots, by name to a wiper position from 0 to 1. Repeat it for more pots.");
     Console.Error.WriteLine("  --switch sets a switch, or a group of ganged switches, to a position: the throw it connects (from 0), or 0/1 for on/off.");
     Console.Error.WriteLine("  --switch-at TIME:NAME=POSITION moves a switch at TIME seconds, exactly on that sample. Repeat it for more changes.");
+    Console.Error.WriteLine("  --pot-at TIME:NAME=POSITION moves a pot (or group) to a wiper position from 0 to 1 at TIME seconds, the same way.");
     Console.Error.WriteLine("  --static-pots bakes pots and switches in instead of making them runtime parameters.");
     return 2;
 }

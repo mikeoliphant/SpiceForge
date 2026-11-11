@@ -52,6 +52,35 @@ public abstract class RuntimeParameter
 public static class DynamicPots
 {
     /// <summary>
+    /// Sets a pot (by name, case-insensitive) or every pot in a group of ganged pots to a wiper position from 0 to 1, in a
+    /// parameter array laid out as ExtractedSystem.RuntimeParameters.
+    /// </summary>
+    public static void Set(double[] values, IReadOnlyList<RuntimeParameter> parameters, string nameOrGroup, double wipe)
+    {
+        if (!(wipe >= 0 && wipe <= 1))
+            throw new ArgumentException($"Pot '{nameOrGroup}' position {wipe} isn't between 0 and 1.");
+        bool found = false;
+        for (int j = 0; j < parameters.Count; j++)
+            if (parameters[j] is PotParameter pot && Matches(pot, nameOrGroup))
+            {
+                values[j] = pot.ValueAt(wipe);
+                found = true;
+            }
+        if (!found)
+        {
+            string[] names = parameters.OfType<PotParameter>()
+                .Select(p => p.Component is IPotControl c && !string.IsNullOrEmpty(c.Group) ? c.Group : p.Name).Distinct().ToArray();
+            throw new ArgumentException($"No dynamic pot named '{nameOrGroup}'. The pots are: {(names.Length == 0 ? "(none)" : string.Join(", ", names))}.");
+        }
+    }
+
+    private static bool Matches(PotParameter pot, string nameOrGroup) =>
+        string.Equals(pot.Name, nameOrGroup, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(pot.Component.Name, nameOrGroup, StringComparison.OrdinalIgnoreCase)
+        || (pot.Component is IPotControl control && !string.IsNullOrEmpty(control.Group)
+            && string.Equals(control.Group, nameOrGroup, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Swaps every Potentiometer and VariableResistor in the circuit, including inside subcircuits, for one whose
     /// position is a runtime parameter. Returns the parameters, in a stable order.
     /// </summary>
