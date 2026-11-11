@@ -172,7 +172,12 @@ The editor always has one active tool.
 
 ### Connectivity
 
-- Terminals that coincide, wires joined end to end, and named wires with the same name form nodes.
+- Nodes are formed by wires.
+  - Two wires connect when an end of one lies anywhere on the other, at its end or along it. Wires that only cross
+    don't connect.
+  - A symbol terminal connects to the node of any wire through its point. Two terminals that touch with no wire there
+    aren't connected.
+  - Named wires (and grounds) with the same name share a node.
 - The editor shows connection state through terminal colour and wire tooltips; there is no separate netlist view.
 
 ## Component library panel
