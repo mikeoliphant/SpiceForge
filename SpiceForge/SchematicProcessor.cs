@@ -35,6 +35,11 @@ public sealed class SchematicProcessorOptions
     /// <summary>How long a pot takes to reach a new position, in milliseconds, in a straight line. 0 moves at once.</summary>
     public double PotSmoothingMilliseconds { get; init; } = 5;
 
+    /// <summary>How long a switch takes to reach a new position, in milliseconds: each contact that changes sweeps its
+    /// resistance from 1 GΩ to 1 Ω (or back) on a log scale, then lands exactly open or closed. 0 switches at once,
+    /// which pops and can make Newton cap a few steps.</summary>
+    public double SwitchSmoothingMilliseconds { get; init; } = 5;
+
     /// <summary>Receives LiveSPICE's messages while the schematic loads; none by default.</summary>
     public ILog? Log { get; init; }
 
@@ -75,6 +80,7 @@ public sealed class SchematicProcessor
     private readonly double[] scales;
     private readonly int speakerCount;
     private readonly long smoothingSamples;
+    private readonly long switchSmoothingSamples;
     private double[][] buffers = Array.Empty<double[]>();
     // The controls as arrays, so the audio thread loops over them without allocating an enumerator.
     private readonly PotControl[] pots;
@@ -147,6 +153,7 @@ public sealed class SchematicProcessor
                 engine.Oversampler = new SincOversampler(options.Oversample);
         Latency = engines[0].Oversampler.Latency;
         smoothingSamples = (long)Math.Round(options.PotSmoothingMilliseconds / 1000 * sampleRate);
+        switchSmoothingSamples = (long)Math.Round(options.SwitchSmoothingMilliseconds / 1000 * sampleRate);
 
         var pots = new List<PotControl>();
         foreach (PotParameter pot in loaded.Pots)
@@ -192,7 +199,10 @@ public sealed class SchematicProcessor
         // pot or switch only recomputes the engines' folded coefficients, in place.
         bool smoothing = false;
         for (int k = 0; k < switches.Length; k++)
-            switches[k].Latch();
+        {
+            switches[k].Latch(switchSmoothingSamples);
+            smoothing |= switches[k].Moving;
+        }
         for (int k = 0; k < pots.Length; k++)
         {
             pots[k].Latch(smoothingSamples);
@@ -204,6 +214,8 @@ public sealed class SchematicProcessor
             int length = smoothing ? Math.Min(SmoothingStep, count - start) : count - start;
             for (int k = 0; k < pots.Length; k++)
                 pots[k].Advance(length);
+            for (int k = 0; k < switches.Length; k++)
+                switches[k].Advance(length);
             for (int c = 0; c < Channels; c++)
             {
                 double[] values = engines[c].ParameterValues;
@@ -332,9 +344,16 @@ public sealed class PotControl
 /// <summary>A switch, or a group of ganged switches, of a <see cref="SchematicProcessor"/>.</summary>
 public sealed class SwitchControl
 {
+    // The resistances a moving contact sweeps between, on a log scale: from where it barely conducts to where it's
+    // effectively a short, for the circuits' impedances (tens of ohms to megohms).
+    private const double SweepOpen = 1e9, SweepClosed = 1;
+
     private int target;
     private readonly int[] indices;
     private readonly SwitchParameter[] contacts;
+    // Each contact's parameter value where the current move started and where it ends.
+    private readonly double[] from, to;
+    private long rampLength, rampDone;
 
     internal SwitchControl(string name, int positions, int initial, int[] indices, SwitchParameter[] contacts)
     {
@@ -344,6 +363,10 @@ public sealed class SwitchControl
         target = Applied = initial;
         this.indices = indices;
         this.contacts = contacts;
+        from = new double[contacts.Length];
+        to = new double[contacts.Length];
+        for (int k = 0; k < contacts.Length; k++)
+            from[k] = to[k] = contacts[k].ValueAt(initial);
     }
 
     /// <summary>The switch's name, or its group's.</summary>
@@ -356,7 +379,7 @@ public sealed class SwitchControl
     public int DefaultPosition { get; }
 
     /// <summary>The position the switch is set to: the throw it connects, from 0, or 0 off and 1 on. Safe to set from
-    /// any thread; it takes effect at the start of the processor's next block.</summary>
+    /// any thread; it starts moving there at the start of the processor's next block.</summary>
     public int Position
     {
         get => Volatile.Read(ref target);
@@ -368,13 +391,56 @@ public sealed class SwitchControl
         }
     }
 
+    /// <summary>The position the switch is moving to, or at.</summary>
     internal int Applied { get; private set; }
 
-    internal void Latch() => Applied = Volatile.Read(ref target);
+    internal bool Moving => rampDone < rampLength;
+
+    internal void Latch(long smoothing)
+    {
+        int wanted = Volatile.Read(ref target);
+        if (wanted == Applied)
+            return;
+        // A move that interrupts another starts from wherever the contacts have got to.
+        for (int k = 0; k < contacts.Length; k++)
+        {
+            from[k] = Value(k);
+            to[k] = contacts[k].ValueAt(wanted);
+        }
+        Applied = wanted;
+        rampLength = smoothing;
+        rampDone = 0;
+    }
+
+    internal void Advance(int samples)
+    {
+        if (Moving)
+            rampDone = Math.Min(rampLength, rampDone + samples);
+    }
 
     internal void Apply(double[] values)
     {
         for (int k = 0; k < indices.Length; k++)
-            values[indices[k]] = contacts[k].ValueAt(Applied);
+            values[indices[k]] = Value(k);
+    }
+
+    // Contact k's parameter value now: on the way from `from` to `to`, its resistance moved geometrically.
+    private double Value(int k)
+    {
+        if (!Moving || from[k] == to[k])
+            return to[k];
+        double x = (double)rampDone / rampLength;
+        double log = (1 - x) * LogResistance(from[k]) + x * LogResistance(to[k]);
+        double r = Math.Exp(log);
+        // The contact obeys (1/2 - δ)·v = (1/2 + δ)·R0·i, so its resistance is R0·u/(1 - u) with u = δ + 1/2.
+        double u = r / (SwitchParameter.NominalResistance + r);
+        return u - 0.5;
+    }
+
+    private static double LogResistance(double value)
+    {
+        double u = value + 0.5;
+        double r = u <= 0 ? SweepClosed : u >= 1 ? SweepOpen : SwitchParameter.NominalResistance * u / (1 - u);
+        return Math.Log(Math.Clamp(r, SweepClosed, SweepOpen));
     }
 }

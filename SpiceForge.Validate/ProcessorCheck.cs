@@ -133,7 +133,7 @@ internal static class ProcessorCheck
         {
             SwitchControl sw = processor.Switches[0];
             int target = (sw.DefaultPosition + 1) % sw.Positions;
-            var fresh = new SchematicProcessor(file, SampleRate);
+            var fresh = new SchematicProcessor(file, SampleRate, new SchematicProcessorOptions { SwitchSmoothingMilliseconds = 0 });
             double[] moved = Through(fresh, 700, p => p.GetSwitch(sw.Name).Position = target);
             double[] reference = Reference((values, parameters) => DynamicSwitches.Set(values, parameters, sw.Name, target));
             Report($"switch {sw.Name} to {target} between blocks, same as the engine", moved.SequenceEqual(reference));
