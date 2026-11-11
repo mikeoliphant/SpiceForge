@@ -754,6 +754,28 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   Fuzz Face got faster (1.76 → 1.10), since it no longer spends its iterations walking back from overshoots. The
   oversampling study's table (see Oversampling) predates this and wasn't rerun.
 
+## The editing server
+
+`SpiceForgeServer` serves the editing side of DesignDocs/WebSocketApi.md, and `SpiceForge.Validate server` checks it.
+
+- **Convert files attribute for attribute, not through LiveSPICE's model.** The JSON document is built straight from
+  the XML: each component's attributes become its properties, and its child nodes (a subcircuit's contents) an opaque
+  body. LiveSPICE is only asked whether each component would load. All 53 schematics in `Tests` come back
+  `XNode.DeepEquals` to the original through the document and JSON text, including `Errors/Unserialized.schx`'s
+  unresolved component. Going through `Schematic.Deserialize` and `Serialize` would drop what LiveSPICE can't load,
+  and reorder and normalize attributes.
+- **LiveSPICE renames duplicate names as components are added**, so `Schematic.Build`'s duplicate-name check can't
+  fire on a loaded file. Its `ComponentCollection.Add` applies `Component.UniqueName`: two R1s load as R1 and R2.
+  `circuit.check` therefore looks for duplicates in the document's own names.
+- **A quantity parses as an expression.** `Quantity.Parse("banana")` succeeds, as a symbol, and the value only fails
+  when the circuit is solved. `values.check` rejects any symbol but `t`, which a source's value may use
+  (`Sin(2*Pi*440*t) V` checks).
+- **LiveSPICE's ohm is U+2126 (OHM SIGN), not U+03A9.** A test written with the Greek omega failed against correct
+  output.
+- **Not every component type can be described.** `Circuit.Specialization` throws from `PartNumber`, and `Units`'s
+  `==` throws when either side is null (test with `is not null`). LiveSPICE's library skips a type that fails;
+  the catalogue does the same, and lists 131 entries.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was

@@ -18,6 +18,9 @@ if (args.Length > 0 && args[0] == "--child")
 
 string repo = FindRepoRoot();
 string testsDir = Path.Combine(repo, "Dependencies", "LiveSPICE", "Tests");
+if (args.Length > 0 && args[0] == "server")
+    return ServerCheck.Run(repo, testsDir);
+
 if (args.Length > 0 && args[0] == "segment")
     return SegmentCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 

@@ -26,4 +26,5 @@
   <Project Path="SpiceForge/SpiceForge.csproj" Id="12d1f692-0f24-4201-acb6-3a17f1988831" />
   <Project Path="SpiceForgeRenderer/SpiceForgeRenderer.csproj" />
   <Project Path="SpiceForgeSegments/SpiceForgeSegments.csproj" />
+  <Project Path="SpiceForgeServer/SpiceForgeServer.csproj" />
 </Solution>

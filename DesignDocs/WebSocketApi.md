@@ -67,12 +67,14 @@ Version 1, draft.
   units, but the server doesn't enforce it.
 - **Symbol-local coordinates** (in layouts) are numbers, with y up; see Mapping symbols.
 - **Ids:**
-  - Elements: the client assigns element ids (any string, unique within a document). The server echoes them back when
-    it refers to elements, and never stores them in files.
+  - Elements: element ids belong to the client (any string, unique within a document). The server echoes them back
+    when it refers to elements, and never stores them in files. Documents the server produces (`file.read`,
+    `schx.fromXml`) come with provisional ids `e1`, `e2` and so on, which the client may keep or replace.
   - Simulations and probes: the server assigns ids such as `s2` and `p1`. A probe also has a small integer `stream`,
     which identifies its samples in binary frames.
 - **Property values** are strings, exactly as LiveSPICE's type converters write them in invariant culture, and as
-  `.schx` files store them: `"10 kΩ"`, `"100 nF"`, `"0.5"`, `"Logarithmic"`, `"true"`.
+  `.schx` files store them: `"10 kΩ"`, `"100 nF"`, `"0.5"`, `"Logarithmic"`, `"true"`. The ohm in them is U+2126
+  (OHM SIGN), as LiveSPICE writes it, not the Greek capital omega (U+03A9).
 - **Enumerations** are strings. Edge colours are `wire`, `black`, `gray`, `red`, `green`, `blue`, `yellow`, `cyan`,
   `magenta` and `orange`. Log levels are `error`, `warning`, `info` and `verbose`.
 - **Levels and gains:** levels are linear peaks, 1.0 being full scale. Gains are in dB.
@@ -103,7 +105,10 @@ The client's document format mirrors `.schx`, one-to-one:
   embedded contents of a subcircuit component.
 - **`component.unresolved`** (set by the server) means the type couldn't be loaded, a plugin type that's missing, say.
   It carries a `message`. The client draws a placeholder from the layout the server provides, and must keep the
-  element, which the server writes back to the file as it was read.
+  element, which the server writes back to the file as it was read. An unresolved component's `type` is the full
+  assembly-qualified name from the file, so it's written back exactly.
+- **`kind: "raw"`** is any element that's neither a symbol nor a wire, kept as its `xml` (a string) and written back
+  unchanged. LiveSPICE's own files have none; the kind exists so nothing a file holds is lost.
 
 ### Connectivity
 
@@ -229,6 +234,8 @@ Y  = y1·cos − x·sin + py
 | `settings.set` | any of `logVerbosity`, `simulationDefaults`, `client` | the settings |
 
 - **`capabilities`** says what this server supports:
+  - `simulation` and `audio`: whether those operations are implemented. While they're false, `sim.*` and `audio.*`
+    answer `unsupported`;
   - `maxInputs`: how many Input components a simulation can drive (see Server notes);
   - `resampling`: the choices (`["linear", "sinc"]`);
   - `oversample` and `iterationCap`: their ranges;
@@ -297,8 +304,11 @@ A property descriptor:
 |---|---|---|
 | `values.check` | `items: [{type, property, value}]` (`type` may be `"circuit"`) | `items: [{ok, value} or {ok: false, message}]` |
 
-- The server parses each value with the property's type converter. It returns the value in canonical form (`"10k"`
-  becomes `"10 kΩ"`), or the reason it doesn't parse.
+- The server parses each value with the property's type converter, sets it on a fresh component and reads it back.
+  It returns the value as the component holds it (`"4.7k"` becomes `"4.7 kΩ"`), or the reason it doesn't parse.
+- **Quantities are expressions.** LiveSPICE parses a quantity as an expression, so a word like `"banana"` parses (as a
+  symbol) and only fails when the circuit is solved. `values.check` rejects any symbol other than `t`, the time, which
+  a source's value may use (`"Sin(2*Pi*440*t) V"`).
 - The client calls this when a property edit is committed, before putting the edit on its undo stack. It's a
   convenience: the client may also parse values itself, and the server checks everything again when it builds.
 
@@ -340,6 +350,9 @@ A property descriptor:
 - **What it does:** builds the circuit as LiveSPICE does (`Schematic.Build`), without solving it.
 - **Problems:** `{ "message": "...", "elements": ["e7"] }`. Duplicate names and unresolved types are errors;
   unconnected terminals and deprecated components are warnings.
+- **Duplicate names** are found in the document's own names. LiveSPICE renames a clashing component as it's added to
+  a circuit (R1 to R2), so a loaded schematic never holds duplicates, though a file can, and `Schematic.Build`'s own
+  check never fires on one. The nodes and controls report the renamed components.
 - **Nodes:** `{ "name": "_v12", "terminals": [{ "element": "e7", "terminal": "A" }], "wires": ["e2", "e3"] }`, the
   server's node assignment. A client test can compare it with its own connectivity.
 - **`controls`** lists the pots and switches a simulation would have (see Controls). The client can show them before
@@ -676,6 +689,29 @@ The price of owning the document, in one list:
   open with silently broken connections.
 
 ## Server notes
+
+**Status.** `SpiceForgeServer` implements the editing side:
+- session and settings;
+- the catalogue, layouts and value checks;
+- files, watching and the clipboard format;
+- `circuit.check`;
+- the log.
+
+Audio and simulation answer `unsupported`, and `hello` reports `simulation: false` and `audio: false`.
+
+**Running it.** It listens on 127.0.0.1, port 8370 by default ('S' is 83 and 'F' is 70 in ASCII). The settings come
+from the command line, environment variables prefixed `SPICEFORGE_`, or `appsettings.json`:
+
+| Setting | Default |
+|---|---|
+| `--port` | 8370 |
+| `--token` | A random token each run |
+| `--allowedOrigins` | None, besides the server's own (comma-separated) |
+| `--settings` | `%APPDATA%/SpiceForge/server-settings.json` |
+| `--userFolder` | `Documents/LiveSPICE` |
+
+It prints the URL to connect to, with the token. `SpiceForge.Validate server` checks it: every test schematic through
+the JSON document and back, and every editing operation against a running server.
 
 What the server needs beyond today's SpiceForge:
 

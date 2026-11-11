@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SpiceForgeServer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpiceForge\SpiceForge.csproj" />
+  </ItemGroup>
+
+  <!-- LiveSPICE's component libraries (diodes, transistors, tubes, op-amps), loaded into the catalogue. -->
+  <ItemGroup>
+    <None Include="..\Dependencies\LiveSPICE\Circuit\Components\*.xml" Link="Components\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SpiceForge.Validate" />
+  </ItemGroup>
+
+</Project>

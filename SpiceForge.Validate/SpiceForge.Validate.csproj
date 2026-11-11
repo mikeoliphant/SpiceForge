@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SpiceForge\SpiceForge.csproj" />
     <ProjectReference Include="..\SpiceForge.ReferenceCapture\SpiceForge.ReferenceCapture.csproj" />
+    <ProjectReference Include="..\SpiceForgeServer\SpiceForgeServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>
