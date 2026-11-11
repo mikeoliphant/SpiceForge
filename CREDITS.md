@@ -1,38 +1,47 @@
 # Credits
 
 SpiceForge builds on other people's work, both as code it depends on and as ideas that shaped how it solves circuits.
-Each project's own license applies to its code.
+SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own license, given below.
 
 ## Dependencies
 
 ### Submodules
 
-- [LiveSPICE](https://github.com/dsharlet/LiveSPICE) by Dillon Sharlet, used through the
+- [LiveSPICE](https://github.com/dsharlet/LiveSPICE) by Dillon Sharlet (MIT), used through the
   [mikeoliphant/LiveSPICE](https://github.com/mikeoliphant/LiveSPICE) fork in `Dependencies/LiveSPICE`, unmodified.
   Its schematic format, component models, `Circuit.Analyze()` and transient solution are the front end every engine
   here starts from; its `Simulation` is the reference the engines were validated against, and its `Tests` circuits
   are the test suite. The plugin's editor follows the layout of LiveSPICE's VST.
-- [ComputerAlgebra](https://github.com/dsharlet/ComputerAlgebra) by Dillon Sharlet, inside LiveSPICE: the symbolic
+- [ComputerAlgebra](https://github.com/dsharlet/ComputerAlgebra) by Dillon Sharlet (MIT), inside LiveSPICE: the symbolic
   algebra (gradients, simplification, LINQ compilation) the extractor and the compiled engine are built on.
-- [UILayout](https://github.com/mikeoliphant/UILayout), in `SpiceForgePlugin/Dependencies/UILayout`: the plugin's user
-  interface and the image sheet processor that renders its textures.
+- [UILayout](https://github.com/mikeoliphant/UILayout) (Mozilla Public License 2.0), in
+  `SpiceForgePlugin/Dependencies/UILayout`: the plugin's user interface and the image sheet processor that renders its
+  textures. MPL 2.0 applies file by file, so UILayout's files stay under it while SpiceForge's own code is MIT.
 
 ### NuGet packages
 
 - [AudioPlugSharp](https://github.com/mikeoliphant/AudioPlugSharp) (`AudioPlugSharp`, `AudioPlugSharpVst3`,
-  `AudioPlugSharpHost`): the VST3 bridge, and the stand-alone ASIO host.
+  `AudioPlugSharpHost`; MIT): the VST3 bridge, and the stand-alone ASIO host. The host talks to ASIO drivers through its
+  own interop code and includes no Steinberg ASIO SDK code.
+  - The VST3 bridge (`SpiceForgeVstBridge.vst3`) is built from Steinberg's
+    [VST 3 SDK](https://github.com/steinbergmedia/vst3sdk), licensed under the Steinberg VST3 License or, alternatively,
+    GPL version 3. SpiceForge's source is MIT; a distributed `.vst3` binary is subject to the Steinberg VST3 License's
+    terms for the SDK parts. VST is a trademark of Steinberg Media Technologies GmbH.
 - [MonoGame](https://github.com/MonoGame/MonoGame) (`MonoGame.Framework.WindowsDX`, `MonoGame.Framework.DesktopGL`,
-  `MonoGame.Content.Builder.Task`): rendering the plugin's editor, and building its content.
-- [NAudio](https://github.com/naudio/NAudio): reading and writing WAV files in the renderer, validation tools and host.
-- [SVG.NET](https://github.com/svg-net/SVG) (`Svg`, through UILayout's image processor): rendering the editor's SVG
-  images.
-- [Roslyn](https://github.com/dotnet/roslyn) (`Microsoft.CodeAnalysis.CSharp`), referenced by the plugin.
+  `MonoGame.Content.Builder.Task`; Microsoft Public License): rendering the plugin's editor, and building its content.
+- [NAudio](https://github.com/naudio/NAudio) (MIT): reading and writing WAV files in the renderer, validation tools and
+  host.
+- [SVG.NET](https://github.com/svg-net/SVG) (`Svg`, through UILayout's image processor; Microsoft Public License):
+  rendering the editor's SVG images.
+- [Roslyn](https://github.com/dotnet/roslyn) (`Microsoft.CodeAnalysis.CSharp`; MIT), referenced by the plugin.
+- UILayout's image processor also uses SharpFont (`SpaceWizards.SharpFont`; MIT) and StbImageSharp and
+  StbImageWriteSharp, at build time only.
 
 ### Assets
 
-- [Inter](https://github.com/rsms/inter) by Rasmus Andersson (SIL Open Font License): the editor's font.
+- [Inter](https://github.com/rsms/inter) by Rasmus Andersson (SIL Open Font License 1.1): the editor's font.
 - The editor's file, edit and reload icons are from Google's
-  [Material Symbols](https://github.com/google/material-design-icons).
+  [Material Symbols](https://github.com/google/material-design-icons) (Apache License 2.0).
 - The switch lamps are styled after the PowerOn and PowerOff images of
   [Stompbox](https://github.com/mikeoliphant/StompboxUI).
 

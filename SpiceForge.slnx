@@ -2,6 +2,7 @@
   <Folder Name="/Solution Items/">
     <File Path="AGENTS.md" />
     <File Path="CREDITS.md" />
+    <File Path="LICENSE" />
   </Folder>
   <Folder Name="/DesignDocs/">
     <File Path="DesignDocs/LessonsLearned.md" />
