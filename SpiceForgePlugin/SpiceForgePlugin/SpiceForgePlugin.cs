@@ -20,7 +20,8 @@ namespace SpiceForgePlugin
         public int Oversample { get; set; } = SpiceForgePlugin.DefaultOversample;
         public int Iterations { get; set; } = SpiceForgePlugin.DefaultIterations;
         public bool AutoReload { get; set; }
-        public bool SincResampling { get; set; }
+        // On by default; a state saved without it (before the option existed) gets sinc too.
+        public bool SincResampling { get; set; } = true;
         public List<ControlSetting> Pots { get; set; } = new List<ControlSetting>();
         public List<ControlSetting> Switches { get; set; } = new List<ControlSetting>();
     }
@@ -60,7 +61,7 @@ namespace SpiceForgePlugin
 
         /// <summary>Whether to resample with windowed sincs (a flat band and little aliasing, about 40 samples of
         /// latency the host isn't told about) instead of LiveSPICE's linear interpolation and averaging.</summary>
-        public bool SincResampling { get; private set; }
+        public bool SincResampling { get; private set; } = true;
 
         /// <summary>The running processor, or null while there's none (audio passes through).</summary>
         public SchematicProcessor CurrentProcessor => Volatile.Read(ref processor);

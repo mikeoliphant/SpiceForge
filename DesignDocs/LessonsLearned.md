@@ -636,7 +636,7 @@ in the renderer, a toggle in the plugin):
   (`SchematicProcessor.RejectedSettings` counts them). It has never happened on the test circuits.
 - Sinc resampling's 40 samples of latency can't be reported to a host: AudioPlugSharp has no latency call, so a DAW
   won't compensate for it. A minimum-phase or shorter filter would cut it, at some cost in phase or rejection.
-- Sinc resampling is opt-in. Whether it should be the plugin's default (it doesn't match LiveSPICE, and adds latency)
-  hasn't been decided.
+- The plugin defaults to sinc resampling (the processor and renderer keep LiveSPICE's linear), so its 40 samples of
+  latency, unreported to the host, are now the norm in a DAW.
 - The plugin defaults to 4× with a cap of 32, which the study found nearly as accurate as 8× for about 40% less CPU.
   With sinc resampling, error falls about 12 dB per doubling of N, so a user choosing sinc may want 8× back.
