@@ -554,7 +554,7 @@ the 64× reference):
 
 - **Raising the cap is free.** At N=8 a cap of 32 matched a cap of 8 exactly on 17 circuits, at the same CPU, because
   the cap only costs anything on steps that would hit it. On the Rat it took 5 kHz error from −27.5 to −31.2 dB and
-  aliasing from −22 to −39 dB; on the SD-1, 5 kHz aliasing from −47.1 to −48.7. The plugin now defaults to 32;
+  aliasing from −22 to −39 dB; on the SD-1, 5 kHz aliasing from −47.1 to −48.7. The plugin now defaults to 32 (and to 4×, below);
   `SchematicProcessorOptions` and the renderer keep LiveSPICE's 8.
 - **Half the substeps nearly match, once the cap is raised.** N=4 with a cap of 32 was within about 1 to 3 dB of the
   default (N=8, cap 8) on every circuit, and better on the Rat's 5 kHz aliasing (−28.6 against −22.4 dB), for 35 to
@@ -638,5 +638,5 @@ in the renderer, a toggle in the plugin):
   won't compensate for it. A minimum-phase or shorter filter would cut it, at some cost in phase or rejection.
 - Sinc resampling is opt-in. Whether it should be the plugin's default (it doesn't match LiveSPICE, and adds latency)
   hasn't been decided.
-- The plugin's default oversampling is still 8×; 4× with its cap of 32 is nearly as accurate for about 40% less CPU,
-  but hasn't been made the default.
+- The plugin defaults to 4× with a cap of 32, which the study found nearly as accurate as 8× for about 40% less CPU.
+  With sinc resampling, error falls about 12 dB per doubling of N, so a user choosing sinc may want 8× back.
