@@ -522,6 +522,9 @@ Moving the oversampling out of the simulation loop:
   noise (Big Muff 18.7–18.8 µs per sample, Rat 7.6–7.7, Blues Breaker 3.0), and the smallest circuits at most about
   0.04 µs, within their run-to-run noise. The compiled engine keeps its step buffers between blocks, so it still
   allocates nothing.
+- **A copy of the arithmetic drifts.** `CutCheck` interpolated its halves' input itself, restarting each ramp from the
+  exact previous sample where the engine accumulates, so it differed from the uncut circuit's steps by roundoff
+  though its comment said "exactly as the engine does". It now uses `LinearOversampler`, so it is exact.
 
 ## Open issues
 
@@ -554,4 +557,3 @@ Moving the oversampling out of the simulation loop:
   belongs behind an option.
 - At the default iteration cap of 8, oversampling partly compensates for Newton not converging; a higher cap with a
   lower factor was cheaper and more accurate on the Rat. The defaults haven't been revisited.
-- `CutCheck` still interpolates and averages on its own instead of using `LinearOversampler` and `RunSteps`.
