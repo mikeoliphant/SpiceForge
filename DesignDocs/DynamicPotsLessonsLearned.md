@@ -292,6 +292,27 @@ the error against the uncut circuit, with no load or a linear copy of the downst
   circuit, so node lists differ in length and order. Comparing by index made correct results look 100 dB wrong, twice.
   Nodes only switch contacts touch have no role in the circuit and aren't compared against LiveSPICE.
 
+## Automation in the renderer
+
+`--pot-at` and `--switch-at` move a pot or switch at a given time; `--pot-ramp` spreads pot moves over a few ms.
+
+- **Parameters change between runs, so split the block at each event.** The engines read new parameter values when a
+  `Run` starts, so the renderer cuts each block where events fall and runs the pieces, which puts every change on its
+  exact sample in every channel. Each change recomputes the folded coefficients once, which is cheap.
+- **A no-op event is the test that splitting is harmless.** Setting a pot or switch to the position it already has,
+  in the middle of a block, has to leave the output bit-identical; a real change has to leave it identical up to the
+  event and differ from exactly its sample on. Both held for pots and switches.
+- **A ramp is a line of small steps.** A ramped move is a new pot position every 32 samples, from wherever the pot is
+  to its target. A later move of the same pot starts from where the ramp has got to and drops the rest of it, so
+  overlapping moves can't fight. A ramp of 0 is the instant case, bit for bit.
+- **Measure what the change does, not the waveform's steps.** The largest sample-to-sample step barely moved with a
+  ramp (0.401 against 0.393), because the SD-1's clipped wave has steeper edges of its own than any click. Its gain
+  relative to the unchanged circuit, per millisecond, showed the difference plainly: a jump from 1.00 to 2.00 at once,
+  against a steady rise over the 10 ms ramp.
+- **Check names and values before rendering.** Every event is applied once to a scratch array before the render
+  starts, so a misspelt pot or an out-of-range position fails at once with the list of what exists, rather than
+  partway through a long file.
+
 ## Open issues
 
 - Live coefficient reads remain a cost on large circuits: the Big Muff's dynamic step is about 3 µs slower than baked
@@ -304,8 +325,8 @@ the error against the uncut circuit, with no load or a linear copy of the downst
   sweep also has capped steps that aren't explained.
 - Lookup tables over a pot need recordings that sweep it (`--sweep`), and are built in the table's bounding box, so
   thousands of corner points the circuit never reaches don't converge (harmlessly, so far).
-- Pots and switches can be set per render but not automated over time.
-- Switching instantly from one position to another causes a large transient, and on the Blues Breaker and JCM2000
-  Newton caps a few steps there (a switched run is -22 and -70 dB from a tightly converged one). Real switches pop too,
-  but a short crossfade or a ramped δ may be worth having.
+- Switches move instantly, even with `--pot-ramp`, which only ramps pots. The jump causes a large transient, and on the
+  Blues Breaker and JCM2000 Newton caps a few steps there (a switched run is -22 and -70 dB from a tightly converged
+  one). Real switches pop too, but a short crossfade, or ramping the contact's δ, may be worth having.
+- Automation lives in the renderer only; a host (the VST plugin, say) would drive ParameterValues the same way.
 - The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.
