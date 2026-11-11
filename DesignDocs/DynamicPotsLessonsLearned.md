@@ -271,6 +271,27 @@ the error against the uncut circuit, with no load or a linear copy of the downst
   to 1.43 µs baked, and the JIT benchmark's median speed against stock from 0.73× to 0.91×.
 - **Not too large.** Unrolling up to 12 made the Big Muff's 10-port solve slower (15.7 to 18.0 µs baked).
 
+## Dynamic switches
+
+- **A switch contact fits the same scheme as a pot leg.** Each throw is a leg with its own current, obeying
+  (1/2 - δ)·v = (1/2 + δ)·R0·i: closed (δ = -1/2) is v = 0, an exact short, and open (δ = +1/2) is i = 0, exactly
+  open. Written as v - R0·i = 2δ·s with an auxiliary unknown s = v + R0·i, δ multiplies a single dedicated port, which
+  the reduction always eliminates; otherwise a node a diode also reads would pull the switch into the Newton solve.
+  Every combination of switch positions in the test circuits agrees with the baked circuit to -193 dB or better, and
+  the circuits stay stable when switched every 0.1 s.
+- **The nominal resistance matters for accuracy, not correctness.** E holds each contact at R0, and folding it to a
+  short or an open puts roundoff on tiny nearby nodes. On the Blues Breaker, 10 kΩ left millivolt nodes at -41 dB from
+  LiveSPICE; 10 MΩ passes everywhere.
+- **Open exactly; tie nodes that only switches touch.** A finite open resistance leaks (10¹⁵ Ω put the Bassman's
+  high-impedance nodes at -93 dB from 325 V of B+) or, made larger, makes nodes held by one device too stiff for
+  Newton (10¹⁸ Ω: -67 dB). Opening exactly is fine except for a node only switch contacts touch, which would be
+  undetermined: those get a 10¹⁵ Ω tie to ground, which leaves them at 0 V when floating, as LiveSPICE reports them.
+  Opening those contacts to a finite resistance instead joined the switches' commons through the node.
+- **A throw that connects to nothing carries no current.** Its contact is skipped, as LiveSPICE drops such a node.
+- **Compare by node name, and only nodes that mean something.** A closed contact merges nodes in LiveSPICE's baked
+  circuit, so node lists differ in length and order. Comparing by index made correct results look 100 dB wrong, twice.
+  Nodes only switch contacts touch have no role in the circuit and aren't compared against LiveSPICE.
+
 ## Open issues
 
 - Live coefficient reads remain a cost on large circuits: the Big Muff's dynamic step is about 3 µs slower than baked
@@ -283,5 +304,8 @@ the error against the uncut circuit, with no load or a linear copy of the downst
   sweep also has capped steps that aren't explained.
 - Lookup tables over a pot need recordings that sweep it (`--sweep`), and are built in the table's bounding box, so
   thousands of corner points the circuit never reaches don't converge (harmlessly, so far).
-- Pots can be set per render but not automated over time.
+- Pots and switches can be set per render but not automated over time.
+- Switching instantly from one position to another causes a large transient, and on the Blues Breaker and JCM2000
+  Newton caps a few steps there (a switched run is -22 and -70 dB from a tightly converged one). Real switches pop too,
+  but a short crossfade or a ramped δ may be worth having.
 - The compiled step has no register-pressure estimate; spill traps are found by reading the JIT's output.

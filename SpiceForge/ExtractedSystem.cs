@@ -43,7 +43,7 @@ public sealed class ExtractedSystem
     public required Arrow[] InitialConditions { get; init; }
 
     /// <summary>Runtime parameters (dynamic pots) whose symbols appear in the nonlinear terms, read while running.</summary>
-    public PotParameter[] RuntimeParameters { get; init; } = Array.Empty<PotParameter>();
+    public RuntimeParameter[] RuntimeParameters { get; init; } = Array.Empty<RuntimeParameter>();
 
     public int Rows => Equations.Length;
     public int Ports => Q.GetLength(0);

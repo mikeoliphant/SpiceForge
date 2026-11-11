@@ -11,16 +11,8 @@ namespace SpiceForge;
 /// P0, which is nonsingular whenever the circuit is, and δ only ever multiplies a current: it never ends up in a
 /// denominator, and a leg at 0 Ω is still an exact short. The engine treats each leg as one more port, with δ read at runtime.
 /// </summary>
-public sealed class PotParameter
+public sealed class PotParameter : RuntimeParameter
 {
-    public required string Name { get; init; }
-
-    /// <summary>The component this parameter belongs to (the replacement pot in the circuit).</summary>
-    public required Component Component { get; init; }
-
-    /// <summary>The symbol for the parameter, δ = P - P0, in the circuit's equations.</summary>
-    public required Variable Symbol { get; init; }
-
     public required SweepType Sweep { get; init; }
 
     /// <summary>The wiper position from the schematic.</summary>
@@ -32,7 +24,28 @@ public sealed class PotParameter
     /// <summary>The parameter value for a wiper position between 0 and 1: the tapered position, minus <see cref="Nominal"/>.</summary>
     public double ValueAt(double wipe) => VariableResistor.AdjustWipe(wipe, Sweep) - Nominal;
 
-    public double InitialValue => ValueAt(InitialWipe);
+    public override double InitialValue => ValueAt(InitialWipe);
+}
+
+/// <summary>
+/// A value the circuit's equations read at runtime, so it can change between any two blocks without re-solving: a pot's
+/// position (<see cref="PotParameter"/>) or a switch contact's state (<see cref="SwitchParameter"/>).
+/// </summary>
+public abstract class RuntimeParameter
+{
+    public required string Name { get; init; }
+
+    /// <summary>The component this parameter belongs to (the replacement in the circuit).</summary>
+    public required Component Component { get; init; }
+
+    /// <summary>The parameter's symbol in the circuit's equations.</summary>
+    public required Variable Symbol { get; init; }
+
+    /// <summary>The value at the schematic's setting.</summary>
+    public abstract double InitialValue { get; }
+
+    /// <summary>The value to solve the DC starting point with, at the schematic's setting.</summary>
+    public virtual double DcValue => InitialValue;
 }
 
 /// <summary>Replaces a circuit's pots and variable resistors with dynamic versions.</summary>

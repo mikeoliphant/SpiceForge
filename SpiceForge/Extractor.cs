@@ -12,12 +12,12 @@ public static class Extractor
 
     private static readonly Variable t = Component.t;
 
-    /// <param name="parameters">Runtime parameters in the equations, such as dynamic pots. The DC starting point
-    /// uses their initial values; everywhere else they stay symbols, read at runtime.</param>
-    public static ExtractedSystem Extract(Analysis analysis, Expression timeStep, IReadOnlyList<PotParameter>? parameters = null)
+    /// <param name="parameters">Runtime parameters in the equations, such as dynamic pots and switches. The DC starting
+    /// point uses their DC values; everywhere else they stay symbols, read at runtime.</param>
+    public static ExtractedSystem Extract(Analysis analysis, Expression timeStep, IReadOnlyList<RuntimeParameter>? parameters = null)
     {
-        parameters ??= Array.Empty<PotParameter>();
-        Arrow[] parameterValues = parameters.Select(p => Arrow.New(p.Symbol, p.InitialValue)).ToArray();
+        parameters ??= Array.Empty<RuntimeParameter>();
+        Arrow[] parameterValues = parameters.Select(p => Arrow.New(p.Symbol, p.DcValue)).ToArray();
         SystemOfEquations system = Discretize(analysis, timeStep, parameterValues, out Arrow[] initialConditions);
         Expression[] unknowns = system.Unknowns.ToArray();
         LinearCombination[] equations = system.Equations.ToArray();

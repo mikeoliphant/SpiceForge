@@ -6,6 +6,10 @@ using SpiceForge.ReferenceCapture;
 using Util;
 using Expression = ComputerAlgebra.Expression;
 
+// LiveSPICE marks its on/off Switch obsolete (single-pole multi-throw switches replace it), but older schematics
+// still contain it, so it's handled here deliberately.
+#pragma warning disable CS0612
+
 /// <summary>
 /// Checks our engine against an independent reference: LiveSPICE's own solver (the instrumented copy of Simulation),
 /// tightly converged and with the fix from LiveSPICE pull request 284. LiveSPICE builds and solves the circuit through
@@ -86,13 +90,25 @@ internal static class LiveSpiceCheck
                     pot.PotValue = wipe;
             TransientSolution solution = TransientSolution.Solve(theirs.Analyze(), h);
             Expression input = theirs.Components.OfType<Input>().Select(i => Component.DependentVariable(i.Name, Component.t)).DefaultIfEmpty("V[t]").Single();
-            Expression[] nodes = theirs.Nodes.Select(n => n.V).ToArray();
+            // Only nodes LiveSPICE's own equations determine: one that only an open switch contact touches appears in no
+            // equation once open contacts are infinite, so it is undetermined, and LiveSPICE reports 0 for it where ours
+            // follows the other side of the contact.
+            Equal[] equations = theirs.Analyze().Equations.Substitute(SinglePoleSwitch.ExcludeOpen).OfType<Equal>().ToArray();
+            Expression[] candidates = theirs.Nodes.Select(n => n.V).Where(v => equations.Any(e => e.DependsOn(v))).ToArray();
 
             // Ours, with dynamic pots loaded at the same positions so both start from the same DC point.
             Dictionary<string, double>? positions = null;
             if (setting.Wipe is double w)
                 positions = CircuitLoader.PotNames(Schematic.Load(file, new NullLog()).Build()).ToDictionary(n => n, _ => w);
             LoadedCircuit ours = CircuitLoader.Load(file, h, dynamicPots: true, potPositions: positions);
+            // And not nodes that only switch contacts touch (the Bassman's unused Bright throw, the Blues Breaker's
+            // Bypass): they have no role in the circuit, LiveSPICE drops them when they float, and ours keeps them
+            // weakly tied (or drops them when nothing else connects to them).
+            var switchOnly = theirs.Nodes.Where(n => theirs.Components
+                    .Where(c => c is not NamedWire && c.Terminals.Any(t => t.ConnectedTo == n))
+                    .All(c => c is SinglePoleSwitch or Circuit.Switch))
+                .Select(n => n.V).ToHashSet();
+            Expression[] nodes = candidates.Where(v => !switchOnly.Contains(v)).ToArray();
 
             foreach (double amplitude in Amplitudes)
             {
