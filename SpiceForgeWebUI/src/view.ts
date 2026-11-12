@@ -77,6 +77,18 @@ export class SchematicView {
     return this.zoom;
   }
 
+  /** Where the view is, to restore later (each tab keeps its own). */
+  get place(): { zoom: number; cx: number; cy: number } {
+    return { zoom: this.zoom, cx: this.cx, cy: this.cy };
+  }
+
+  set place(p: { zoom: number; cx: number; cy: number }) {
+    this.zoom = p.zoom;
+    this.cx = p.cx;
+    this.cy = p.cy;
+    this.apply();
+  }
+
   /** Whether a pointer press now pans rather than going to the editor. */
   get panning(): boolean {
     return this.space || this.drag !== null;

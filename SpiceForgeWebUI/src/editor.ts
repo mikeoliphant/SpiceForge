@@ -26,6 +26,7 @@ import type { ComponentData, Element, Layout, Point, SchematicDocument, SymbolEl
 import { drawGhost, renderDocument, type Rendered } from "./render";
 import type { SchematicView } from "./view";
 import { addWire, findWirePath } from "./wires";
+import { computeNodes } from "./connectivity";
 
 const SVG = "http://www.w3.org/2000/svg";
 
@@ -39,10 +40,22 @@ type Gesture =
   | { kind: "move"; pointer: number; ids: Set<string>; last: Point; total: Point; pressed: string }
   | { kind: "wire"; pointer: number; mouse: Point[] };
 
+/** One open document's editing state: what a tab keeps while another is shown. */
+export interface EditorState {
+  doc: SchematicDocument;
+  history: EditStack;
+  selection: Set<string>;
+}
+
+export function newEditorState(doc: SchematicDocument): EditorState {
+  return { doc, history: new EditStack(), selection: new Set() };
+}
+
 export class Editor {
-  readonly history = new EditStack();
-  readonly selection = new Set<string>();
-  private doc: SchematicDocument | null = null;
+  private state: EditorState | null = null;
+  // Stand-ins while no document is attached, so callers never see null.
+  private readonly idleHistory = new EditStack();
+  private readonly idleSelection = new Set<string>();
   private rendered: Rendered = { bounds: null, problems: [] };
   private gesture: Gesture | null = null;
   private current: Tool = { kind: "select" };
@@ -55,6 +68,8 @@ export class Editor {
   onChange: () => void = () => {};
   /** Reports a failure the user should see (the status bar). */
   onError: (message: string) => void = () => {};
+  /** The named-wire rule for connectivity (wireNames, from the catalogue's types). */
+  wireNameOf: (c: ComponentData) => string | undefined = (c) => c.properties["WireName"];
 
   constructor(
     private readonly svg: SVGSVGElement,
@@ -71,7 +86,6 @@ export class Editor {
     this.wirePreview.setAttribute("class", "wire-preview");
     this.wirePreview.style.display = "none";
     overlay.append(this.band, this.ghost, this.wirePreview);
-    this.history.onChange = () => this.onChange();
 
     svg.addEventListener("pointerdown", (e) => this.pointerDown(e));
     svg.addEventListener("pointermove", (e) => this.pointerMove(e));
@@ -85,8 +99,20 @@ export class Editor {
     svg.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
+  private get doc(): SchematicDocument | null {
+    return this.state?.doc ?? null;
+  }
+
   get document(): SchematicDocument | null {
     return this.doc;
+  }
+
+  get history(): EditStack {
+    return this.state?.history ?? this.idleHistory;
+  }
+
+  get selection(): Set<string> {
+    return this.state?.selection ?? this.idleSelection;
   }
 
   get bounds(): Box | null {
@@ -101,20 +127,67 @@ export class Editor {
     return this.current.kind;
   }
 
-  /** Starts editing a document, with an empty selection and history. */
-  load(doc: SchematicDocument) {
+  /** Edits another document (a tab's), or none. Its selection and history come with it. */
+  attach(state: EditorState | null) {
     this.cancel();
     this.setTool({ kind: "select" });
-    this.doc = doc;
-    this.selection.clear();
-    this.history.clear();
+    if (this.state) this.state.history.onChange = () => {};
+    this.state = state;
+    if (state) state.history.onChange = () => this.onChange();
     this.redraw();
   }
 
   redraw() {
-    if (!this.doc) return;
-    this.rendered = renderDocument(this.drawing, this.doc, this.layouts, this.selection);
+    if (!this.doc) {
+      this.drawing.replaceChildren();
+      this.rendered = { bounds: null, problems: [] };
+      this.onChange();
+      return;
+    }
+    const titles = this.wireTitles(this.doc);
+    this.rendered = renderDocument(this.drawing, this.doc, this.layouts, this.selection, (id) => titles.get(id) ?? "");
     this.onChange();
+  }
+
+  /** Each wire's tooltip: its node, by the named wires on it ("GND") or else a number, and what the node connects. */
+  private wireTitles(doc: SchematicDocument): Map<string, string> {
+    const nodes = computeNodes(doc, this.layouts, this.wireNameOf);
+    const names: Set<string>[] = Array.from({ length: nodes.count }, () => new Set());
+    const members: string[][] = Array.from({ length: nodes.count }, () => []);
+    const byId = new Map(doc.elements.map((e) => [e.id, e]));
+    for (const [key, n] of nodes.terminals) {
+      const [id, terminal] = [key.slice(0, key.indexOf("/")), key.slice(key.indexOf("/") + 1)];
+      const e = byId.get(id);
+      if (e?.kind !== "symbol") continue;
+      const wireName = this.wireNameOf(e.component);
+      if (wireName !== undefined) names[n]!.add(wireName);
+      else members[n]!.push(`${e.component.properties["Name"] ?? id}.${terminal}`);
+    }
+    const titles = new Map<string, string>();
+    for (const [id, n] of nodes.wires) {
+      const label = names[n]!.size ? [...names[n]!].join(", ") : `Node ${n + 1}`;
+      const list = members[n]!.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      const shown = list.length > 8 ? [...list.slice(0, 8), `and ${list.length - 8} more`] : list;
+      titles.set(id, shown.length ? `${label}
+Connects ${shown.join(", ")}` : label);
+    }
+    return titles;
+  }
+
+  /**
+   * A right-click on the schematic, before its context menu opens: a placing or wiring tool is left, and nothing more
+   * happens (false); otherwise an unselected element under the pointer becomes the selection, and the menu can open
+   * (true).
+   */
+  prepareContextMenu(e: MouseEvent): boolean {
+    if (!this.doc || this.gesture) return false;
+    if (this.current.kind !== "select") {
+      this.setTool({ kind: "select" });
+      return false;
+    }
+    const hit = this.hitAt(e);
+    if (hit && !this.selection.has(hit)) this.select([hit], true);
+    return true;
   }
 
   // ---- Edits ----

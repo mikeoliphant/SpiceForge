@@ -62,7 +62,13 @@ export interface Rendered {
 const SelectedColor = "#1e90ff";
 
 /** Replaces the contents of `root` with the document's drawing, with the elements in `selected` drawn selected. */
-export function renderDocument(root: SVGGElement, doc: SchematicDocument, layouts: LayoutCache, selected: ReadonlySet<string> = new Set()): Rendered {
+export function renderDocument(
+  root: SVGGElement,
+  doc: SchematicDocument,
+  layouts: LayoutCache,
+  selected: ReadonlySet<string> = new Set(),
+  wireTitle: (id: string) => string = () => "",
+): Rendered {
   root.replaceChildren();
   const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire");
   const symbols = doc.elements.filter((e): e is SymbolElement => e.kind === "symbol");
@@ -72,7 +78,7 @@ export function renderDocument(root: SVGGElement, doc: SchematicDocument, layout
   // Wires underneath, as LiveSPICE layers them.
   const wireLayer = el("g", { class: "wires" });
   for (const w of wires) {
-    wireLayer.append(drawWire(w, selected.has(w.id)));
+    wireLayer.append(drawWire(w, selected.has(w.id), wireTitle(w.id)));
     boxes.push({ min: [Math.min(w.a[0], w.b[0]), Math.min(w.a[1], w.b[1])], max: [Math.max(w.a[0], w.b[0]), Math.max(w.a[1], w.b[1])] });
   }
 
@@ -94,7 +100,7 @@ export function renderDocument(root: SVGGElement, doc: SchematicDocument, layout
   return { bounds: unionBoxes(boxes), problems };
 }
 
-function drawWire(w: WireElement, isSelected: boolean): SVGGElement {
+function drawWire(w: WireElement, isSelected: boolean, title: string): SVGGElement {
   const g = el("g", { class: isSelected ? "wire selected" : "wire" });
   g.dataset["id"] = w.id;
   // A wider, invisible line over the wire, so it can be hit at any zoom.
@@ -103,6 +109,11 @@ function drawWire(w: WireElement, isSelected: boolean): SVGGElement {
   g.append(el("line", { x1: w.a[0], y1: w.a[1], x2: w.b[0], y2: w.b[1], stroke: isSelected ? SelectedColor : EdgeColors.wire }));
   for (const [x, y] of [w.a, w.b])
     g.append(square([x, y], WireTerminalSize, EdgeColors.wire));
+  if (title) {
+    const t = el("title");
+    t.textContent = title;
+    g.append(t);
+  }
   return g;
 }
 

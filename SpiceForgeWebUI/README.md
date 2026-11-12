@@ -3,14 +3,15 @@
 SpiceForge's web front end: plain TypeScript with no runtime dependencies, bundled by esbuild and served by
 `SpiceForgeServer` from the same origin as its WebSocket API (see `DesignDocs/WebSocketApi.md`).
 
-It opens a schematic and draws it: LiveSPICE's symbols from the server's catalogue layouts, wires, and terminals (red
-when unconnected). You can edit it as in LiveSPICE's editor:
+It opens schematics in tabs and draws them: LiveSPICE's symbols from the server's catalogue layouts, wires, and
+terminals (red when unconnected). You can:
 - place components from the library;
 - draw wires;
 - select, move, rotate and flip elements;
 - delete, cut, copy and paste them;
 - edit properties;
-- undo and redo, and save.
+- undo and redo;
+- create new schematics, save, and Save As.
 
 ## Building
 
@@ -41,6 +42,22 @@ dotnet run --project SpiceForgeServer
 
 The window has the component library on the left, the schematic in the middle, and the properties of the selection
 (or of the schematic itself, with nothing selected) on the right.
+
+### Files and tabs
+
+| Action | Does |
+|---|---|
+| New | A new, untitled schematic in a new tab |
+| Open… (Ctrl+O) | Browses the server's files; a file already open switches to its tab |
+| Save (Ctrl+S) | Saves, asking before overwriting a file that changed on disk; an untitled schematic goes to Save As |
+| Save As… (Ctrl+Shift+S) | Saves under a new name or folder, asking before replacing a file |
+| Click a tab, × or middle-click | Switches to it, or closes it (asking if it has unsaved changes) |
+
+Browsers keep Ctrl+N and Ctrl+W for themselves, so New and closing a tab have no shortcuts.
+
+Each tab keeps its own undo history, selection and view. The page reopens the tabs that were open, and asks before
+closing with unsaved changes. When an open file changes on disk, a banner offers to reload it, or to keep your
+version. Saving then asks before overwriting.
 
 ### Placing and wiring
 
@@ -80,6 +97,8 @@ behaviour didn't make good sense, this differs. The file format is the one thing
 | Up, Down arrows | Flip the selection over its centre line; rotated parts flip properly and stay connected |
 | Escape | Clears the selection |
 | Delete | Deletes the selection |
+| Right-click | A menu: cut, copy, paste here, delete, rotate, flip, select all, undo, redo (on an unselected part, it selects it first) |
+| Hover a wire | Its node, by name (GND) or number, and what it connects |
 | Ctrl+X, Ctrl+C, Ctrl+V | Cut, copy, paste, in LiveSPICE's clipboard format, so copies go to and from the desktop app. A paste lands under the pointer (from the toolbar, just below and right of the original), and clashing names are renumbered |
 | Ctrl+A | Selects everything |
 | Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) | Undo, redo |
@@ -88,8 +107,6 @@ behaviour didn't make good sense, this differs. The file format is the one thing
 | Wheel | Zooms about the pointer |
 | Middle drag, or Space + drag | Pans |
 | F or 0, + and − | Fit, zoom in, zoom out |
-
-The title shows • while there are unsaved changes, and the page asks before closing them.
 
 ### Properties
 

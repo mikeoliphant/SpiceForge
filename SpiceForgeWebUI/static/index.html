@@ -10,8 +10,10 @@
   <body>
     <header class="toolbar">
       <span class="brand">SpiceForge</span>
+      <button id="new" disabled title="A new schematic, in a new tab">New</button>
       <button id="open" disabled title="Open a schematic (Ctrl+O)">Open…</button>
       <button id="save" disabled title="Save (Ctrl+S)">Save</button>
+      <button id="save-as" disabled title="Save under a new name (Ctrl+Shift+S)">Save As…</button>
       <span class="separator"></span>
       <button id="undo" disabled title="Undo (Ctrl+Z)">Undo</button>
       <button id="redo" disabled title="Redo (Ctrl+Y)">Redo</button>
@@ -27,8 +29,9 @@
       <span id="zoom" class="zoom">100%</span>
       <button id="zoom-in" title="Zoom in (+)">+</button>
       <button id="fit" title="Zoom to fit (F)">Fit</button>
-      <span id="title" class="title"></span>
     </header>
+    <nav id="tabs" class="tabs"></nav>
+    <div id="banner" class="banner" hidden></div>
     <div class="workspace">
       <aside id="library" class="panel library"></aside>
       <main class="canvas">
@@ -45,6 +48,7 @@
       <span id="selection" class="selection"></span>
       <span id="pointer" class="pointer"></span>
     </footer>
+    <div id="menu" class="menu" hidden></div>
     <script type="module" src="app.js"></script>
   </body>
 </html>

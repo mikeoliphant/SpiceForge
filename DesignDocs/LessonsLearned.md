@@ -858,6 +858,16 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
 - **The server announced it was listening before it had bound the port.** With another server already on 8370, a
   second one printed success and served nothing. It now announces itself once the port is bound, and reports a failed
   bind.
+- **A hidden element leaves a CSS grid's rows.** The page is a grid of rows (toolbar, tabs, banner, workspace,
+  status). The banner hides with `display: none`, which takes it out of the grid, so every later element moved up a
+  row. The status bar got the stretchy row, the canvas almost none, and clicks on the canvas landed on the footer.
+  Named grid areas fix each element's row whether the banner shows or not.
+- **Compare paths with either slash.** A file named in the address with forward slashes, and reported by the server
+  with backslashes, opened twice in tabs. The comparison now normalises slashes and ignores case, as Windows does.
+- **The editor completes a file's life:** New, Save As (with a save mode of the file dialog), tabs that each keep
+  their history, selection and view, reopened after a reload, a banner when an open file changes on disk, node names
+  in wire tooltips, and a context menu. A scripted session checked each, on copies of the Pro Co Rat and a new
+  schematic saved as NewOne.
 - **Browsers keep some of LiveSPICE's shortcuts.** Ctrl+W and Ctrl+T can't be taken by a page, so the tools also
   have plain letters (W, G, P, R, C, L, T). LiveSPICE's other Ctrl shortcuts work too.
 
