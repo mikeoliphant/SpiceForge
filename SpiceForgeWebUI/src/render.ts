@@ -83,9 +83,9 @@ export function renderDocument(
     }
     if (layout.message) problems.push(`${s.component.properties["Name"] ?? s.id}: ${layout.message}`);
     const m = mappingOf(s);
-    const box = mapBox(m, layout.bounds);
-    boxes.push(box);
-    symbolLayer.append(drawSymbol(s, layout, m, box, wires, selected.has(s.id)));
+    // Fit (and export) takes in text that reaches past a symbol's bounds, such as a long label.
+    boxes.push(mapBox(m, layout.bounds), ...textBoxes(layout, m));
+    symbolLayer.append(drawSymbol(s, layout, m, selectionBox(s, layout), wires, selected.has(s.id)));
   }
 
   root.append(wireLayer, symbolLayer);
@@ -117,6 +117,8 @@ function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wire
   const classes = ["symbol"];
   if (s.component.unresolved || layout.message) classes.push("unresolved");
   if (isSelected) classes.push("selected");
+  // A Label's two gray corner lines aren't drawn on the schematic (see selectionBox).
+  if (isLabel(s)) classes.push("label");
   const g = el("g", { class: classes.join(" ") });
   g.dataset["id"] = s.id;
 
@@ -235,15 +237,47 @@ export function drawIcon(layout: Layout, size: number): SVGSVGElement {
   return svg;
 }
 
+const isLabel = (s: SymbolElement) => s.component.type.split(",")[0]!.trim() === "Circuit.Label";
+
+/**
+ * What a symbol's selection covers: the outline drawn when it's selected or highlighted, where the pointer finds it,
+ * and what a rubber band must touch. Its layout's bounds, as LiveSPICE's, except a Label's: those are a fixed 40 × 20
+ * box at its upper left (LiveSPICE's layout code has no fonts to measure text with, so it marks the box with two gray
+ * corner lines), and here they take in the Label's text, which this editor can measure.
+ */
+export function selectionBox(s: SymbolElement, layout: Layout): Box {
+  const m = mappingOf(s);
+  const box = mapBox(m, layout.bounds);
+  if (!isLabel(s)) return box;
+  // A little room around the text, so descenders don't sit on the outline.
+  const all = unionBoxes([box, ...textBoxes(layout, m)])!;
+  return { min: [all.min[0] - 2, all.min[1] - 2], max: [all.max[0] + 2, all.max[1] + 2] };
+}
+
+/** The boxes of a layout's texts, placed as drawText places them. */
+export function textBoxes(layout: Layout, m: Mapping): Box[] {
+  return layout.texts
+    .filter((t) => t.text)
+    .map((t) => {
+      const { left, top, width, height } = placeText(m, t.text, t.at, Alignments[t.h], Alignments[t.v], FontSize * TextScale[t.size]);
+      return { min: [left, top], max: [left + width, top + height] };
+    });
+}
+
 // SymbolControl.DrawLayout's text placement: upright text, its box placed from the alignment, with the alignment
 // offsets taken through the mapping (so a rotated symbol's text keeps to the right side of its anchor).
-function drawText(m: Mapping, text: string, at: Point, h: number, v: number, size: number): SVGGElement {
+function placeText(m: Mapping, text: string, at: Point, h: number, v: number, size: number) {
   const { width, ascent, height } = measure(text, size);
   const p = mapPoint(m, at);
   const d1 = mapVector(m, [-h, 1 - v]);
   const d2 = mapVector(m, [-(1 - h), v]);
   const left = Math.min(p[0] + d1[0] * width, p[0] - d2[0] * width);
   const top = Math.min(p[1] + d1[1] * height, p[1] - d2[1] * height);
+  return { left, top, width, height, ascent };
+}
+
+function drawText(m: Mapping, text: string, at: Point, h: number, v: number, size: number): SVGGElement {
+  const { left, top, width, height, ascent } = placeText(m, text, at, h, v, size);
   const g = el("g", { class: "text" });
   g.append(el("rect", { class: "text-box", x: left, y: top, width, height }));
   const t = el("text", { x: left, y: top + ascent, "font-size": size });

@@ -31,7 +31,6 @@
 
   --canvas: #ffffff;
   --sch-text: #000000;
-  --sch-text-box: rgba(0, 0, 0, 0.125);
   --sch-selected: #1e90ff;
   --sch-highlight: #808080;
   --sch-unconnected: #ff0000;
@@ -74,7 +73,6 @@
 
   --canvas: #16181d;
   --sch-text: #e6e8eb;
-  --sch-text-box: rgba(255, 255, 255, 0.1);
   --sch-selected: #ffbf3c;
   --sch-highlight: #8a919b;
   --sch-unconnected: #ff5c5c;
@@ -116,7 +114,6 @@
 
   --canvas: #2b2f36;
   --sch-text: #d7dbe0;
-  --sch-text-box: rgba(255, 255, 255, 0.08);
   --sch-selected: #f2c14e;
   --sch-highlight: #9097a1;
   --sch-unconnected: #ff7b72;
@@ -158,7 +155,6 @@
 
   --canvas: #fbf7ee;
   --sch-text: #2b2620;
-  --sch-text-box: rgba(43, 38, 32, 0.12);
   --sch-selected: #1e88e5;
   --sch-highlight: #8a8174;
   --sch-unconnected: #c62828;
@@ -200,7 +196,6 @@
 
   --canvas: #000000;
   --sch-text: #ffffff;
-  --sch-text-box: rgba(255, 255, 255, 0.25);
   --sch-selected: #ffff00;
   --sch-highlight: #c0c0c0;
   --sch-unconnected: #ff4040;

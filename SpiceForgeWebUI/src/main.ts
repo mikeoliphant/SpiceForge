@@ -643,7 +643,9 @@ function exportSvg(): { text: string; width: number; height: number } | null {
   scratch.style.visibility = "hidden";
   svg.append(scratch);
   renderDocument(scratch, doc, layouts);
-  scratch.querySelectorAll(".hit, .outline, title").forEach((e) => e.remove());
+  scratch.querySelectorAll(".hit, .outline, .text-box, title").forEach((e) => e.remove());
+  // What the stylesheet hides (an unselected Label's corner lines) stays hidden: display isn't among the styles copied.
+  scratch.querySelectorAll("*").forEach((e) => getComputedStyle(e).display === "none" && e.remove());
   const copy = scratch.cloneNode(true) as SVGGElement;
   const properties = ["stroke", "fill", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "font-family", "font-size", "font-weight"];
   const originals = [...scratch.querySelectorAll("*")];

@@ -23,7 +23,7 @@ import { ChangeEdit, CompositeEdit, EditStack, FlipEdit, MoveEdit, PropertyEdit,
 import { boxIntersects, mapBox, mappingOf, normalize, snap, unionBoxes, wireIntersects, type Box } from "./geometry";
 import type { LayoutCache } from "./layouts";
 import type { ComponentData, Element, Layout, Point, SchematicDocument, SymbolElement } from "./protocol";
-import { drawGhost, renderDocument, type Rendered } from "./render";
+import { drawGhost, renderDocument, selectionBox, type Rendered } from "./render";
 import type { SchematicView } from "./view";
 import { addWire, findWirePath } from "./wires";
 import { computeNodes } from "./connectivity";
@@ -409,7 +409,7 @@ Connects ${shown.join(", ")}` : label);
 
   private symbolIntersects(s: SymbolElement, rect: Box): boolean {
     const layout = this.layouts.get(s.component);
-    return layout !== undefined && boxIntersects(mapBox(mappingOf(s), layout.bounds), rect);
+    return layout !== undefined && boxIntersects(selectionBox(s, layout), rect);
   }
 
   // ---- Selection ----

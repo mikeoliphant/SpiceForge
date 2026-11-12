@@ -163,11 +163,17 @@ button:disabled {
   fill: var(--sch-text);
 }
 
-/* LiveSPICE draws a faint box around each text. */
+/* LiveSPICE draws a faint box around each text; this editor doesn't. The box stays in the drawing, unseen: the
+   simulation panel reads it to keep knobs off labels. */
 #schematic .text-box {
   fill: none;
-  stroke: var(--sch-text-box);
-  stroke-width: 0.2;
+  stroke: none;
+}
+
+/* A Label's two gray corner lines mark its fixed bounds in LiveSPICE; here its outline takes in its text instead. The
+   placement ghost and the library's icon keep them. */
+#schematic .symbol.label > line {
+  display: none;
 }
 
 /* A transparent box over each symbol, for hovering; and the dashed gray outline LiveSPICE draws when highlighted. */
