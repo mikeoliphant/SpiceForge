@@ -2,6 +2,7 @@
 // its input, meters, pots and switches, and the scope; a probe tool that clips probes onto wires and terminals; and
 // edits sent on as `sim.update`, so the simulation follows the schematic as it changes.
 
+import { configureAudio, describeAudio, type AudioConfig, type AudioState } from "./audio";
 import type { ApiClient } from "./client";
 import type { EditorState } from "./editor";
 import { boxIntersects, mapBox, mapPoint, mappingOf, type Box } from "./geometry";
@@ -119,7 +120,7 @@ interface Remembered {
   probes: { target: Target; at: Point | null }[];
   timeScale: number;
   voltScale: number;
-  source: { expression?: string; silence?: boolean } | null;
+  source: { expression?: string; silence?: boolean; channel?: string } | null;
   pots: Record<string, number>;
   switches: Record<string, number>;
 }
@@ -161,6 +162,8 @@ export class SimulationPanel {
   /** The knob being dragged on the schematic, if any. */
   private turning: { pot: string; pointer: number; startY: number; start: number } | null = null;
   private readonly scope: Scope;
+  /** The audio device's open inputs, which the Input can play. */
+  private audioInputs: string[] = [];
   private readonly el: {
     title: HTMLElement;
     state: HTMLElement;
@@ -170,6 +173,8 @@ export class SimulationPanel {
     stop: HTMLButtonElement;
     preset: HTMLSelectElement;
     expression: HTMLInputElement;
+    audio: HTMLElement;
+    audioButton: HTMLButtonElement;
     inputMeter: HTMLElement;
     outputMeter: HTMLElement;
     load: HTMLElement;
@@ -194,6 +199,8 @@ export class SimulationPanel {
       stop: h("button", { textContent: "Stop", title: "Stop the simulation (Shift+F5)" }),
       preset: h("select", { className: "sim-preset", title: "A test signal for the Input" }),
       expression: h("input", { type: "text", className: "sim-expression", spellcheck: false, title: "The Input's signal, in volts, as an expression in t (seconds). Enter applies it." }),
+      audio: h("span", { className: "sim-audio-text" }),
+      audioButton: h("button", { textContent: "Configure…", title: "The audio device, its channels, rate and buffer size, and a test" }),
       inputMeter: h("div", { className: "meter-bar" }),
       outputMeter: h("div", { className: "meter-bar" }),
       load: h("span", { className: "sim-load" }),
@@ -207,7 +214,7 @@ export class SimulationPanel {
       freeze: h("button", { textContent: "Freeze", title: "Hold the display still" }),
     };
     const e = this.el;
-    e.preset.append(...Presets.map((p, i) => new Option(p.name, String(i))), new Option("Custom", "custom"));
+    this.fillPresets();
     e.oversample.append(...[1, 2, 4, 8, 16].map((n) => new Option(`${n}×`, String(n))));
     e.cap.append(...[8, 16, 32, 64, 127].map((n) => new Option(`cap ${n}`, String(n))));
     e.resampling.append(new Option("sinc", "sinc"), new Option("linear", "linear"));
@@ -221,6 +228,7 @@ export class SimulationPanel {
         e.message,
         h("div", { className: "sim-row" }, h("label", { textContent: "Input" }), e.preset),
         h("div", { className: "sim-row" }, h("span"), e.expression),
+        h("div", { className: "sim-row" }, h("label", { textContent: "Audio" }), h("div", { className: "sim-audio" }, e.audio, e.audioButton)),
         h(
           "div",
           { className: "sim-row meters" },
@@ -241,7 +249,9 @@ export class SimulationPanel {
     e.probe.addEventListener("click", () => this.setProbing(!this.probingNow));
     e.restart.addEventListener("click", () => this.info && void this.call("sim.restart", { sim: this.info.sim }));
     e.stop.addEventListener("click", () => void this.stop());
+    e.audioButton.addEventListener("click", () => void configureAudio(host.client).catch((err) => host.status((err as Error).message, "error")));
     e.preset.addEventListener("change", () => {
+      if (e.preset.value.startsWith(ChannelPrefix)) return void this.setChannel(e.preset.value.slice(ChannelPrefix.length));
       const preset = Presets[Number(e.preset.value)];
       if (!preset) return e.expression.focus();
       if (preset.expression) e.expression.value = preset.expression;
@@ -267,12 +277,14 @@ export class SimulationPanel {
     });
 
     const client = host.client;
-    client.onBinary = (frame) => this.scope.receive(frame);
+    // Source 0 is the audio test's, which has its own scope.
+    client.onFrame((frame, source) => source !== 0 && this.scope.receive(frame));
     const mine = (data: unknown): data is { sim: string } => (data as { sim?: string })?.sim === this.info?.sim;
     client.on("sim.state", (d) => mine(d) && this.setState(d as unknown as { state: string; code?: string; message?: string }));
     client.on("sim.controls", (d) => mine(d) && this.setControls(d as unknown as Controls));
     client.on("sim.probes", (d) => mine(d) && this.setProbes((d as unknown as { probes: Probe[] }).probes));
     client.on("sim.levels", (d) => mine(d) && this.setLevels(d as unknown as { inputs: number[]; outputs: number[] }));
+    client.on("audio.state", (d) => this.setAudio(d as AudioState));
     client.on("sim.stats", (d) => mine(d) && this.setStats(d as unknown as { load: number; dropouts: number; rejectedSettings: number; cappedSteps: number | null }));
 
     // A knob being turned on the schematic: followed on the window, without pointer capture, which an SVG group
@@ -336,6 +348,44 @@ export class SimulationPanel {
     this.setControls(info);
     this.setProbes(info.probes);
     writeJson(sessionStorage, RunningKey, { sim: info.sim, key: this.host.keyOf(state) });
+    void this.host.client.request<AudioConfig>("audio.getConfig").then((c) => this.setAudio(c.state), () => {});
+  }
+
+  // ---- The audio device ----
+
+  /** Follows `audio.state`: the line saying where it plays, and the inputs the Input can choose from. */
+  private setAudio(state: AudioState) {
+    this.el.audio.textContent = describeAudio(state);
+    this.el.audio.title = this.el.audio.textContent;
+    this.el.audio.classList.toggle("warning", !!state.fallback);
+    const inputs = state.open ? (state.inputs ?? []) : [];
+    if (inputs.join("\n") === this.audioInputs.join("\n")) return;
+    this.audioInputs = inputs;
+    this.fillPresets();
+    if (this.info) this.showSource(this.info);
+  }
+
+  /** The Input's choices: the device's open inputs, then the test signals. */
+  private fillPresets() {
+    const keep = this.el.preset.value;
+    this.el.preset.replaceChildren(
+      ...this.audioInputs.map((name) => new Option(`Audio in: ${name}`, ChannelPrefix + name)),
+      ...Presets.map((p, i) => new Option(p.name, String(i))),
+      new Option("Custom", "custom"),
+    );
+    if ([...this.el.preset.options].some((o) => o.value === keep)) this.el.preset.value = keep;
+  }
+
+  private async setChannel(channel: string) {
+    const info = this.info;
+    const input = info?.inputs[0];
+    if (!info || !input) return;
+    try {
+      await this.host.client.request("sim.setInput", { sim: info.sim, element: input.element, source: { channel } });
+      this.remember();
+    } catch (e) {
+      this.host.status((e as Error).message.replace(/^sim\.setInput: /, ""), "error");
+    }
   }
 
   /**
@@ -417,7 +467,7 @@ export class SimulationPanel {
     if (Object.keys(pots).length + Object.keys(switches).length > 0)
       await this.host.client.request("sim.set", { sim: info.sim, pots, switches }).catch(() => {});
     const input = info.inputs[0];
-    if (input && saved.source && (saved.source.expression || saved.source.silence))
+    if (input && saved.source && (saved.source.expression || saved.source.silence || saved.source.channel))
       await this.host.client.request("sim.setInput", { sim: info.sim, element: input.element, source: saved.source }).catch(() => {});
     for (const p of saved.probes ?? []) {
       try {
@@ -571,13 +621,23 @@ export class SimulationPanel {
     this.showLive();
     this.remember();
 
-    // The input source.
+    this.showSource(c);
+  }
+
+  /** Shows the Input's source: a device input, a test signal, or an expression of the user's. */
+  private showSource(c: Controls) {
     const source = c.inputs[0]?.source;
     const hasInput = c.inputs.length > 0;
     this.el.preset.disabled = this.el.expression.disabled = !hasInput;
     if (!hasInput) {
       this.el.expression.value = "";
       this.el.expression.placeholder = "This circuit has no Input.";
+    } else if (source?.channel) {
+      const option = ChannelPrefix + source.channel;
+      if (![...this.el.preset.options].some((o) => o.value === option)) this.el.preset.prepend(new Option(`Audio in: ${source.channel} (not open)`, option));
+      this.el.preset.value = option;
+      this.el.expression.value = "";
+      this.el.expression.placeholder = "Playing the audio input";
     } else if (document.activeElement !== this.el.expression) {
       this.el.expression.value = source?.expression ?? "";
       this.el.expression.placeholder = source?.silence ? "Silence" : "";
@@ -1003,6 +1063,9 @@ function formatFrequency(f: number) {
 }
 
 /** A level meter: linear peak against full scale, coloured as LiveSPICE's lamps (WebSocketApi.md, Monitoring). */
+/** The Input choices that play a device input carry this, then the channel's name. */
+const ChannelPrefix = "channel:";
+
 function meter(bar: HTMLElement, peak: number) {
   bar.style.width = `${Math.min(1, peak) * 100}%`;
   bar.dataset["level"] = peak < 0.5 ? "ok" : peak < 0.75 ? "warm" : peak < 0.95 ? "hot" : "clip";

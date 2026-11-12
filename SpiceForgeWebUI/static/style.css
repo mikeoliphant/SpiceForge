@@ -1110,3 +1110,134 @@ button:disabled {
   text-anchor: middle;
   fill: var(--canvas);
 }
+
+/* ---- The audio dialog ---- */
+
+.audio-dialog {
+  width: min(640px, 94vw);
+}
+
+.audio-row {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.audio-dialog select {
+  font: inherit;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+}
+
+.audio-device {
+  display: flex;
+  gap: 6px;
+}
+
+.audio-device select {
+  flex: 1;
+}
+
+.audio-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.audio-dialog .channels {
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+  padding: 4px 6px;
+  height: 120px;
+  overflow: auto;
+}
+
+.audio-dialog .channel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.audio-dialog .channel span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-state {
+  color: var(--muted);
+  min-height: 1.4em;
+  margin-bottom: 8px;
+}
+
+.audio-state.warning,
+.sim-audio-text.warning {
+  color: var(--error);
+}
+
+.audio-test {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 10px;
+  height: 150px;
+  border-top: 1px solid var(--chrome-border);
+  padding-top: 8px;
+}
+
+.audio-test-side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.audio-test-side h3 {
+  margin: 4px 0 0;
+}
+
+.audio-test-side button.active {
+  background: var(--active);
+}
+
+.audio-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.audio-scope {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+  background: var(--canvas);
+}
+
+.audio-dialog .buttons {
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* ---- The simulation panel's audio line ---- */
+
+.sim-audio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sim-audio-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}

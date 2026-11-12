@@ -16,9 +16,7 @@ export class ApiClient {
   private nextId = 0;
   private readonly waiting = new Map<number, { op: string; resolve: (r: unknown) => void; reject: (e: Error) => void }>();
   private readonly listeners = new Map<string, Set<Listener>>();
-
-  /** Called with each binary frame (scope samples, WebSocketApi.md, Binary frames). */
-  onBinary: (frame: ArrayBuffer) => void = () => {};
+  private readonly frameListeners = new Set<(frame: ArrayBuffer, source: number) => void>();
 
   /** Called when the connection closes, with the reason if there was one. */
   onClose: (reason: string) => void = () => {};
@@ -60,6 +58,13 @@ export class ApiClient {
     if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ op, args: args ?? {} }));
   }
 
+  /** Listens for binary frames (scope samples, WebSocketApi.md, Binary frames), with the frame's source: a
+   * simulation's number, or 0 for the audio test. Returns a function that stops listening. */
+  onFrame(listener: (frame: ArrayBuffer, source: number) => void): () => void {
+    this.frameListeners.add(listener);
+    return () => this.frameListeners.delete(listener);
+  }
+
   /** Listens for an event; returns a function that stops listening. */
   on(event: string, listener: Listener): () => void {
     let set = this.listeners.get(event);
@@ -69,7 +74,11 @@ export class ApiClient {
   }
 
   private receive(data: unknown) {
-    if (data instanceof ArrayBuffer) return this.onBinary(data);
+    if (data instanceof ArrayBuffer) {
+      const source = data.byteLength >= 8 ? new DataView(data).getUint32(4, true) : -1;
+      for (const listener of this.frameListeners) listener(data, source);
+      return;
+    }
     if (typeof data !== "string") return;
     const message = JSON.parse(data) as { re?: number; result?: unknown; error?: ApiError; event?: string; data?: unknown };
     if (message.re !== undefined) {

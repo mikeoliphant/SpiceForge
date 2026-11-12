@@ -8,6 +8,7 @@ import { Editor, newEditorState, type EditorState } from "./editor";
 import { chooseFile } from "./fileDialog";
 import { snap } from "./geometry";
 import { LayoutCache } from "./layouts";
+import { configureAudio } from "./audio";
 import { manageComponentFolders } from "./componentFolders";
 import { LibraryDragType, LibraryPanel, WireType } from "./library";
 import { PropertiesPanel } from "./properties";
@@ -47,6 +48,7 @@ const buttons = {
   zoomIn: $<HTMLButtonElement>("zoom-in"),
   zoomOut: $<HTMLButtonElement>("zoom-out"),
   simulate: $<HTMLButtonElement>("simulate"),
+  audio: $<HTMLButtonElement>("audio"),
   export: $<HTMLButtonElement>("export"),
 };
 
@@ -251,6 +253,7 @@ function updateChrome() {
   buttons.wire.disabled = !open;
   buttons.wire.classList.toggle("active", editor.tool === "wire");
   buttons.simulate.disabled = !connected || !open;
+  buttons.audio.disabled = !connected || hello?.capabilities["audio"] !== true;
   buttons.simulate.classList.toggle("active", simulation.simulates(active?.state ?? null));
   buttons.simulate.title = simulation.simulates(active?.state ?? null)
     ? "Simulating this schematic: click to start again from scratch (F5)"
@@ -795,6 +798,7 @@ buttons.paste.addEventListener("click", () => void pasteFromClipboard(null));
 buttons.remove.addEventListener("click", () => editor.deleteSelection());
 buttons.wire.addEventListener("click", () => (editor.tool === "wire" ? editor.escape() : editor.startWiring()));
 buttons.simulate.addEventListener("click", () => simulate());
+buttons.audio.addEventListener("click", () => void configureAudio(client).catch((e) => setStatus(`Couldn't open the audio settings: ${errorText(e)}`, "error")));
 
 /** Simulates the schematic shown, replacing any simulation running. */
 function simulate() {

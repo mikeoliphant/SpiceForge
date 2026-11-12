@@ -1005,6 +1005,15 @@ interface: a driver opens a stream for one client, prepares it while stopped, an
   forced on. At 44.1 kHz without tiering, in the clean environment, one rebuild of four overran a 128-sample callback
   by 3.2 ms, as a gen2 collection ran; the other three were clean. In steady state nothing
   collects: the audio path allocates nothing, and the monitor's allocations are small.
+- **The web front end configures it in one dialog.** Audio… (in the toolbar, and Configure… in the simulation
+  panel) shows the driver, device, channels as checkboxes, rate and buffer size (with their milliseconds), the
+  driver's control panel button, and the test with per-channel meters and a scope of the summed input. A driver's
+  device info is only read when it's chosen, since loading an ASIO driver takes a moment. The simulation panel's
+  Input offers the device's open inputs ("Audio in: …") ahead of the test signals, and a line says what it plays on,
+  with the round-trip latency. Binary frames are routed by source, so the test's scope (source 0) and a
+  simulation's don't mix. Checked in headless Chrome against ASIO4ALL with its outputs unticked: the dialog read the
+  device, applied 128-sample buffers, the Rat played the mic input at 21% of real time, and the test was refused
+  while it ran.
 - **Close the device when nothing runs.** The device opens when a simulation or the test starts, and closes when it
   stops, so an idle server doesn't hold an ASIO driver another program (a DAW) wants. A configuration that doesn't
   check is refused before the running device is touched, unless a different ASIO driver has to be loaded to check
@@ -1052,8 +1061,7 @@ interface: a driver opens a stream for one client, prepares it while stopped, an
 - Audio runs on ASIO (Windows) or the internal clock; JACK, through JackSharpCore, is next. JackSharpCore's process
   callback allocates on every cycle (arrays, buffers, a copy of each port), so it needs a span-based path before it
   can carry audio without the GC pauses above. `sim.setOutput` still answers `unsupported`: every output plays the
-  Speakers. The web front end has no audio configuration panel yet; the API (`audio.devices`, `audio.deviceInfo`,
-  `audio.setConfig`, `audio.controlPanel`, `audio.test`) is there for it.
+  Speakers.
 - A rebuild at the smallest buffers (96 kHz, 64 samples) can still glitch, from the build's own garbage collections
   (see Audio I/O). Options not yet tried: `GCSettings.LatencyMode = SustainedLowLatency` while a device runs, a
   `SchematicProcessor` method that sizes its buffers on the build thread so the first block allocates nothing, and
