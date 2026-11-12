@@ -717,6 +717,80 @@ button:disabled {
   border-radius: 3px;
 }
 
+/* ---- Find ---- */
+
+.find {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--surface);
+  border: 1px solid var(--chrome-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+
+.find[hidden] {
+  display: none;
+}
+
+.find input {
+  font: inherit;
+  width: 200px;
+  padding: 2px 6px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+}
+
+.find input.invalid {
+  border-color: var(--error);
+}
+
+.find-count {
+  color: var(--muted);
+  min-width: 56px;
+}
+
+.find button {
+  border: none;
+  background: transparent;
+  padding: 0 4px;
+  color: var(--muted);
+}
+
+/* ---- The component folders dialog ---- */
+
+.folders-dialog .entries {
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+  padding: 4px;
+  margin-bottom: 10px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.folders-dialog .folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+
+.folders-dialog .folder-row span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folders-dialog p {
+  margin: 0 0 10px;
+  padding: 0;
+}
+
 /* ---- The simulation panel ---- */
 
 .sim {
@@ -880,7 +954,7 @@ button:disabled {
 .sim-scope {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr 200px;
+  grid-template-columns: 1fr 270px;
   min-width: 0;
   min-height: 0;
 }
@@ -933,6 +1007,86 @@ button:disabled {
   background: transparent;
   padding: 0 4px;
   color: var(--muted);
+}
+
+.sim-row.settings {
+  grid-template-columns: 40px 1fr;
+}
+
+.sim-settings {
+  display: flex;
+  gap: 4px;
+}
+
+.sim-settings select {
+  flex: 1;
+  min-width: 0;
+}
+
+.scope-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--chrome-border);
+}
+
+.scope-side .scope-legend {
+  border-left: none;
+  flex: 1;
+}
+
+.scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px 0;
+}
+
+.scope-bar select {
+  font: inherit;
+  flex: 1;
+  min-width: 0;
+}
+
+.scope-bar button.active,
+.sim-head button.active {
+  background: var(--active);
+  border-color: var(--accent);
+}
+
+/* Knobs and switch buttons on the simulated schematic. */
+#schematic .sim-knob,
+#schematic .sim-switch {
+  cursor: ns-resize;
+}
+
+#schematic .sim-switch {
+  cursor: pointer;
+}
+
+#schematic .knob-body,
+#schematic .switch-body {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+#schematic .sim-knob:hover .knob-body,
+#schematic .sim-switch:hover .switch-body {
+  fill: var(--hover);
+}
+
+#schematic .knob-pointer {
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+
+#schematic .switch-label {
+  font-size: 7px;
+  font-weight: 600;
+  text-anchor: middle;
+  fill: var(--text);
+  pointer-events: none;
 }
 
 /* ---- Probes on the schematic ---- */

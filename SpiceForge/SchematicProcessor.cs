@@ -139,6 +139,19 @@ public sealed class SchematicProcessor
         }
     }
 
+    /// <summary>How many internal steps have hit Newton's iteration cap, summed over the channels: a sign the cap is too
+    /// low for the circuit at this signal level.</summary>
+    public long CappedSteps
+    {
+        get
+        {
+            long total = 0;
+            for (int c = 0; c < engines.Length; c++)
+                total += engines[c].CappedSteps;
+            return total;
+        }
+    }
+
     /// <summary>One control per pot, or per group of ganged pots, in schematic order.</summary>
     public IReadOnlyList<PotControl> Pots { get; }
 

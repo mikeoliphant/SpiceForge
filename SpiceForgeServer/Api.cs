@@ -32,9 +32,13 @@ public sealed class ServerContext : IDisposable
     public Catalog Catalog(bool reload = false)
     {
         if (catalog == null || reload)
-            catalog = new Catalog(Options.ComponentFolders, Log.For("catalog"));
+            catalog = new Catalog(ComponentFolders, Log.For("catalog"));
         return catalog;
     }
+
+    /// <summary>The folders the catalogue loads: the server's own, then the user's.</summary>
+    public IReadOnlyList<string> ComponentFolders =>
+        Options.ComponentFolders.Concat(Settings.ComponentFolders).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     public void Dispose()
     {
@@ -140,17 +144,20 @@ public sealed class Api
             ["folders"] = new JsonObject
             {
                 ["user"] = context.Options.UserFolder,
-                ["components"] = Json.Strings(context.Options.ComponentFolders),
+                ["components"] = Json.Strings(context.ComponentFolders),
             },
         });
     }
 
-    private Task<JsonNode?> SettingsSet(Session session, Args args)
+    private async Task<JsonNode?> SettingsSet(Session session, Args args)
     {
         context.Settings.Set(args);
         JsonObject snapshot = context.Settings.Snapshot();
         context.Hub.Broadcast("settings.changed", snapshot);
-        return Done(snapshot);
+        // New component folders: the catalogue reloads with them, as catalog.refresh does.
+        if (args.Has("componentFolders"))
+            context.Hub.Broadcast("catalog.changed", await Engine.Run(() => context.Catalog(reload: true).ToJson()));
+        return snapshot;
     }
 
     private Task<JsonNode?> FileWatch(Session session, Args args)

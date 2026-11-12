@@ -620,6 +620,7 @@ public sealed class Simulation
         double inputPeak = 0, outputPeak = 0;
         double decay = Math.Exp(-Block / (LevelDecaySeconds * SampleRate));
         double busy = 0, statsSince = 0;
+        long cappedBefore = 0;
 
         while (!stopping)
         {
@@ -634,6 +635,7 @@ public sealed class Simulation
             {
                 // A new build: carry on from now, without catching up on the time it took.
                 running = p;
+                cappedBefore = 0;
                 start = clock.Elapsed.TotalSeconds - sample / SampleRate;
                 statsSince = clock.Elapsed.TotalSeconds;
                 busy = 0;
@@ -751,12 +753,12 @@ public sealed class Simulation
                 {
                     ["sim"] = Id,
                     ["load"] = elapsed > 0 ? Math.Round(busy / elapsed, 4) : 0,
-                    // The engine doesn't count capped steps while running for speed; null says it isn't measured.
-                    ["cappedSteps"] = null,
+                    ["cappedSteps"] = p.CappedSteps - cappedBefore,
                     ["rejectedSettings"] = p.RejectedSettings,
                     ["dropouts"] = Interlocked.Read(ref dropouts),
                 });
                 busy = 0;
+                cappedBefore = p.CappedSteps;
                 statsSince = clock.Elapsed.TotalSeconds;
             }
         }

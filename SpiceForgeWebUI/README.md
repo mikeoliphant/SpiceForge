@@ -11,7 +11,8 @@ terminals (red when unconnected). You can:
 - delete, cut, copy and paste them;
 - edit properties;
 - undo and redo;
-- create new schematics, save, and Save As;
+- create new schematics, save, Save As, and export the drawing as SVG or PNG;
+- find parts by name;
 - simulate, with pots, switches, a test signal at the Input, and probes on a scope.
 
 ## Building
@@ -53,6 +54,15 @@ client settings, so it follows you to another browser, and in this browser, so t
 Each theme is one block of colour tokens in `static/themes.css`, covering the page and the schematic: the canvas, text,
 wires, terminals, selection, and the ten colours symbols are drawn in. The drawing itself names no colours, only
 classes (`s-red` for a red stroke, `terminal unconnected`), so a new theme needs no code.
+
+### Finding, exporting, and component folders
+
+- **Find (Ctrl+F)** looks for parts by name or part number as you type, selects the first and brings it into view;
+  Enter and Shift+Enter step through the rest.
+- **Export…** saves the drawing as an SVG or PNG image, in the theme's colours, without selection or hover marks.
+- **Drag** a component from the library onto the canvas to place it where it's dropped.
+- **The library's … button** lists the component folders, and adds or removes your own. LiveSPICE component libraries
+  (`.xml`) in them appear in the library for every window, as soon as they're added.
 
 ### Files and tabs
 
@@ -137,9 +147,13 @@ opens under the canvas:
 |---|---|
 | Input | The Input's signal, in volts: a preset, or any expression in `t` (Enter applies it) |
 | In, Out | Level meters against the Input's and Speakers' full scale; then the processing load |
-| Pots, switches | Drag to turn, double-click for the schematic's position; click a switch for its next position |
+| Pots, switches | Sliders and buttons in the panel, and knobs and buttons on the schematic itself: drag a knob up or down, or scroll over it; double-click for the schematic's position; click a switch for its next position |
+| Engine | Oversampling, Newton's iteration cap and resampling; changing them rebuilds |
 | Probe | Click wires or terminals to clip probes on (Esc to stop); each gets a numbered flag in its colour |
-| Scope | The probes' voltages, triggered on the first so a steady wave stands still, with peak-to-peak and frequency |
+| Scope | The probes' voltages, triggered on the first so a steady wave stands still, with peak-to-peak and frequency; time and volts per division (Auto fits them), and Freeze |
+
+The load shows how much of real time the simulation takes, and how many Newton steps hit the iteration cap in the
+last second: if that stays above zero, raise the cap.
 
 Editing the simulated schematic updates the simulation as you go: it rebuilds a moment after the last change, and
 keeps running the last version that built while an edit leaves it broken. There's no audio device yet, so nothing
@@ -173,6 +187,7 @@ server and runs it.
 | `src/fileDialog.ts` | The Open and Save As dialogs, on `fs.list` and `fs.recent` |
 | `src/theme.ts` | The colour theme: the picker's choice, kept locally and in the server's client settings |
 | `src/simulation.ts` | The simulation panel: controls, input, meters, the probe tool and flags, live updates |
+| `src/componentFolders.ts` | The component folders dialog |
 | `src/scope.ts` | The scope: binary frames into per-probe history, triggered and drawn on a canvas |
 | `src/main.ts` | The page: toolbar, status, opening and saving files |
 | `static/` | `index.html`, `themes.css` and `style.css`, copied to `dist/` |

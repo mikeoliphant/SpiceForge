@@ -304,6 +304,20 @@ Connects ${shown.join(", ")}` : label);
     this.setTool({ kind: "place", component, layout, rotation: 0, flip: false, at: null });
   }
 
+  /** Places a copy of a component at a point of the window, as a drop from the library does: selected, with the
+   * selection tool back. */
+  dropComponent(component: ComponentData, layout: Layout, clientX: number, clientY: number) {
+    if (!this.doc) return;
+    this.cancel();
+    const at = snap(this.view.toSchematic(clientX, clientY));
+    void this.place({ kind: "place", component, layout, rotation: 0, flip: false, at }, at, false);
+  }
+
+  /** Selects exactly these elements (as Find does). */
+  selectOnly(ids: Iterable<string>) {
+    this.select(ids, true);
+  }
+
   startWiring() {
     if (!this.doc) return;
     this.cancel();

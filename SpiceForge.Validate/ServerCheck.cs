@@ -242,6 +242,22 @@ internal static class ServerCheck
         JsonObject settings = Result(await client.Request("settings.set", new JsonObject { ["client"] = new JsonObject { ["layout"] = "x" } }));
         Check(settings["client"]?["layout"]?.GetValue<string>() == "x", "the client's state is stored");
 
+        // Component folders: a missing one is refused; an added one reloads the catalogue with its parts.
+        Check(Code(await client.Request("settings.set", new JsonObject { ["componentFolders"] = new JsonArray(Path.Combine(scratch, "missing")) })) == "invalid_value",
+            "a component folder that doesn't exist is refused");
+        string parts = Path.Combine(scratch, "Parts");
+        Directory.CreateDirectory(parts);
+        File.WriteAllText(Path.Combine(parts, "Mine.xml"),
+            "<Library><Component _Type=\"Circuit.Diode, Circuit, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null\" IS=\"2 pA\" Type=\"Diode\" Name=\"D1\" PartNumber=\"CheckPart\" Description=\"A user part\" /></Library>");
+        while (await client.WaitForEvent("catalog.changed", TimeSpan.Zero) != null) { }
+        await client.Request("settings.set", new JsonObject { ["componentFolders"] = new JsonArray(parts) });
+        JsonObject? reloaded = await client.WaitForEvent("catalog.changed", TimeSpan.FromSeconds(30));
+        bool hasPart = reloaded?["entries"]?.AsObject().Any(e => e.Value?["component"]?["properties"]?["PartNumber"]?.GetValue<string>() == "CheckPart") == true;
+        await client.Request("settings.set", new JsonObject { ["componentFolders"] = new JsonArray() });
+        JsonObject? restored = await client.WaitForEvent("catalog.changed", TimeSpan.FromSeconds(30));
+        bool gone = restored?["entries"]?.AsObject().All(e => e.Value?["component"]?["properties"]?["PartNumber"]?.GetValue<string>() != "CheckPart") == true;
+        Check(hasPart && gone, "adding a component folder reloads the catalogue with its parts, and removing it takes them out");
+
         await Simulate(client, rat, document);
     }
 
@@ -281,6 +297,9 @@ internal static class ServerCheck
         var frames = client.Frames.ToArray().Select(ParseFrame).Where(f => f.Signals.ContainsKey(stream)).ToList();
         bool contiguous = frames.Count > 30 && frames.Zip(frames.Skip(1)).All(p => p.Second.First == p.First.First + (ulong)p.First.Signals[stream].Length);
         Check(contiguous, $"the scope streams frames without gaps ({frames.Count} in 1.5 s)");
+        JsonObject? stats = await client.WaitForEvent("sim.stats", TimeSpan.FromSeconds(3));
+        Check(stats?["cappedSteps"] is JsonValue capped && capped.TryGetValue(out long _) && stats["load"]?.GetValue<double>() > 0,
+            $"sim.stats reports the load and capped steps: {stats?.ToJsonString()}");
 
         // The same schematic, input and settings, offline: the probe reads each sample's last step.
         if (frames.Count > 0)

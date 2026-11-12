@@ -4,7 +4,7 @@
 
 import type { ApiClient } from "./client";
 import type { EditorState } from "./editor";
-import { mapPoint, mappingOf } from "./geometry";
+import { mapBox, mapPoint, mappingOf } from "./geometry";
 import type { LayoutCache } from "./layouts";
 import type { Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
 import { Scope, formatUnits, type SignalStats } from "./scope";
@@ -56,6 +56,7 @@ interface SimulationInfo extends Controls {
   sim: string;
   title: string;
   state: string;
+  settings: Record<string, unknown>;
   code?: string;
   message?: string;
   probes: Probe[];
@@ -70,6 +71,13 @@ const Presets: { name: string; expression: string | null }[] = [
   { name: "Square, 220 Hz, 0.2 V", expression: "0.2*Sign(Sin(2*Pi*220*t))" },
   { name: "Silence", expression: null },
 ];
+
+/** The scope's time and voltage scales: null fits them to the signals. */
+const TimeScales: (number | null)[] = [null, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02];
+const VoltScales: (number | null)[] = [null, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10];
+
+/** How far a vertical drag turns a knob end to end, in pixels. */
+const KnobTravel = 150;
 
 const StateNames: Record<string, string> = {
   building: "Building…",
@@ -110,6 +118,8 @@ export class SimulationPanel {
   private probingNow = false;
   /** Where each probe's flag is drawn, from where it was clipped on. */
   private readonly flags = new Map<string, Point>();
+  /** The knob being dragged on the schematic, if any. */
+  private turning: { pot: string; pointer: number; startY: number; start: number } | null = null;
   private readonly scope: Scope;
   private readonly el: {
     title: HTMLElement;
@@ -125,6 +135,12 @@ export class SimulationPanel {
     load: HTMLElement;
     controls: HTMLElement;
     legend: HTMLElement;
+    oversample: HTMLSelectElement;
+    cap: HTMLSelectElement;
+    resampling: HTMLSelectElement;
+    timeScale: HTMLSelectElement;
+    voltScale: HTMLSelectElement;
+    freeze: HTMLButtonElement;
   };
 
   constructor(private readonly host: SimulationHost) {
@@ -143,9 +159,20 @@ export class SimulationPanel {
       load: h("span", { className: "sim-load" }),
       controls: h("div", { className: "sim-controls" }),
       legend: h("div", { className: "scope-legend" }),
+      oversample: h("select", { title: "Internal steps per sample: more is more accurate, and slower" }),
+      cap: h("select", { title: "Newton's iteration cap per step" }),
+      resampling: h("select", { title: "How samples are converted to and from the internal steps" }),
+      timeScale: h("select", { title: "Time per division" }),
+      voltScale: h("select", { title: "Volts per division" }),
+      freeze: h("button", { textContent: "Freeze", title: "Hold the display still" }),
     };
     const e = this.el;
     e.preset.append(...Presets.map((p, i) => new Option(p.name, String(i))), new Option("Custom", "custom"));
+    e.oversample.append(...[1, 2, 4, 8, 16].map((n) => new Option(`${n}×`, String(n))));
+    e.cap.append(...[8, 16, 32, 64, 127].map((n) => new Option(`cap ${n}`, String(n))));
+    e.resampling.append(new Option("sinc", "sinc"), new Option("linear", "linear"));
+    e.timeScale.append(...TimeScales.map((t, i) => new Option(t ? `${formatUnits(t, "s")}/div` : "Auto time", String(i))));
+    e.voltScale.append(...VoltScales.map((v, i) => new Option(v ? `${formatUnits(v, "V")}/div` : "Auto volts", String(i))));
     host.root.replaceChildren(
       h(
         "div",
@@ -164,8 +191,9 @@ export class SimulationPanel {
           e.load,
         ),
         e.controls,
+        h("div", { className: "sim-row settings" }, h("label", { textContent: "Engine" }), h("div", { className: "sim-settings" }, e.oversample, e.cap, e.resampling)),
       ),
-      h("div", { className: "sim-scope" }, canvas, e.legend),
+      h("div", { className: "sim-scope" }, canvas, h("div", { className: "scope-side" }, h("div", { className: "scope-bar" }, e.timeScale, e.voltScale, e.freeze), e.legend)),
     );
     this.scope = new Scope(canvas);
     this.scope.onStats = (stats) => this.showStats(stats);
@@ -182,6 +210,19 @@ export class SimulationPanel {
     e.expression.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") void this.setSource(e.expression.value.trim());
     });
+    for (const select of [e.oversample, e.cap, e.resampling]) select.addEventListener("change", () => void this.configure());
+    e.timeScale.addEventListener("change", () => {
+      this.scope.timePerDivision = TimeScales[Number(e.timeScale.value)] ?? null;
+      this.scope.refresh();
+    });
+    e.voltScale.addEventListener("change", () => {
+      this.scope.voltsPerDivision = VoltScales[Number(e.voltScale.value)] ?? null;
+      this.scope.refresh();
+    });
+    e.freeze.addEventListener("click", () => {
+      this.scope.frozen = !this.scope.frozen;
+      e.freeze.classList.toggle("active", this.scope.frozen);
+    });
 
     const client = host.client;
     client.onBinary = (frame) => this.scope.receive(frame);
@@ -190,7 +231,19 @@ export class SimulationPanel {
     client.on("sim.controls", (d) => mine(d) && this.setControls(d as unknown as Controls));
     client.on("sim.probes", (d) => mine(d) && this.setProbes((d as unknown as { probes: Probe[] }).probes));
     client.on("sim.levels", (d) => mine(d) && this.setLevels(d as unknown as { inputs: number[]; outputs: number[] }));
-    client.on("sim.stats", (d) => mine(d) && this.setStats(d as unknown as { load: number; dropouts: number; rejectedSettings: number }));
+    client.on("sim.stats", (d) => mine(d) && this.setStats(d as unknown as { load: number; dropouts: number; rejectedSettings: number; cappedSteps: number | null }));
+
+    // A knob being turned on the schematic: followed on the window, without pointer capture, which an SVG group
+    // didn't keep past the first move in testing.
+    window.addEventListener("pointermove", (ev) => {
+      const t = this.turning;
+      if (t && t.pointer === ev.pointerId) this.setPot(t.pot, t.start + (t.startY - ev.clientY) / KnobTravel);
+    });
+    const release = (ev: PointerEvent) => {
+      if (this.turning?.pointer === ev.pointerId) this.turning = null;
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
 
     // The probe tool: a click picks the wire or terminal under the pointer, ahead of the editor's own handling.
     host.svg.addEventListener("pointerdown", (ev) => this.probeAt(ev), { capture: true });
@@ -225,6 +278,7 @@ export class SimulationPanel {
       this.host.root.hidden = false;
       this.el.title.textContent = title;
       this.setState(info);
+      this.showSettings(info.settings);
       this.setControls(info);
       this.setProbes(info.probes);
       await this.host.client.request("sim.scope", { sim: info.sim, enabled: true });
@@ -245,6 +299,9 @@ export class SimulationPanel {
 
   private reset() {
     this.info = null;
+    this.turning = null;
+    this.scope.frozen = false;
+    this.el.freeze.classList.remove("active");
     this.state = null;
     this.flags.clear();
     this.scope.clear();
@@ -335,10 +392,7 @@ export class SimulationPanel {
           const slider = h("input", { type: "range", min: "0", max: "1", step: "0.001", title: `${pot.name}: drag to turn; double-click for its schematic position` });
           slider.dataset["pot"] = pot.name;
           const value = h("span", { className: "value" });
-          slider.addEventListener("input", () => {
-            value.textContent = percent(Number(slider.value));
-            this.info && this.host.client.notify("sim.set", { sim: this.info.sim, pots: { [pot.name]: Number(slider.value) } });
-          });
+          slider.addEventListener("input", () => this.setPot(pot.name, Number(slider.value)));
           slider.addEventListener("dblclick", () => {
             const original = this.info?.pots.find((p) => p.name === pot.name)?.default ?? pot.default;
             slider.value = String(original);
@@ -365,6 +419,8 @@ export class SimulationPanel {
       const button = box.querySelector<HTMLButtonElement>(`button[data-switch="${CSS.escape(sw.name)}"]`);
       if (button) button.textContent = `${sw.position + 1} of ${sw.positions}`;
     }
+    // The knobs and buttons on the schematic follow, unless one is being turned there.
+    if (!this.turning) this.drawFlags();
 
     // The input source.
     const source = c.inputs[0]?.source;
@@ -378,6 +434,47 @@ export class SimulationPanel {
       this.el.expression.placeholder = source?.silence ? "Silence" : "";
       const preset = Presets.findIndex((p) => (p.expression ?? null) === (source?.expression ?? null));
       this.el.preset.value = preset >= 0 ? String(preset) : "custom";
+    }
+  }
+
+  /** Turns a pot, from the panel's slider or a knob on the schematic: both show it, and the server gets it. */
+  private setPot(name: string, position: number) {
+    const info = this.info;
+    const pot = info?.pots.find((p) => p.name === name);
+    if (!info || !pot) return;
+    position = Math.min(1, Math.max(0, position));
+    pot.position = position;
+    const slider = this.el.controls.querySelector<HTMLInputElement>(`input[data-pot="${CSS.escape(name)}"]`);
+    if (slider) {
+      if (document.activeElement !== slider) slider.value = String(position);
+      slider.nextElementSibling!.textContent = percent(position);
+    }
+    for (const knob of this.host.probeLayer.querySelectorAll<SVGGElement>(".sim-knob")) if (knob.dataset["pot"] === name) turnKnob(knob, pot);
+    this.host.client.notify("sim.set", { sim: info.sim, pots: { [name]: position } });
+  }
+
+  private showSettings(settings: Record<string, unknown>) {
+    this.el.oversample.value = String(settings["oversample"] ?? 4);
+    this.el.cap.value = String(settings["iterationCap"] ?? 32);
+    this.el.resampling.value = String(settings["resampling"] ?? "sinc");
+  }
+
+  /** The engine settings changed: the simulation rebuilds with them. */
+  private async configure() {
+    const info = this.info;
+    if (!info) return;
+    const settings = {
+      ...info.settings,
+      oversample: Number(this.el.oversample.value),
+      iterationCap: Number(this.el.cap.value),
+      resampling: this.el.resampling.value,
+    };
+    try {
+      await this.host.client.request("sim.configure", { sim: info.sim, settings });
+      info.settings = settings;
+    } catch (e) {
+      this.host.status((e as Error).message, "error");
+      this.showSettings(info.settings);
     }
   }
 
@@ -437,17 +534,21 @@ export class SimulationPanel {
     meter(this.el.outputMeter, l.outputs[0] ?? 0);
   }
 
-  private setStats(s: { load: number; dropouts: number; rejectedSettings: number }) {
+  private setStats(s: { load: number; dropouts: number; rejectedSettings: number; cappedSteps: number | null }) {
     const load = `${Math.round(s.load * 100)}% of real time`;
-    this.el.load.textContent = load;
-    this.el.load.title = `Processing load: ${load}. Dropouts: ${s.dropouts}. Settings it couldn't solve: ${s.rejectedSettings}.`;
-    this.el.load.classList.toggle("high", s.load > 0.8);
+    const capped = s.cappedSteps ? `, ${s.cappedSteps} capped` : "";
+    this.el.load.textContent = load + capped;
+    this.el.load.title =
+      `Processing load: ${load}. Newton steps that hit the iteration cap in the last second: ${s.cappedSteps ?? 0} ` +
+      `(raise the cap if this stays high). Dropouts: ${s.dropouts}. Settings it couldn't solve: ${s.rejectedSettings}.`;
+    this.el.load.classList.toggle("high", s.load > 0.8 || (s.cappedSteps ?? 0) > 0);
   }
 
   // ---- Probes on the schematic ----
 
   private probeAt(e: PointerEvent) {
     if (!this.probingNow || e.button !== 0 || !this.info || !this.state) return;
+    if ((e.target as Element | null)?.closest?.(".sim-knob, .sim-switch")) return;
     e.stopPropagation();
     e.preventDefault();
     if (this.host.shown() !== this.state) {
@@ -496,6 +597,75 @@ export class SimulationPanel {
     return best;
   }
 
+  /** Knobs beside the pots and buttons beside the switches of the simulated schematic, to turn and click there. */
+  private drawControls(layer: SVGGElement, doc: SchematicDocument) {
+    const info = this.info!;
+    // A knob to the right of its pot; a switch's button above it, clear of the throws' wires.
+    const beside = (id: string, where: "right" | "above" = "right"): Point | null => {
+      const symbol = doc.elements.find((e): e is SymbolElement => e.id === id && e.kind === "symbol");
+      const layout = symbol && this.host.layouts.get(symbol.component);
+      if (!symbol || !layout) return null;
+      const box = mapBox(mappingOf(symbol), layout.bounds);
+      return where === "right" ? [box.max[0] + 11, (box.min[1] + box.max[1]) / 2] : [(box.min[0] + box.max[0]) / 2, box.min[1] - 9];
+    };
+    for (const pot of info.pots)
+      for (const id of pot.elements) {
+        const at = beside(id);
+        if (at) layer.append(this.knob(pot, at));
+      }
+    for (const sw of info.switches)
+      for (const id of sw.elements) {
+        const at = beside(id, "above");
+        if (at) layer.append(this.switchButton(sw, at));
+      }
+  }
+
+  private knob(pot: Pot, [x, y]: Point): SVGGElement {
+    const g = svg("g", { class: "sim-knob", transform: `translate(${x} ${y})` });
+    g.dataset["pot"] = pot.name;
+    g.append(svg("circle", { r: 7, class: "knob-body" }), svg("line", { x1: 0, y1: 0, x2: 0, y2: -6, class: "knob-pointer" }), svg("title"));
+    turnKnob(g, pot);
+    const position = () => this.info?.pots.find((p) => p.name === pot.name)?.position ?? pot.position;
+    // The drag is followed on the window (see the constructor), so it carries on wherever the pointer goes.
+    g.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      this.turning = { pot: pot.name, pointer: e.pointerId, startY: e.clientY, start: position() };
+    });
+    g.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      this.setPot(pot.name, this.info?.pots.find((p) => p.name === pot.name)?.default ?? pot.default);
+    });
+    g.addEventListener(
+      "wheel",
+      (e) => {
+        // A scroll over a knob turns it, rather than zooming the view.
+        e.preventDefault();
+        e.stopPropagation();
+        this.setPot(pot.name, position() - Math.sign(e.deltaY) * 0.02);
+      },
+      { passive: false },
+    );
+    return g;
+  }
+
+  private switchButton(sw: Switch, [x, y]: Point): SVGGElement {
+    const g = svg("g", { class: "sim-switch", transform: `translate(${x} ${y})` });
+    const label = svg("text", { x: 0, y: 2.6, class: "switch-label" });
+    label.textContent = String(sw.position + 1);
+    const title = svg("title");
+    title.textContent = `${sw.name}: position ${sw.position + 1} of ${sw.positions}. Click for the next.`;
+    g.append(svg("rect", { x: -7, y: -5, width: 14, height: 10, rx: 2, class: "switch-body" }), label, title);
+    g.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (this.info) void this.call("sim.click", { sim: this.info.sim, switch: sw.name });
+    });
+    return g;
+  }
+
   /** Where a probe's flag goes: on its terminal, wherever the symbol is now; on its wire where it was clipped, or the
    * wire's middle if that's no longer on it. */
   private flagPoint(probe: Probe, doc: SchematicDocument): Point | null {
@@ -518,6 +688,7 @@ export class SimulationPanel {
     const layer = this.host.probeLayer;
     layer.replaceChildren();
     if (!this.info || !this.state || this.host.shown() !== this.state) return;
+    this.drawControls(layer, this.state.doc);
     for (const probe of this.info.probes) {
       const at = this.flagPoint(probe, this.state.doc);
       if (!at) continue;
@@ -543,6 +714,18 @@ export class SimulationPanel {
       layer.append(g);
     }
   }
+}
+
+function svg<K extends keyof SVGElementTagNameMap>(tag: K, attributes: Record<string, string | number> = {}): SVGElementTagNameMap[K] {
+  const e = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attributes)) e.setAttribute(k, String(v));
+  return e;
+}
+
+/** Points a knob at a pot's position: 0 at seven o'clock, 1 at five, as on a real pot. */
+function turnKnob(knob: SVGGElement, pot: Pot) {
+  knob.querySelector(".knob-pointer")!.setAttribute("transform", `rotate(${-135 + 270 * pot.position})`);
+  knob.querySelector("title")!.textContent = `${pot.name}: ${percent(pot.position)}. Drag up or down, or scroll, to turn; double-click for its schematic position.`;
 }
 
 function sub(a: Point, b: Point): Point {

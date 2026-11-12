@@ -6,7 +6,7 @@ namespace SpiceForgeServer;
 
 /// <summary>
 /// The server's persistent settings (WebSocketApi.md, Session and settings): recent files, log verbosity, simulation
-/// defaults, and the client's own opaque state. Saved as JSON after every change.
+/// defaults, the user's component folders, and the client's own opaque state. Saved as JSON after every change.
 /// </summary>
 public sealed class SettingsStore
 {
@@ -34,6 +34,7 @@ public sealed class SettingsStore
                 ["audio"] = data["audio"]?.DeepClone() ?? new JsonObject(),
                 ["logVerbosity"] = LogVerbosity,
                 ["simulationDefaults"] = SimulationDefaults,
+                ["componentFolders"] = Json.Strings(ComponentFolders),
                 ["client"] = data["client"]?.DeepClone(),
             };
     }
@@ -44,6 +45,16 @@ public sealed class SettingsStore
         {
             lock (sync)
                 return (data["recentFiles"] as JsonArray)?.Select(n => n?.GetValue<string>()).OfType<string>().ToList() ?? new List<string>();
+        }
+    }
+
+    /// <summary>Folders of component libraries the user added, loaded after the server's own.</summary>
+    public IReadOnlyList<string> ComponentFolders
+    {
+        get
+        {
+            lock (sync)
+                return (data["componentFolders"] as JsonArray)?.Select(n => n?.GetValue<string>()).OfType<string>().ToList() ?? new List<string>();
         }
     }
 
@@ -91,11 +102,27 @@ public sealed class SettingsStore
         }
     }
 
-    /// <summary>Applies <c>settings.set</c>: any of logVerbosity, simulationDefaults and client.</summary>
+    /// <summary>Applies <c>settings.set</c>: any of logVerbosity, simulationDefaults, componentFolders and client.</summary>
     public void Set(Args args)
     {
+        // Checked before anything changes, so a bad folder leaves the settings as they were.
+        List<string>? folders = null;
+        if (args.Has("componentFolders"))
+        {
+            folders = new List<string>();
+            foreach (string folder in args.Strings("componentFolders"))
+            {
+                if (!System.IO.Path.IsPathFullyQualified(folder) || !Directory.Exists(folder))
+                    throw new ApiException(ErrorCodes.InvalidValue, $"There's no folder '{folder}'.");
+                string full = System.IO.Path.GetFullPath(folder);
+                if (!folders.Contains(full, StringComparer.OrdinalIgnoreCase))
+                    folders.Add(full);
+            }
+        }
         lock (sync)
         {
+            if (folders != null)
+                data["componentFolders"] = Json.Strings(folders);
             if (args.OptionalString("logVerbosity") is string level)
             {
                 LogHub.ParseLevel(level);

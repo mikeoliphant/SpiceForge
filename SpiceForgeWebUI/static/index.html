@@ -23,6 +23,7 @@
       <button id="open" disabled title="Open a schematic (Ctrl+O)">Open…</button>
       <button id="save" disabled title="Save (Ctrl+S)">Save</button>
       <button id="save-as" disabled title="Save under a new name (Ctrl+Shift+S)">Save As…</button>
+      <button id="export" disabled title="Save the drawing as an SVG or PNG image">Export…</button>
       <span class="separator"></span>
       <button id="undo" disabled title="Undo (Ctrl+Z)">Undo</button>
       <button id="redo" disabled title="Redo (Ctrl+Y)">Redo</button>
@@ -47,6 +48,11 @@
     <div class="workspace">
       <aside id="library" class="panel library"></aside>
       <main class="canvas">
+        <div id="find" class="find" hidden>
+          <input id="find-text" type="search" placeholder="Find a part by name" spellcheck="false" />
+          <span id="find-count" class="find-count"></span>
+          <button id="find-close" title="Close (Esc)">×</button>
+        </div>
         <svg id="schematic" xmlns="http://www.w3.org/2000/svg" tabindex="0" data-tool="select">
           <g id="drawing"></g>
           <g id="overlay"></g>

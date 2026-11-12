@@ -914,6 +914,25 @@ the web front end shows it on a scope.
   to 1.37 V peak to peak, and undo brought it back. An edit that doesn't build is refused, and the panel says it's
   still running the last version that did.
 
+## Polishing the simulation and the editor
+
+- **Count capped steps with one test per step.** `CompiledCircuit.CappedSteps` (mirrored in the interpreter) counts
+  steps whose result has the cap flag, whether or not iterations are recorded, so `sim.stats` reports them without the
+  per-step list a host can't afford. `SpiceForge.Validate processor` still allocates nothing. At 2× with a cap of 8 the
+  Rat caps about 880 steps a second at the default 0.5 V input, and none at 4× with 32.
+- **Pointer capture on an SVG group didn't survive the first move.** A knob drawn as a `<g>` on the schematic took
+  capture on pointerdown and lost it at the next pointermove (headless Edge, CDP mouse events). It wasn't removed from
+  the page, and nothing else took capture. The svg element's own capture, used by the editor, works. Following the drag
+  with window listeners, without capture, works and keeps working when the pointer leaves the canvas.
+- **Harness: a move with no buttons ends a drag.** CDP `mouseMoved` with `buttons: 0` after `mousePressed` releases
+  pointer capture as if the button had been let go; drags in the test scripts must send `buttons: 1`.
+- **Export by drawing afresh.** The image is rendered again, with no selection, into a hidden group inside the page's
+  SVG so the theme's stylesheet applies, then each shape's computed style is written onto a copy and the classes,
+  hit areas, outlines and tooltips are dropped. The result stands alone (no classes left), in the theme's colours.
+- **User component folders live in the server's settings.** `settings.set` `componentFolders` checks that each folder
+  exists, then the catalogue reloads with them and `catalog.changed` goes to every client. `SpiceForge.Validate
+  server` adds a folder with one part, sees it arrive, removes the folder, and sees it go.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was
@@ -950,8 +969,12 @@ the web front end shows it on a scope.
   won't compensate for it. A minimum-phase or shorter filter would cut it, at some cost in phase or rejection.
 - The plugin defaults to sinc resampling (the processor and renderer keep LiveSPICE's linear), so its 40 samples of
   latency, unreported to the host, are now the norm in a DAW.
+- A switch clicked while simulating keeps its symbol drawn at the schematic's position: the drawing comes from the
+  document's `Position`, and simulation controls don't edit the document. The button on the schematic shows the live
+  position. Drawing the symbol from the live position, without an edit, would need the layout per position.
+- Knobs and switch buttons are placed beside their symbols by rule (right of a pot, above a switch); a crowded
+  schematic can put one over a wire or a label.
 - Simulation has no audio device yet: the server's clock drives it, from expressions only. `sim.setOutput`, channel
-  sources and `audio.*` answer `unsupported`, and `sim.stats` reports `cappedSteps` as null (the engine doesn't count
-  capped steps when `RecordIterations` is off).
+  sources and `audio.*` answer `unsupported`.
 - The plugin defaults to 4× with a cap of 32, which the study found nearly as accurate as 8× for about 40% less CPU.
   With sinc resampling, error falls about 12 dB per doubling of N, so a user choosing sinc may want 8× back.

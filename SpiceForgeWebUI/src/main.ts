@@ -8,8 +8,10 @@ import { Editor, newEditorState, type EditorState } from "./editor";
 import { chooseFile } from "./fileDialog";
 import { snap } from "./geometry";
 import { LayoutCache } from "./layouts";
-import { LibraryPanel, WireType } from "./library";
+import { manageComponentFolders } from "./componentFolders";
+import { LibraryDragType, LibraryPanel, WireType } from "./library";
 import { PropertiesPanel } from "./properties";
+import { renderDocument } from "./render";
 import { SimulationPanel } from "./simulation";
 import type { CatalogEntry, Element, FileRead, Hello, Point, SchematicDocument, SymbolElement } from "./protocol";
 import { applyTheme, currentTheme, initTheme, isTheme, Themes } from "./theme";
@@ -45,6 +47,7 @@ const buttons = {
   zoomIn: $<HTMLButtonElement>("zoom-in"),
   zoomOut: $<HTMLButtonElement>("zoom-out"),
   simulate: $<HTMLButtonElement>("simulate"),
+  export: $<HTMLButtonElement>("export"),
 };
 
 const client = new ApiClient();
@@ -88,7 +91,7 @@ let active: Tab | null = null;
 let untitledCount = 0;
 
 // For scripted tests and the browser console.
-Object.assign(window, { spiceforge: { editor, library, layouts, tabs: () => tabs } });
+Object.assign(window, { spiceforge: { editor, library, layouts, tabs: () => tabs, exportSvg: () => exportSvg() } });
 
 const emptyDocument = (): SchematicDocument => ({ circuit: { Name: "", Description: "", PartNumber: "" }, elements: [] });
 
@@ -207,6 +210,14 @@ editor.onChange = () => {
 editor.onError = (message) => setStatus(message, "error");
 properties.onError = (message) => setStatus(message, "error");
 library.onPick = pick;
+library.onFolders = () => {
+  if (!connected || !hello) return;
+  void manageComponentFolders(client, hello.folders.components, hello.folders.user);
+};
+library.onChanged = () => {
+  editor.wireNameOf = wireNames(library.types);
+  editor.redraw();
+};
 
 function setStatus(text: string, kind: "info" | "error" = "info") {
   status.textContent = text;
@@ -225,6 +236,7 @@ function updateChrome() {
   const open = active !== null;
   const selected = editor.selection.size;
   buttons.save.disabled = buttons.saveAs.disabled = !connected || !open;
+  buttons.export.disabled = !open || !editor.bounds;
   buttons.undo.disabled = !h.canUndo;
   buttons.redo.disabled = !h.canRedo;
   buttons.undo.title = h.undoLabel ? `Undo ${h.undoLabel} (Ctrl+Z)` : "Undo (Ctrl+Z)";
@@ -523,6 +535,173 @@ document.addEventListener("paste", (e) => {
   void paste(e.clipboardData?.getData("text/plain") ?? null, pointerAt);
 });
 
+// ---- Dropping components from the library ----
+
+svg.addEventListener("dragover", (e) => {
+  if (!e.dataTransfer?.types.includes(LibraryDragType) || !editor.document) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+
+svg.addEventListener("drop", (e) => {
+  const id = e.dataTransfer?.getData(LibraryDragType);
+  const entry = id ? library.entry(id) : null;
+  if (!entry || !editor.document) return;
+  e.preventDefault();
+  if (entry.component.type === WireType) return pick(entry);
+  editor.dropComponent(entry.component, entry.layout, e.clientX, e.clientY);
+  svg.focus();
+});
+
+// ---- Find (Ctrl+F): parts by name, each selected and brought into view in turn ----
+
+const findBox = $<HTMLDivElement>("find");
+const findText = $<HTMLInputElement>("find-text");
+const findCount = $<HTMLSpanElement>("find-count");
+let findAt = -1;
+
+function findMatches(): SymbolElement[] {
+  const doc = editor.document;
+  const text = findText.value.trim().toLowerCase();
+  if (!doc || !text) return [];
+  const name = (s: SymbolElement) => s.component.properties["Name"] ?? "";
+  return doc.elements
+    .filter((e): e is SymbolElement => e.kind === "symbol")
+    .filter((s) => name(s).toLowerCase().includes(text) || (s.component.properties["PartNumber"] ?? "").toLowerCase().includes(text))
+    // Exact names first, then those starting with the text, then the rest; each in natural order (R2 before R10).
+    .sort((a, b) => rank(a) - rank(b) || name(a).localeCompare(name(b), undefined, { numeric: true }));
+  function rank(s: SymbolElement) {
+    const n = name(s).toLowerCase();
+    return n === text ? 0 : n.startsWith(text) ? 1 : 2;
+  }
+}
+
+function showFind() {
+  if (!editor.document) return;
+  findBox.hidden = false;
+  findText.focus();
+  findText.select();
+}
+
+function hideFind() {
+  findBox.hidden = true;
+  svg.focus();
+}
+
+function findNext(step: number) {
+  const matches = findMatches();
+  findText.classList.toggle("invalid", findText.value.trim() !== "" && matches.length === 0);
+  if (matches.length === 0) {
+    findCount.textContent = findText.value.trim() ? "No match" : "";
+    findAt = -1;
+    return;
+  }
+  findAt = (((findAt + step) % matches.length) + matches.length) % matches.length;
+  const found = matches[findAt]!;
+  findCount.textContent = `${findAt + 1} of ${matches.length}`;
+  editor.selectOnly([found.id]);
+  const box = editor.boundsOf([found]);
+  if (box) view.place = { zoom: Math.max(view.Zoom, 1), cx: (box.min[0] + box.max[0]) / 2, cy: (box.min[1] + box.max[1]) / 2 };
+}
+
+findText.addEventListener("input", () => {
+  findAt = -1;
+  findNext(1);
+});
+findText.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") (e.preventDefault(), findNext(e.shiftKey ? -1 : 1));
+  else if (e.key === "Escape") (e.preventDefault(), hideFind());
+});
+$<HTMLButtonElement>("find-close").addEventListener("click", hideFind);
+
+// ---- Export: the drawing as an image, in the theme's colours, without selection or hover marks ----
+
+const SvgNamespace = "http://www.w3.org/2000/svg";
+
+/** The schematic as a standalone SVG: drawn afresh without selection, with each shape's computed style written
+ * onto it, so it looks the same outside the page. */
+function exportSvg(): { text: string; width: number; height: number } | null {
+  const doc = editor.document;
+  const bounds = editor.bounds;
+  if (!doc || !bounds) return null;
+  const margin = 20;
+  const x = bounds.min[0] - margin, y = bounds.min[1] - margin;
+  const width = bounds.max[0] - bounds.min[0] + 2 * margin, height = bounds.max[1] - bounds.min[1] + 2 * margin;
+
+  // Drawn inside the page's SVG for a moment, so the stylesheet applies to it.
+  const scratch = document.createElementNS(SvgNamespace, "g") as SVGGElement;
+  scratch.style.visibility = "hidden";
+  svg.append(scratch);
+  renderDocument(scratch, doc, layouts);
+  scratch.querySelectorAll(".hit, .outline, title").forEach((e) => e.remove());
+  const copy = scratch.cloneNode(true) as SVGGElement;
+  const properties = ["stroke", "fill", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "font-family", "font-size", "font-weight"];
+  const originals = [...scratch.querySelectorAll("*")];
+  const copies = [...copy.querySelectorAll("*")];
+  originals.forEach((original, i) => {
+    const style = getComputedStyle(original);
+    const target = copies[i] as SVGElement;
+    target.removeAttribute("class");
+    target.setAttribute("style", properties.map((p) => `${p}:${style.getPropertyValue(p)}`).join(";"));
+  });
+  scratch.remove();
+  copy.removeAttribute("style");
+
+  const out = document.createElementNS(SvgNamespace, "svg");
+  out.setAttribute("xmlns", SvgNamespace);
+  out.setAttribute("viewBox", `${x} ${y} ${width} ${height}`);
+  out.setAttribute("width", String(width));
+  out.setAttribute("height", String(height));
+  const background = document.createElementNS(SvgNamespace, "rect");
+  for (const [k, v] of Object.entries({ x, y, width, height, fill: getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim() }))
+    background.setAttribute(k, String(v));
+  out.append(background, copy);
+  return { text: new XMLSerializer().serializeToString(out), width, height };
+}
+
+function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+async function exportImage(kind: "svg" | "png") {
+  const image = exportSvg();
+  if (!image || !active) return;
+  const base = tabName(active).replace(/[\\/:*?"<>|]/g, "_");
+  const svgBlob = new Blob([image.text], { type: "image/svg+xml" });
+  if (kind === "svg") return download(svgBlob, `${base}.svg`);
+  // PNG: the SVG drawn onto a canvas at twice its size, for a sharp image.
+  const scale = 2;
+  const img = new Image();
+  const url = URL.createObjectURL(svgBlob);
+  try {
+    img.src = url;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(image.width * scale);
+    canvas.height = Math.ceil(image.height * scale);
+    canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (png) download(png, `${base}.png`);
+  } catch (e) {
+    setStatus(`Couldn't make the PNG: ${errorText(e)}`, "error");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+buttons.export.addEventListener("click", () => {
+  const r = buttons.export.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 2, [
+    { label: "SVG image", run: () => void exportImage("svg") },
+    { label: "PNG image", run: () => void exportImage("png") },
+  ]);
+});
+
 // ---- The context menu ----
 
 interface MenuItem {
@@ -637,6 +816,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape" && simulation.probing) return simulation.setProbing(false);
   if (ctrl && key === "o") (handled(), buttons.open.click());
+  else if (ctrl && key === "f") (handled(), showFind());
   else if (ctrl && key === "s" && e.shiftKey) (handled(), void saveAs());
   else if (ctrl && key === "s") (handled(), void save());
   else if (ctrl && key === "z" && !e.shiftKey) (handled(), editor.undo());

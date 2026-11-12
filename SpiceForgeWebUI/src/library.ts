@@ -16,6 +16,9 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEle
 /** The conductor, which LiveSPICE's library turns into the wire tool rather than a symbol. */
 export const WireType = "Circuit.Conductor, Circuit";
 
+/** The drag data type of a library entry, carrying its id. */
+export const LibraryDragType = "application/x-spiceforge-entry";
+
 export class LibraryPanel {
   private catalog: Catalog | null = null;
   private readonly filter: HTMLInputElement;
@@ -26,15 +29,22 @@ export class LibraryPanel {
   /** Called when a component is clicked. */
   onPick: (entry: CatalogEntry) => void = () => {};
 
+  /** Called when the folders button is clicked, to manage the user's component folders. */
+  onFolders: () => void = () => {};
+
+  /** Called after the catalogue changes (reloaded here, or by the server for every client). */
+  onChanged: () => void = () => {};
+
   constructor(
     root: HTMLElement,
     private readonly client: ApiClient,
   ) {
     this.filter = h("input", { type: "search", placeholder: "Filter", className: "filter", spellcheck: false });
     const refresh = h("button", { textContent: "↻", title: "Reload the component libraries" });
+    const folders = h("button", { textContent: "…", title: "Component folders: add your own libraries" });
     this.tree = h("div", { className: "tree" });
     this.flat = h("div", { className: "flat" });
-    root.append(h("div", { className: "panel-title" }, "Components"), h("div", { className: "library-bar" }, this.filter, refresh), this.tree, this.flat);
+    root.append(h("div", { className: "panel-title" }, "Components"), h("div", { className: "library-bar" }, this.filter, refresh, folders), this.tree, this.flat);
     this.filter.addEventListener("input", () => this.render());
     this.filter.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
@@ -43,6 +53,18 @@ export class LibraryPanel {
       }
     });
     refresh.addEventListener("click", () => void this.load(true));
+    folders.addEventListener("click", () => this.onFolders());
+    // The server reloads the catalogue for everyone when the component folders change, or on another's refresh.
+    client.on("catalog.changed", (data) => {
+      this.catalog = data as Catalog;
+      this.render();
+      this.onChanged();
+    });
+  }
+
+  /** An entry by its id, as a drag from the library carries it. */
+  entry(id: string): CatalogEntry | null {
+    return this.catalog?.entries[id] ?? null;
   }
 
   /** The catalogue's entries, once loaded. */
@@ -65,6 +87,7 @@ export class LibraryPanel {
     this.tree.replaceChildren(h("div", { className: "muted", textContent: "Loading components…" }));
     this.catalog = await this.client.request<Catalog>(refresh ? "catalog.refresh" : "catalog.get");
     this.render();
+    this.onChanged();
   }
 
   private render() {
@@ -104,6 +127,12 @@ export class LibraryPanel {
     button.append(drawIcon(entry.layout, 22));
     if (withName) button.append(h("span", { textContent: entry.name }));
     button.addEventListener("click", () => this.onPick(entry));
+    // Dragged onto the canvas, it's placed where it's dropped.
+    button.draggable = true;
+    button.addEventListener("dragstart", (e) => {
+      e.dataTransfer?.setData(LibraryDragType, id);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
+    });
     return button;
   }
 }

@@ -36,6 +36,10 @@ public sealed class CompiledCircuit
     /// should turn it off, since it grows by one byte per oversampled step.</summary>
     public bool RecordIterations { get; set; } = true;
 
+    /// <summary>How many steps have hit Newton's iteration cap, counted whether or not iterations are recorded: one
+    /// test per step, for a host to report.</summary>
+    public long CappedSteps { get; private set; }
+
     private Oversampler oversampler;
     // The step-rate input and outputs of the current block, grown as needed.
     private double[] stepInput = Array.Empty<double>();
@@ -138,8 +142,13 @@ public sealed class CompiledCircuit
             time += substep;
             input = inputSteps[n];
             int result = step(time, input, inputPrevious, history, y);
-            if (newton && RecordIterations)
-                IterationCounts.Add((byte)result);
+            if (newton)
+            {
+                if ((result & 0x80) != 0)
+                    CappedSteps++;
+                if (RecordIterations)
+                    IterationCounts.Add((byte)result);
+            }
 
             double[] oldest = history[history.Length - 1];
             for (int d = history.Length - 1; d > 0; d--)

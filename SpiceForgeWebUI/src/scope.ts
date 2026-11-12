@@ -50,6 +50,29 @@ export class Scope {
   private dirty = false;
   private frame = 0;
 
+  /** Seconds per division across (ten divisions), or null to fit about three periods of the first signal. */
+  timePerDivision: number | null = null;
+
+  /** Volts per division (eight divisions, centred on 0 V), or null to fit the signals. */
+  voltsPerDivision: number | null = null;
+
+  /** Whether the display holds still: new samples are dropped until it's released. */
+  private frozenNow = false;
+
+  get frozen() {
+    return this.frozenNow;
+  }
+
+  set frozen(on: boolean) {
+    this.frozenNow = on;
+    this.invalidate();
+  }
+
+  /** Redraws, after a setting changes. */
+  refresh() {
+    this.invalidate();
+  }
+
   /** Called after each draw, with each signal's statistics over what's shown. */
   onStats: (stats: Map<number, SignalStats>) => void = () => {};
 
@@ -70,6 +93,7 @@ export class Scope {
 
   /** Takes a binary frame (WebSocketApi.md, Binary frames). */
   receive(buffer: ArrayBuffer) {
+    if (this.frozenNow) return;
     const view = new DataView(buffer);
     if (view.getUint8(0) !== 1 || view.getUint8(1) !== 1) return;
     const first = Number(view.getBigUint64(8, true));
@@ -134,7 +158,10 @@ export class Scope {
     const kept = Math.floor(this.rate * History);
     const reference = this.traces.get(shown[0]!.stream)!.read(end - kept, kept);
     const period = estimatePeriod(reference, this.rate);
-    const span = Math.round(clamp(period ? 3 * period : 0.02, 0.002, 0.1) * this.rate);
+    const span = Math.min(
+      kept - 1,
+      Math.round((this.timePerDivision ? 10 * this.timePerDivision : clamp(period ? 3 * period : 0.02, 0.002, 0.1)) * this.rate),
+    );
     let start = end - span;
     if (period) {
       const mean = average(reference);
@@ -150,7 +177,7 @@ export class Scope {
     // One vertical scale for every signal: a "nice" number of volts per division, eight divisions high.
     let peak = 0;
     for (const { values } of data) for (const v of values) peak = Math.max(peak, Math.abs(v));
-    const perDivision = niceStep(Math.max(peak, 1e-6) / 4);
+    const perDivision = this.voltsPerDivision ?? niceStep(Math.max(peak, 1e-6) / 4);
     const divisions = 8;
     const yOf = (v: number) => height / 2 - (v / (perDivision * divisions)) * height;
 
@@ -199,7 +226,7 @@ export class Scope {
     g.textAlign = "left";
     g.textBaseline = "top";
     const pad = 4 * ratio;
-    g.fillText(`${formatUnits(perDivision, "V")}/div   ${formatUnits(span / this.rate / 10, "s")}/div`, pad, pad);
+    g.fillText(`${formatUnits(perDivision, "V")}/div   ${formatUnits(span / this.rate / 10, "s")}/div${this.frozenNow ? "   Frozen" : ""}`, pad, pad);
     this.onStats(stats);
   }
 }

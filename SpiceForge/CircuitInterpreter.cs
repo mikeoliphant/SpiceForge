@@ -121,6 +121,9 @@ public sealed class CircuitInterpreter
     /// <summary>One entry per oversampled step: the Newton iteration count, with 0x80 set if the cap was hit.</summary>
     public List<byte> IterationCounts { get; } = new();
 
+    /// <summary>How many steps have hit Newton's iteration cap, as <see cref="CompiledCircuit.CappedSteps"/> counts.</summary>
+    public long CappedSteps { get; private set; }
+
     /// <param name="solution">LiveSPICE's solution of the circuit. It decides which unknowns the stopping rule tests.</param>
     public CircuitInterpreter(
         ExtractedSystem system,
@@ -1239,6 +1242,8 @@ public sealed class CircuitInterpreter
             {
                 int total = Math.Min(spent + iteration, CapFlag - 1);
                 IterationCounts.Add((byte)(done ? total : total | CapFlag));
+                if (!done)
+                    CappedSteps++;
                 if (SegmentObserver != null)
                     ObserveSegments(total, !done);
                 return;

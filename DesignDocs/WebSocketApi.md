@@ -249,8 +249,8 @@ Y  = y1·cos − x·sin + py
 | Op | Args | Result |
 |---|---|---|
 | `hello` | `protocol` (1), `client` (a name) | `protocol`, `server: {name, version}`, `capabilities`, `simulationDefaults`, `folders: {user, components}` |
-| `settings.get` | | `recentFiles`, `audio`, `logVerbosity`, `simulationDefaults`, `client` |
-| `settings.set` | any of `logVerbosity`, `simulationDefaults`, `client` | the settings |
+| `settings.get` | | `recentFiles`, `audio`, `logVerbosity`, `simulationDefaults`, `componentFolders`, `client` |
+| `settings.set` | any of `logVerbosity`, `simulationDefaults`, `componentFolders`, `client` | the settings |
 
 - **`capabilities`** says what this server supports:
   - `simulation` and `audio`: whether those operations are implemented. While they're false, `sim.*` and `audio.*`
@@ -259,6 +259,9 @@ Y  = y1·cos − x·sin + py
   - `resampling`: the choices (`["linear", "sinc"]`);
   - `oversample` and `iterationCap`: their ranges;
   - `expressions`: whether signal expressions are supported.
+- **`componentFolders`** are folders of component libraries (LiveSPICE's XML) the user added, loaded after the
+  server's own (`hello`'s `folders.components` lists them all). Each must be an existing folder, given in full, or
+  the request fails with `invalid_value`. Setting them reloads the catalogue, and `catalog.changed` is broadcast.
 - **`client`** is an opaque JSON value the server stores for the front end and returns as is: the dock layout, open
   document paths, and other per-user UI state. It should stay under 64 KB.
 - **Persistence:** settings persist across server runs, and `settings.changed` is broadcast when they change.
@@ -555,8 +558,7 @@ A probe:
 
 - **Levels** are linear peaks after the gains, each decaying over about 0.25 s. The client colours its lamps
   directly: green below 0.5, yellow below 0.75, orange below 0.95, red above.
-- **`cappedSteps`** counts Newton steps that hit the iteration cap since the last report; null where it isn't
-  measured (SpiceForgeServer doesn't count them while running, for speed).
+- **`cappedSteps`** counts Newton steps that hit the iteration cap since the last report.
 - **`rejectedSettings`** is SpiceForge's count of control settings it couldn't solve.
 
 ## Log
