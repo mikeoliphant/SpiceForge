@@ -144,11 +144,13 @@ has. Each change is one undo step.
 ### Simulating
 
 Simulate (F5) runs the schematic shown on the server; Shift+F5 or Stop ends it. Pressing F5 again starts over. A panel
-opens under the canvas:
+opens under the canvas. Drag its top edge to make it taller or shorter (the browser remembers the height), or
+double-click the edge to fit it to the controls:
 
 | Part | Does |
 |---|---|
-| Input | The Input's signal, in volts: a preset, or any expression in `t` (Enter applies it) |
+| Input | What drives the Input: one of the audio device's open inputs, a preset signal in volts, or any expression in `t` (Enter applies it) |
+| Audio | The device it plays on, its rate, buffer and round-trip latency; Configure… opens the audio settings |
 | In, Out | Level meters against the Input's and Speakers' full scale; then the processing load |
 | Pots, switches | Sliders and buttons in the panel, and knobs and buttons on the schematic itself: drag a knob up or down, or scroll over it; double-click for the schematic's position; click a switch for its next position |
 | Engine | Oversampling, Newton's iteration cap and resampling; changing them rebuilds |
@@ -167,8 +169,16 @@ remembered in the browser and put back the next time it's simulated. Reloading t
 the server carries on, and the page picks it up again once the schematic is open.
 
 Editing the simulated schematic updates the simulation as you go: it rebuilds a moment after the last change, and
-keeps running the last version that built while an edit leaves it broken. There's no audio device yet, so nothing
-plays: the output drives the Out meter, and probes show what any node does.
+keeps running the last version that built while an edit leaves it broken.
+
+### Audio
+
+Audio… (in the toolbar, or Configure… in the simulation panel) chooses where simulations play: an ASIO device, or
+None, the server's own clock, where nothing plays and the output only drives the Out meter and the scope. Choose the
+device's input and output channels, its rate and buffer size (or the device's own), or open the driver's control
+panel. Test loops the inputs to the outputs, with level meters and a scope of the summed input. OK applies and saves
+the settings, and moves a running simulation to them. A device that can't be opened (a USB interface that isn't
+plugged in) leaves simulations running on the clock, and the panel says why.
 
 ## The conformance test
 
@@ -200,5 +210,6 @@ server and runs it.
 | `src/simulation.ts` | The simulation panel: controls, input, meters, the probe tool and flags, live updates |
 | `src/componentFolders.ts` | The component folders dialog |
 | `src/scope.ts` | The scope: binary frames into per-probe history, triggered and drawn on a canvas |
+| `src/audio.ts` | The audio dialog: driver, device, channels, rate and buffer size, and the test |
 | `src/main.ts` | The page: toolbar, status, opening and saving files |
 | `static/` | `index.html`, `themes.css` and `style.css`, copied to `dist/` |

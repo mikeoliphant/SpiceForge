@@ -244,6 +244,7 @@ export class SimulationPanel {
       h("div", { className: "sim-scope" }, canvas, h("div", { className: "scope-side" }, h("div", { className: "scope-bar" }, e.timeScale, e.voltScale, e.freeze), e.legend)),
     );
     this.scope = new Scope(canvas);
+    this.makeResizable();
     this.scope.onStats = (stats) => this.showStats(stats);
 
     e.probe.addEventListener("click", () => this.setProbing(!this.probingNow));
@@ -302,6 +303,56 @@ export class SimulationPanel {
     // The probe tool: a click picks the wire or terminal under the pointer, ahead of the editor's own handling.
     host.svg.addEventListener("pointerdown", (ev) => this.probeAt(ev), { capture: true });
     host.root.hidden = true;
+  }
+
+  /**
+   * The panel's top edge is a handle: dragging it sets the panel's height, which this browser remembers, and a
+   * double-click fits the panel to its controls. Either way the schematic keeps some room.
+   */
+  private makeResizable() {
+    const root = this.host.root;
+    const side = root.querySelector<HTMLElement>(".sim-side")!;
+    const handle = h("div", { className: "sim-splitter", title: "Drag to resize the panel; double-click to fit its controls" });
+    root.append(handle);
+    const clamp = (height: number) => Math.round(Math.max(MinPanelHeight, Math.min(height, window.innerHeight - MinCanvasRoom)));
+    const setHeight = (height: number, save: boolean) => {
+      root.style.height = `${clamp(height)}px`;
+      if (save) writeJson(localStorage, PanelHeightKey, clamp(height));
+    };
+    const saved = readJson<number>(localStorage, PanelHeightKey);
+    if (typeof saved === "number") setHeight(saved, false);
+
+    let drag: { pointer: number; startY: number; start: number } | null = null;
+    handle.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      handle.setPointerCapture(ev.pointerId);
+      drag = { pointer: ev.pointerId, startY: ev.clientY, start: root.getBoundingClientRect().height };
+      handle.classList.add("dragging");
+    });
+    handle.addEventListener("pointermove", (ev) => {
+      if (drag?.pointer === ev.pointerId) setHeight(drag.start + drag.startY - ev.clientY, false);
+    });
+    const end = (ev: PointerEvent) => {
+      if (drag?.pointer !== ev.pointerId) return;
+      drag = null;
+      handle.classList.remove("dragging");
+      setHeight(root.getBoundingClientRect().height, true);
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+    // Fit: where the controls column's last row ends (its layout position, whatever the scrolling), its bottom padding,
+    // and the panel's border. scrollHeight won't do: it never reads less than the column's own height.
+    handle.addEventListener("dblclick", () => {
+      const last = side.lastElementChild as HTMLElement | null;
+      if (!last) return;
+      const natural = last.offsetTop + last.offsetHeight - side.offsetTop + parseFloat(getComputedStyle(side).paddingBottom);
+      setHeight(natural + (root.offsetHeight - root.clientHeight), true);
+    });
+    // A smaller window mustn't leave the panel covering the schematic.
+    window.addEventListener("resize", () => {
+      if (root.style.height) setHeight(parseFloat(root.style.height), false);
+    });
   }
 
   /** Whether a simulation is running (or building). */
@@ -1063,6 +1114,12 @@ function formatFrequency(f: number) {
 }
 
 /** A level meter: linear peak against full scale, coloured as LiveSPICE's lamps (WebSocketApi.md, Monitoring). */
+/** The simulation panel's height, kept in this browser. */
+const PanelHeightKey = "spiceforge.simPanelHeight";
+const MinPanelHeight = 140;
+/** What the panel leaves for the toolbar, tabs, schematic and status bar, at least. */
+const MinCanvasRoom = 220;
+
 /** The Input choices that play a device input carry this, then the channel's name. */
 const ChannelPrefix = "channel:";
 
