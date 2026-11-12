@@ -1,10 +1,5 @@
+/* Colours come from the theme's tokens (themes.css); nothing here names a colour. */
 :root {
-  --chrome: #f3f3f3;
-  --chrome-border: #d0d0d0;
-  --text: #1f1f1f;
-  --muted: #6b6b6b;
-  --accent: #1e90ff; /* LiveSPICE's selection colour, DodgerBlue */
-  --error: #b00020;
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
   color: var(--text);
@@ -90,8 +85,15 @@ button {
   padding: 2px 10px;
   border: 1px solid var(--chrome-border);
   border-radius: 3px;
-  background: #fff;
+  background: var(--surface);
+  color: var(--text);
   cursor: pointer;
+}
+
+input,
+select {
+  color: var(--text);
+  background: var(--surface);
 }
 
 button:hover:not(:disabled) {
@@ -99,7 +101,7 @@ button:hover:not(:disabled) {
 }
 
 button:disabled {
-  color: var(--muted);
+  color: var(--disabled);
   cursor: default;
 }
 
@@ -108,7 +110,7 @@ button:disabled {
 .canvas {
   position: relative;
   overflow: hidden;
-  background: #fff;
+  background: var(--canvas);
 }
 
 #schematic {
@@ -158,13 +160,13 @@ button:disabled {
 
 #schematic text {
   font-family: "Segoe UI", system-ui, sans-serif;
-  fill: #000;
+  fill: var(--sch-text);
 }
 
 /* LiveSPICE draws a faint box around each text. */
 #schematic .text-box {
   fill: none;
-  stroke: rgba(0, 0, 0, 0.125);
+  stroke: var(--sch-text-box);
   stroke-width: 0.2;
 }
 
@@ -176,7 +178,7 @@ button:disabled {
 
 #schematic .symbol .outline {
   fill: none;
-  stroke: #808080;
+  stroke: var(--sch-highlight);
   stroke-dasharray: 2 2;
   stroke-width: 1;
   visibility: hidden;
@@ -187,10 +189,10 @@ button:disabled {
   visibility: visible;
 }
 
-/* Selected: LiveSPICE's dashed DodgerBlue box. */
+/* Selected: LiveSPICE's dashed box, in the theme's selection colour. */
 #schematic .symbol.selected .outline {
   visibility: visible;
-  stroke: var(--accent);
+  stroke: var(--sch-selected);
 }
 
 /* Wires are 1 unit wide; an invisible 8-pixel line over each makes them easy to hit at any zoom. */
@@ -202,8 +204,8 @@ button:disabled {
 
 /* The rubber band: LiveSPICE's dashed blue rectangle. */
 #schematic .band {
-  fill: rgba(30, 144, 255, 0.06);
-  stroke: #0000ff;
+  fill: var(--band-fill);
+  stroke: var(--band-stroke);
   stroke-width: 1px;
   stroke-dasharray: 2 1;
   vector-effect: non-scaling-stroke;
@@ -217,11 +219,13 @@ button:disabled {
   padding: 16px;
   border: 1px solid var(--chrome-border);
   border-radius: 6px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 32px var(--shadow);
+  background: var(--surface);
+  color: var(--text);
 }
 
 .file-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--backdrop);
 }
 
 .file-dialog h2 {
@@ -283,7 +287,7 @@ button:disabled {
 
 .file-dialog li:hover,
 .file-dialog li:focus {
-  background: #e8f2ff;
+  background: var(--hover);
   outline: none;
 }
 
@@ -351,7 +355,7 @@ button:disabled {
 }
 
 .toolbar button.active {
-  background: #dcebff;
+  background: var(--active);
   border-color: var(--accent);
 }
 
@@ -381,7 +385,7 @@ button:disabled {
 /* The wire tool's preview: LiveSPICE draws it in the highlight colour. */
 #schematic .wire-preview {
   fill: none;
-  stroke: #808080;
+  stroke: var(--sch-highlight);
   stroke-width: 1;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -444,7 +448,7 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
+  background: var(--canvas);
 }
 
 .library .entry.named {
@@ -508,7 +512,7 @@ button:disabled {
   padding: 2px 4px;
   border: 1px solid var(--chrome-border);
   border-radius: 3px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .properties .row input:disabled,
@@ -560,14 +564,14 @@ button:disabled {
   border: 1px solid var(--chrome-border);
   border-bottom: none;
   border-radius: 4px 4px 0 0;
-  background: #e6e6e6;
+  background: var(--tab);
   cursor: pointer;
   white-space: nowrap;
   max-width: 220px;
 }
 
 .tab.active {
-  background: #fff;
+  background: var(--tab-active);
   font-weight: 600;
 }
 
@@ -587,7 +591,7 @@ button:disabled {
 
 .tab .tab-close:hover {
   color: var(--text);
-  background: #d8d8d8;
+  background: var(--hover-strong);
 }
 
 /* ---- The changed-on-disk banner ---- */
@@ -597,8 +601,8 @@ button:disabled {
   align-items: center;
   gap: 8px;
   padding: 5px 10px;
-  background: #fff4ce;
-  border-bottom: 1px solid #e0c97a;
+  background: var(--banner);
+  border-bottom: 1px solid var(--banner-border);
 }
 
 .banner[hidden] {
@@ -616,10 +620,10 @@ button:disabled {
   z-index: 10;
   min-width: 190px;
   padding: 4px 0;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--chrome-border);
   border-radius: 4px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 6px 20px var(--shadow);
 }
 
 .menu[hidden] {
@@ -639,7 +643,7 @@ button:disabled {
 }
 
 .menu .menu-item:hover:not(:disabled) {
-  background: #e8f2ff;
+  background: var(--hover);
 }
 
 .menu .menu-item .keys {
@@ -695,4 +699,20 @@ button:disabled {
 
 .statusbar {
   grid-area: status;
+}
+
+/* The theme picker. */
+.theme {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.theme select {
+  font: inherit;
+  padding: 1px 4px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
 }

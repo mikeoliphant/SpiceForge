@@ -11,6 +11,7 @@ import { LayoutCache } from "./layouts";
 import { LibraryPanel, WireType } from "./library";
 import { PropertiesPanel } from "./properties";
 import type { CatalogEntry, Element, FileRead, Hello, Point, SchematicDocument, SymbolElement } from "./protocol";
+import { applyTheme, currentTheme, initTheme, isTheme, Themes } from "./theme";
 import { SchematicView } from "./view";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -26,6 +27,7 @@ const zoomLabel = $<HTMLSpanElement>("zoom");
 const tabBar = $<HTMLDivElement>("tabs");
 const banner = $<HTMLDivElement>("banner");
 const menu = $<HTMLDivElement>("menu");
+const themePicker = $<HTMLSelectElement>("theme");
 const buttons = {
   new: $<HTMLButtonElement>("new"),
   open: $<HTMLButtonElement>("open"),
@@ -650,6 +652,17 @@ async function start() {
   buttons.open.disabled = buttons.new.disabled = false;
   updateChrome();
   setStatus(`Connected to ${hello.server.name} ${hello.server.version}.`);
+  // The server's copy of the theme wins over this browser's, which may be older or cleared.
+  try {
+    const settings = await client.request<{ client?: unknown }>("settings.get");
+    if (isTheme((settings.client as Record<string, unknown> | null)?.["theme"])) adoptSettings(settings);
+    else {
+      clientSettings = (settings.client as Record<string, unknown> | null) ?? {};
+      if (currentTheme() !== "system") themePicker.dispatchEvent(new Event("change"));
+    }
+  } catch {
+    // The theme stays as this browser has it.
+  }
   try {
     await library.load();
     editor.wireNameOf = wireNames(library.types);
@@ -670,6 +683,36 @@ async function start() {
   if (shown && files.some((f) => samePath(f, shown))) await open(shown);
   if (tabs.length === 0) newTab();
 }
+
+// ---- The theme: chosen here, kept in this browser and in the server's client settings ----
+
+initTheme();
+themePicker.append(...Themes.map((t) => new Option(t.name, t.id)));
+themePicker.value = currentTheme();
+
+/** The server's opaque client settings, which the theme shares with whatever else is kept there. */
+let clientSettings: Record<string, unknown> = {};
+
+function adoptSettings(settings: { client?: unknown }) {
+  clientSettings = settings.client && typeof settings.client === "object" ? (settings.client as Record<string, unknown>) : {};
+  const theme = clientSettings["theme"];
+  if (isTheme(theme) && theme !== currentTheme()) {
+    applyTheme(theme);
+    themePicker.value = theme;
+  }
+}
+
+themePicker.addEventListener("change", () => {
+  if (!isTheme(themePicker.value)) return;
+  applyTheme(themePicker.value);
+  svg.focus();
+  if (!connected) return;
+  clientSettings = { ...clientSettings, theme: themePicker.value };
+  client.request("settings.set", { client: clientSettings }).catch((e) => setStatus(`Couldn't save the theme: ${errorText(e)}`, "error"));
+});
+
+// Another window changing the theme changes it here too.
+client.on("settings.changed", (data) => adoptSettings(data as { client?: unknown }));
 
 view.fit(null);
 void start();

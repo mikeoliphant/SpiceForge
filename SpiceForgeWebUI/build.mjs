@@ -5,7 +5,7 @@ import * as esbuild from "esbuild";
 import { copyFile, mkdir } from "node:fs/promises";
 
 const watch = process.argv.includes("--watch");
-const statics = ["index.html", "style.css"];
+const statics = ["index.html", "themes.css", "style.css"];
 
 async function copyStatics() {
   await mkdir("dist", { recursive: true });

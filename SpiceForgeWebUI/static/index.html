@@ -5,7 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SpiceForge</title>
     <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="themes.css" />
     <link rel="stylesheet" href="style.css" />
+    <script>
+      // The stored theme, before the first paint, so a dark theme doesn't flash light (src/theme.ts takes over).
+      try {
+        var t = localStorage.getItem("spiceforge.theme");
+        if (!t || t === "system") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <header class="toolbar">
@@ -29,6 +38,7 @@
       <span id="zoom" class="zoom">100%</span>
       <button id="zoom-in" title="Zoom in (+)">+</button>
       <button id="fit" title="Zoom to fit (F)">Fit</button>
+      <label class="theme" title="The colour theme">Theme <select id="theme"></select></label>
     </header>
     <nav id="tabs" class="tabs"></nav>
     <div id="banner" class="banner" hidden></div>

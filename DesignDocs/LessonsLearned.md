@@ -858,6 +858,18 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
 - **The server announced it was listening before it had bound the port.** With another server already on 8370, a
   second one printed success and served nothing. It now announces itself once the port is bound, and reports a failed
   bind.
+- **Theme the drawing with classes, not colours.** The renderer wrote LiveSPICE's colours into the SVG as `stroke` and
+  `fill` attributes, which CSS variables can't reach. It now writes a class per edge colour (`s-red`, `f-red`) and per
+  role (`wire-line`, `terminal unconnected`, the ghost group), and `themes.css` maps them to tokens. Six themes
+  (System, Light, Dark, Dim, Paper, High contrast) are each one block of about 45 tokens; the Light block reproduces
+  the old look exactly (compared by screenshot on the Pro Co Rat).
+- **Dark themes need a selection colour that isn't blue.** Light blue wires on a dark canvas and a DodgerBlue
+  selection were hard to tell apart; the dark themes select in amber, High contrast in yellow.
+- **Muted text isn't a disabled colour.** High contrast's muted grey is nearly white, so disabled buttons looked live.
+  Disabled controls have their own token.
+- **Apply the stored theme before the first paint.** A small inline script in `index.html` sets `data-theme` from
+  localStorage, so a dark theme doesn't flash white while the module loads. The server's client settings hold the
+  same choice and win once connected, so it survives clearing the browser and follows to another one.
 - **A hidden element leaves a CSS grid's rows.** The page is a grid of rows (toolbar, tabs, banner, workspace,
   status). The banner hides with `display: none`, which takes it out of the grid, so every later element moved up a
   row. The status bar got the stretchy row, the canvas almost none, and clicks on the canvas landed on the footer.

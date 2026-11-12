@@ -241,6 +241,8 @@ Y  = y1·cos − x·sin + py
 - **Terminals** are 2-unit squares, red when unconnected and wire-coloured when connected.
 - **Wires** are 1-unit dark blue lines, with 1.8-unit squares at their ends.
 - **Selection:** a selected symbol gets a dashed DodgerBlue box, and a highlighted one a dashed gray box.
+- **Colours** above are LiveSPICE's, and the file format's edge names (`red`, `wire`...) are what a layout carries.
+  A client is free to map them to its own palette: SpiceForgeWebUI's themes do.
 
 ## Session and settings
 

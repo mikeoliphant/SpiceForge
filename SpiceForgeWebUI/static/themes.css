@@ -1,0 +1,256 @@
+/*
+ * Themes. Each sets the same tokens: the page's chrome, and the schematic's palette (canvas, text, the ten edge
+ * colours symbols are drawn in, wires, terminals, selection). style.css and the drawing use only these tokens, so a
+ * theme is one block here. <html data-theme="..."> picks one; "system" is resolved to light or dark by the page.
+ *
+ * The edge colours keep their meaning in every theme (a red edge stays recognisably red), but are tuned to read on
+ * that theme's canvas. Unconnected terminals and the selection must stay unmistakable on every canvas.
+ */
+
+/* Light: LiveSPICE's own look. */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --chrome: #f3f3f3;
+  --chrome-border: #d0d0d0;
+  --surface: #ffffff;
+  --tab: #e6e6e6;
+  --tab-active: #ffffff;
+  --hover: #e8f2ff;
+  --hover-strong: #d8d8d8;
+  --active: #dcebff;
+  --text: #1f1f1f;
+  --muted: #6b6b6b;
+  --accent: #1e90ff;
+  --error: #b00020;
+  --disabled: #9a9a9a;
+  --banner: #fff4ce;
+  --banner-border: #e0c97a;
+  --backdrop: rgba(0, 0, 0, 0.2);
+  --shadow: rgba(0, 0, 0, 0.22);
+
+  --canvas: #ffffff;
+  --sch-text: #000000;
+  --sch-text-box: rgba(0, 0, 0, 0.125);
+  --sch-selected: #1e90ff;
+  --sch-highlight: #808080;
+  --sch-unconnected: #ff0000;
+  --sch-ghost: #808080;
+  --band-stroke: #0000ff;
+  --band-fill: rgba(30, 144, 255, 0.06);
+  --edge-wire: #00008b;
+  --edge-black: #000000;
+  --edge-gray: #808080;
+  --edge-red: #ff0000;
+  --edge-green: #00ff00;
+  --edge-blue: #0000ff;
+  --edge-yellow: #ffff00;
+  --edge-cyan: #00ffff;
+  --edge-magenta: #ff00ff;
+  --edge-orange: #ffa500;
+}
+
+/* Dark: a near-black canvas, light lines, a brighter wire blue, an amber selection that the wires can't be mistaken
+ * for. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --chrome: #1f2228;
+  --chrome-border: #363b44;
+  --surface: #2a2e36;
+  --tab: #262a31;
+  --tab-active: #16181d;
+  --hover: #2f3a4a;
+  --hover-strong: #3a404a;
+  --active: #2b4566;
+  --text: #e6e8eb;
+  --muted: #9aa1ab;
+  --accent: #4ea1ff;
+  --error: #ff7070;
+  --disabled: #5f6670;
+  --banner: #4a3d14;
+  --banner-border: #7a6420;
+  --backdrop: rgba(0, 0, 0, 0.5);
+  --shadow: rgba(0, 0, 0, 0.6);
+
+  --canvas: #16181d;
+  --sch-text: #e6e8eb;
+  --sch-text-box: rgba(255, 255, 255, 0.1);
+  --sch-selected: #ffbf3c;
+  --sch-highlight: #8a919b;
+  --sch-unconnected: #ff5c5c;
+  --sch-ghost: #8a919b;
+  --band-stroke: #ffbf3c;
+  --band-fill: rgba(255, 191, 60, 0.08);
+  --edge-wire: #6cb2ff;
+  --edge-black: #dfe2e6;
+  --edge-gray: #8a919b;
+  --edge-red: #ff6b6b;
+  --edge-green: #5ee08a;
+  --edge-blue: #7aa7ff;
+  --edge-yellow: #ffd75e;
+  --edge-cyan: #5fe3e3;
+  --edge-magenta: #ff7ae0;
+  --edge-orange: #ffa94d;
+}
+
+/* Dim: dark gray, softer contrast than Dark. */
+[data-theme="dim"] {
+  color-scheme: dark;
+  --chrome: #30353d;
+  --chrome-border: #464c56;
+  --surface: #3a4049;
+  --tab: #363b44;
+  --tab-active: #2b2f36;
+  --hover: #3f4a59;
+  --hover-strong: #4a515c;
+  --active: #3d5573;
+  --text: #d7dbe0;
+  --muted: #a0a7b1;
+  --accent: #79b0ff;
+  --error: #ff8a80;
+  --disabled: #6f7680;
+  --banner: #55482a;
+  --banner-border: #7d6a3a;
+  --backdrop: rgba(0, 0, 0, 0.4);
+  --shadow: rgba(0, 0, 0, 0.5);
+
+  --canvas: #2b2f36;
+  --sch-text: #d7dbe0;
+  --sch-text-box: rgba(255, 255, 255, 0.08);
+  --sch-selected: #f2c14e;
+  --sch-highlight: #9097a1;
+  --sch-unconnected: #ff7b72;
+  --sch-ghost: #9097a1;
+  --band-stroke: #f2c14e;
+  --band-fill: rgba(242, 193, 78, 0.08);
+  --edge-wire: #8ab4f8;
+  --edge-black: #cfd3d9;
+  --edge-gray: #9097a1;
+  --edge-red: #ff7b72;
+  --edge-green: #7ee2a0;
+  --edge-blue: #8fb3ff;
+  --edge-yellow: #f2d06b;
+  --edge-cyan: #7fdede;
+  --edge-magenta: #f08bdc;
+  --edge-orange: #f5a962;
+}
+
+/* Paper: a warm off-white, like a printed schematic, with ink-like lines. */
+[data-theme="paper"] {
+  color-scheme: light;
+  --chrome: #f1ebdd;
+  --chrome-border: #d9cfbb;
+  --surface: #fffdf7;
+  --tab: #e8e0cd;
+  --tab-active: #fbf7ee;
+  --hover: #efe4cc;
+  --hover-strong: #e2d6bb;
+  --active: #e6d6b0;
+  --text: #2b2620;
+  --muted: #7a7062;
+  --accent: #1f6fbf;
+  --error: #a3271b;
+  --disabled: #a89f90;
+  --banner: #f6e2a8;
+  --banner-border: #d8b65c;
+  --backdrop: rgba(43, 38, 32, 0.2);
+  --shadow: rgba(43, 38, 32, 0.25);
+
+  --canvas: #fbf7ee;
+  --sch-text: #2b2620;
+  --sch-text-box: rgba(43, 38, 32, 0.12);
+  --sch-selected: #1e88e5;
+  --sch-highlight: #8a8174;
+  --sch-unconnected: #c62828;
+  --sch-ghost: #8a8174;
+  --band-stroke: #1e88e5;
+  --band-fill: rgba(30, 136, 229, 0.07);
+  --edge-wire: #1f4e8c;
+  --edge-black: #2b2620;
+  --edge-gray: #8a8174;
+  --edge-red: #c0392b;
+  --edge-green: #2e8b57;
+  --edge-blue: #2c5fbf;
+  --edge-yellow: #b8860b;
+  --edge-cyan: #1f8a8a;
+  --edge-magenta: #a3378f;
+  --edge-orange: #c8641a;
+}
+
+/* High contrast: black and white, saturated colours, a yellow selection. */
+[data-theme="contrast"] {
+  color-scheme: dark;
+  --chrome: #000000;
+  --chrome-border: #ffffff;
+  --surface: #000000;
+  --tab: #000000;
+  --tab-active: #1a1a1a;
+  --hover: #333300;
+  --hover-strong: #444444;
+  --active: #333300;
+  --text: #ffffff;
+  --muted: #e0e0e0;
+  --accent: #ffff00;
+  --error: #ff6060;
+  --disabled: #7a7a7a;
+  --banner: #333300;
+  --banner-border: #ffff00;
+  --backdrop: rgba(0, 0, 0, 0.7);
+  --shadow: rgba(255, 255, 255, 0.15);
+
+  --canvas: #000000;
+  --sch-text: #ffffff;
+  --sch-text-box: rgba(255, 255, 255, 0.25);
+  --sch-selected: #ffff00;
+  --sch-highlight: #c0c0c0;
+  --sch-unconnected: #ff4040;
+  --sch-ghost: #c0c0c0;
+  --band-stroke: #ffff00;
+  --band-fill: rgba(255, 255, 0, 0.1);
+  --edge-wire: #00e5ff;
+  --edge-black: #ffffff;
+  --edge-gray: #c0c0c0;
+  --edge-red: #ff4040;
+  --edge-green: #00ff00;
+  --edge-blue: #66b3ff;
+  --edge-yellow: #ffff00;
+  --edge-cyan: #00ffff;
+  --edge-magenta: #ff40ff;
+  --edge-orange: #ff9900;
+}
+
+/* ---- The drawing's classes, from the tokens ---- */
+
+.s-wire { stroke: var(--edge-wire); }
+.s-black { stroke: var(--edge-black); }
+.s-gray { stroke: var(--edge-gray); }
+.s-red { stroke: var(--edge-red); }
+.s-green { stroke: var(--edge-green); }
+.s-blue { stroke: var(--edge-blue); }
+.s-yellow { stroke: var(--edge-yellow); }
+.s-cyan { stroke: var(--edge-cyan); }
+.s-magenta { stroke: var(--edge-magenta); }
+.s-orange { stroke: var(--edge-orange); }
+
+.f-wire { fill: var(--edge-wire); }
+.f-black { fill: var(--edge-black); }
+.f-gray { fill: var(--edge-gray); }
+.f-red { fill: var(--edge-red); }
+.f-green { fill: var(--edge-green); }
+.f-blue { fill: var(--edge-blue); }
+.f-yellow { fill: var(--edge-yellow); }
+.f-cyan { fill: var(--edge-cyan); }
+.f-magenta { fill: var(--edge-magenta); }
+.f-orange { fill: var(--edge-orange); }
+
+/* Wires, and the selection colour on a selected one (LiveSPICE's WireControl). */
+.wire-line { stroke: var(--edge-wire); }
+.wire.selected .wire-line { stroke: var(--sch-selected); }
+
+/* Terminals: a wire's ends and connected terminals in the wire colour, unconnected ones in their own. */
+.terminal.end,
+.terminal.connected { fill: var(--edge-wire); }
+.terminal.unconnected { fill: var(--sch-unconnected); }
+
+/* The placement ghost: every shape in the ghost colour, unfilled. */
+.ghost :not(.terminal) { stroke: var(--sch-ghost); fill: none; }

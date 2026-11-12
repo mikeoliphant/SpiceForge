@@ -1,5 +1,8 @@
 // Draws a document as SVG, from the server's default artwork, the way LiveSPICE's SymbolControl and WireControl draw
 // it (WebSocketApi.md, Mapping symbols): 1-unit round-capped strokes, upright text, terminals red when unconnected.
+//
+// No colour is written into the drawing: each shape carries a class for its edge colour (s-black, f-red...), the wires,
+// terminals and selection have theirs, and the theme's stylesheet decides what they look like (style.css, Themes).
 
 import { mapBox, mapPoint, mapVector, mappingOf, onAnyWire, unionBoxes, type Box, type Mapping } from "./geometry";
 import type { LayoutCache } from "./layouts";
@@ -7,19 +10,9 @@ import type { Edge, Layout, Point, SchematicDocument, SymbolElement, WireElement
 
 const SVG = "http://www.w3.org/2000/svg";
 
-/** LiveSPICE's edge colours (SchematicControls.ElementControl): wire is dark blue, green is lime. */
-export const EdgeColors: Record<Edge, string> = {
-  wire: "#00008b",
-  black: "#000000",
-  gray: "#808080",
-  red: "#ff0000",
-  green: "#00ff00",
-  blue: "#0000ff",
-  yellow: "#ffff00",
-  cyan: "#00ffff",
-  magenta: "#ff00ff",
-  orange: "#ffa500",
-};
+/** A shape's stroke in an edge colour, and its fill when it's filled: classes the themes colour. */
+const strokeOf = (edge: Edge) => `s-${edge}`;
+const fillOf = (edge: Edge) => `f-${edge}`;
 
 const TerminalSize = 2;
 const WireTerminalSize = TerminalSize * 0.9;
@@ -57,9 +50,6 @@ export interface Rendered {
   /** Symbols with no layout from the server, or a placeholder one. */
   problems: string[];
 }
-
-/** LiveSPICE's selection colour, DodgerBlue. */
-const SelectedColor = "#1e90ff";
 
 /** Replaces the contents of `root` with the document's drawing, with the elements in `selected` drawn selected. */
 export function renderDocument(
@@ -105,10 +95,9 @@ function drawWire(w: WireElement, isSelected: boolean, title: string): SVGGEleme
   g.dataset["id"] = w.id;
   // A wider, invisible line over the wire, so it can be hit at any zoom.
   g.append(el("line", { class: "hit", x1: w.a[0], y1: w.a[1], x2: w.b[0], y2: w.b[1] }));
-  // WireControl: DodgerBlue when selected; its end squares keep the wire colour.
-  g.append(el("line", { x1: w.a[0], y1: w.a[1], x2: w.b[0], y2: w.b[1], stroke: isSelected ? SelectedColor : EdgeColors.wire }));
-  for (const [x, y] of [w.a, w.b])
-    g.append(square([x, y], WireTerminalSize, EdgeColors.wire));
+  // WireControl: the selection colour when selected (.wire.selected); its end squares keep the wire colour.
+  g.append(el("line", { class: "wire-line", x1: w.a[0], y1: w.a[1], x2: w.b[0], y2: w.b[1] }));
+  for (const [x, y] of [w.a, w.b]) g.append(square([x, y], WireTerminalSize, "end"));
   if (title) {
     const t = el("title");
     t.textContent = title;
@@ -117,8 +106,9 @@ function drawWire(w: WireElement, isSelected: boolean, title: string): SVGGEleme
   return g;
 }
 
-function square([x, y]: Point, size: number, color: string): SVGRectElement {
-  return el("rect", { x: x - size / 2, y: y - size / 2, width: size, height: size, fill: color, stroke: color, class: "terminal" });
+/** A terminal's square: a wire's end, or a symbol's terminal, connected or not. */
+function square([x, y]: Point, size: number, kind: "end" | "connected" | "unconnected"): SVGRectElement {
+  return el("rect", { x: x - size / 2, y: y - size / 2, width: size, height: size, class: `terminal ${kind}` });
 }
 
 function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wires: WireElement[], isSelected: boolean): SVGGElement {
@@ -142,8 +132,9 @@ function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wire
 }
 
 interface LayoutOptions {
-  /** Draw every shape in this colour, unfilled, instead of its own (SymbolControl's Pen, for the placement ghost). */
-  pen?: string;
+  /** Draw every shape unfilled and in the enclosing group's colour, rather than its own (SymbolControl's Pen, for the
+   * placement ghost). */
+  monochrome?: boolean;
   /** Draw the texts. */
   text: boolean;
   /** Draw the terminals, coloured by whether each is connected; omitted, they aren't drawn. */
@@ -152,12 +143,14 @@ interface LayoutOptions {
 
 /** SymbolControl.DrawLayout: a layout's shapes, mapped into the schematic and appended to `g`. */
 function drawLayout(g: SVGGElement, layout: Layout, m: Mapping, options: LayoutOptions) {
-  const color = (e: Edge) => options.pen ?? EdgeColors[e];
+  // Monochrome (the placement ghost) leaves the colour to the enclosing group's class.
+  const stroke = (e: Edge) => (options.monochrome ? "" : strokeOf(e));
+  const filled = (fill: boolean, e: Edge) => (fill && !options.monochrome ? ` ${fillOf(e)}` : "");
   const P = (p: Point) => mapPoint(m, p);
 
   for (const line of layout.lines) {
     const [a, b] = [P(line.a), P(line.b)];
-    g.append(el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: color(line.edge) }));
+    g.append(el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: stroke(line.edge) }));
   }
   for (const r of layout.rectangles) {
     const [a, b] = [P(r.a), P(r.b)];
@@ -167,8 +160,8 @@ function drawLayout(g: SVGGElement, layout: Layout, m: Mapping, options: LayoutO
         y: Math.min(a[1], b[1]),
         width: Math.abs(b[0] - a[0]),
         height: Math.abs(b[1] - a[1]),
-        stroke: color(r.edge),
-        fill: r.fill && !options.pen ? color(r.edge) : "none",
+        fill: "none",
+        class: stroke(r.edge) + filled(r.fill, r.edge),
       }),
     );
   }
@@ -180,14 +173,14 @@ function drawLayout(g: SVGGElement, layout: Layout, m: Mapping, options: LayoutO
         cy: (a[1] + b[1]) / 2,
         rx: Math.abs(b[0] - a[0]) / 2,
         ry: Math.abs(b[1] - a[1]) / 2,
-        stroke: color(e.edge),
-        fill: e.fill && !options.pen ? color(e.edge) : "none",
+        fill: "none",
+        class: stroke(e.edge) + filled(e.fill, e.edge),
       }),
     );
   }
   for (const c of layout.curves) {
     if (c.points.length < 2) continue;
-    g.append(el("polyline", { points: c.points.map((p) => P(p).join(",")).join(" "), stroke: color(c.edge), fill: "none" }));
+    g.append(el("polyline", { points: c.points.map((p) => P(p).join(",")).join(" "), fill: "none", class: stroke(c.edge) }));
   }
   for (const arc of layout.arcs) {
     const start = P([arc.center[0] + Math.cos(arc.start) * arc.radius, arc.center[1] + Math.sin(arc.start) * arc.radius]);
@@ -198,8 +191,8 @@ function drawLayout(g: SVGGElement, layout: Layout, m: Mapping, options: LayoutO
     g.append(
       el("path", {
         d: `M ${start[0]} ${start[1]} A ${arc.radius} ${arc.radius} 0 ${large} ${clockwise ? 1 : 0} ${end[0]} ${end[1]}`,
-        stroke: color(arc.edge),
         fill: "none",
+        class: stroke(arc.edge),
       }),
     );
   }
@@ -209,7 +202,7 @@ function drawLayout(g: SVGGElement, layout: Layout, m: Mapping, options: LayoutO
   }
   for (const terminal of options.connected ? layout.terminals : []) {
     const at = P(terminal.at);
-    g.append(square(at, TerminalSize, options.connected!(at) ? EdgeColors.wire : EdgeColors.red));
+    g.append(square(at, TerminalSize, options.connected!(at) ? "connected" : "unconnected"));
   }
 
 }
@@ -218,7 +211,7 @@ function drawLayout(g: SVGGElement, layout: Layout, m: Mapping, options: LayoutO
 export function drawGhost(root: SVGGElement, layout: Layout, m: Mapping) {
   root.replaceChildren();
   const g = el("g", { class: "ghost" });
-  drawLayout(g, layout, m, { pen: EdgeColors.gray, text: false, connected: () => false });
+  drawLayout(g, layout, m, { monochrome: true, text: false, connected: () => false });
   root.append(g);
 }
 

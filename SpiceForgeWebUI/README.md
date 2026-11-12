@@ -43,6 +43,16 @@ dotnet run --project SpiceForgeServer
 The window has the component library on the left, the schematic in the middle, and the properties of the selection
 (or of the schematic itself, with nothing selected) on the right.
 
+### Themes
+
+The Theme menu at the right of the toolbar picks the colours: System (follows the operating system's light or dark
+setting), Light (LiveSPICE's look), Dark, Dim, Paper, or High contrast. The choice is kept by the server with your other
+client settings, so it follows you to another browser, and in this browser, so the page opens in it without a flash.
+
+Each theme is one block of colour tokens in `static/themes.css`, covering the page and the schematic: the canvas, text,
+wires, terminals, selection, and the ten colours symbols are drawn in. The drawing itself names no colours, only
+classes (`s-red` for a red stroke, `terminal unconnected`), so a new theme needs no code.
+
 ### Files and tabs
 
 | Action | Does |
