@@ -21,6 +21,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Debug MGCB
+        run: dotnet mgcb /@:"SpiceForgePlugin/SpiceForgePlugin/Content/Content.mgcb" /platform:Windows
       - run: dotnet tool restore
       - run: dotnet build SpiceForge.slnx -c Release
 
