@@ -3,6 +3,7 @@
     <File Path="AGENTS.md" />
     <File Path="CREDITS.md" />
     <File Path="LICENSE" />
+    <File Path="README.md" />
   </Folder>
   <Folder Name="/DesignDocs/">
     <File Path="DesignDocs/LessonsLearned.md" />
