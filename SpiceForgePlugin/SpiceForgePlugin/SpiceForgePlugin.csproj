@@ -28,4 +28,16 @@
 		<Message Text="Restoring dotnet tools" Importance="High" />
 		<Exec Command="dotnet tool restore" />
 	</Target>
+	<ItemGroup>
+		<ProjectReference Include="../SpiceForgeImageProcessor/SpiceForgeImageProcessor.csproj"
+					  ReferenceOutputAssembly="false"
+					  OutputItemType="ToolExePath" />
+	</ItemGroup>
+	<Target Name="RunCommandWhenNewer"
+			DependsOnTargets="ResolveProjectReferences"
+			BeforeTargets="CoreCompile"
+			Inputs="..\SpiceForgeImageProcessor\Program.cs"
+			Outputs="Content\Textures\ImageManifest.xml">
+		<Exec Command="dotnet &quot;@(ToolExePath)&quot;" />
+	</Target>
 </Project>
