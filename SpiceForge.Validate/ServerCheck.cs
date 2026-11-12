@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -12,7 +13,9 @@ using SpiceForgeServer.Documents;
 /// <list type="bullet">
 /// <item>every test schematic converts to the JSON document and back unchanged, attribute for attribute;</item>
 /// <item>a real server process, over a real WebSocket, answers each editing operation as the spec says, including its
-/// errors, the token check, and watching files.</item>
+/// errors, the token check, and watching files;</item>
+/// <item>it simulates: the Speaker voltage its scope streams matches SchematicProcessor's own, offline, on the same
+/// schematic and input; controls, updates, probes and stopping behave as the spec says.</item>
 /// </list>
 /// </summary>
 internal static class ServerCheck
@@ -114,10 +117,11 @@ internal static class ServerCheck
 
         await using Client client = await Client.Connect(port);
         JsonObject hello = Result(await client.Request("hello", new JsonObject { ["protocol"] = 1, ["client"] = "ServerCheck" }));
-        Check(hello["protocol"]?.GetValue<int>() == 1 && hello["capabilities"]?["simulation"]?.GetValue<bool>() == false,
-            "hello: protocol 1, simulation not yet supported");
+        Check(hello["protocol"]?.GetValue<int>() == 1 && hello["capabilities"]?["simulation"]?.GetValue<bool>() == true
+                && hello["capabilities"]?["audio"]?.GetValue<bool>() == false,
+            "hello: protocol 1, simulation but no audio yet");
         Check(Code(await client.Request("no.such", null)) == "unknown_op", "an unknown operation is unknown_op");
-        Check(Code(await client.Request("sim.start", new JsonObject())) == "unsupported", "simulation answers unsupported");
+        Check(Code(await client.Request("audio.devices", new JsonObject())) == "unsupported", "audio answers unsupported");
 
         // The catalogue.
         JsonObject catalog = Result(await client.Request("catalog.get", null));
@@ -237,6 +241,147 @@ internal static class ServerCheck
         // Settings.
         JsonObject settings = Result(await client.Request("settings.set", new JsonObject { ["client"] = new JsonObject { ["layout"] = "x" } }));
         Check(settings["client"]?["layout"]?.GetValue<string>() == "x", "the client's state is stored");
+
+        await Simulate(client, rat, document);
+    }
+
+    /// <summary>
+    /// Simulates the Rat through the API and checks what streams back against SchematicProcessor run offline on the
+    /// same file, input and settings: the server builds from the client's document, drives the Input from an expression
+    /// and reads the Speaker's node through a probe, so agreement covers all of that.
+    /// </summary>
+    private static async Task Simulate(Client client, string rat, JsonObject document)
+    {
+        Console.WriteLine("=== Simulation");
+        Check(Code(await client.Request("sim.start", new JsonObject())) == "bad_request", "sim.start without a document is refused");
+        JsonObject sim = Result(await client.Request("sim.start", new JsonObject { ["document"] = document.DeepClone(), ["title"] = "Rat" }));
+        string id = sim["sim"]!.GetValue<string>();
+        Check(sim["state"]?.GetValue<string>() == "building" && sim["pots"]!.AsArray().Count == 3, $"sim.start answers at once, building, with the pots ({id})");
+        string? state = await WaitForState(client, id, "running");
+        Check(state == "running", $"it starts running ({state})");
+
+        JsonArray elements = document["elements"]!.AsArray();
+        string IdOfType(string type) => elements.First(e => e!["component"]?["type"]?.GetValue<string>().StartsWith(type) == true)!["id"]!.GetValue<string>();
+        string speaker = IdOfType("Circuit.Speaker"), input = IdOfType("Circuit.Input");
+        JsonObject running = Result(await client.Request("sim.get", new JsonObject { ["sim"] = id }));
+        string? source = running["inputs"]?[0]?["source"]?["expression"]?.GetValue<string>();
+        Check(running["inputs"]?[0]?["element"]?.GetValue<string>() == input && source != null, $"the Input plays a test signal: {source}");
+
+        JsonObject probe = Result(await client.Request("sim.probe", new JsonObject { ["sim"] = id, ["target"] = new JsonObject { ["element"] = speaker, ["terminal"] = "Anode" } }));
+        int stream = probe["stream"]?.GetValue<int>() ?? -1;
+        Check(probe["color"]?.GetValue<string>() == "red" && stream > 0, $"a probe on the Speaker: {probe["label"]}, stream {stream}");
+        JsonObject again = Result(await client.Request("sim.probe", new JsonObject { ["sim"] = id, ["target"] = new JsonObject { ["element"] = speaker, ["terminal"] = "Anode" } }));
+        Check(again["id"]?.GetValue<string>() == probe["id"]?.GetValue<string>(), "a second probe on the same node moves the first");
+        Check(Code(await client.Request("sim.probe", new JsonObject { ["sim"] = id, ["target"] = new JsonObject { ["wire"] = "nope" } })) == "not_found",
+            "a probe on nothing is not_found");
+
+        client.Frames.Clear();
+        await client.Request("sim.scope", new JsonObject { ["sim"] = id, ["enabled"] = true });
+        await Task.Delay(1500);
+        var frames = client.Frames.ToArray().Select(ParseFrame).Where(f => f.Signals.ContainsKey(stream)).ToList();
+        bool contiguous = frames.Count > 30 && frames.Zip(frames.Skip(1)).All(p => p.Second.First == p.First.First + (ulong)p.First.Signals[stream].Length);
+        Check(contiguous, $"the scope streams frames without gaps ({frames.Count} in 1.5 s)");
+
+        // The same schematic, input and settings, offline: the probe reads each sample's last step.
+        if (frames.Count > 0)
+        {
+            ulong first = frames[0].First;
+            float[] streamed = frames.SelectMany(f => f.Signals[stream]).ToArray();
+            long length = (long)first + streamed.Length;
+            var processor = new SpiceForge.SchematicProcessor(rat, 48000, new SpiceForge.SchematicProcessorOptions
+            {
+                Oversample = 4, IterationCap = 32, Resampling = SpiceForge.Resampling.Sinc, Probes = true,
+            });
+            string node = probe["node"]!.GetValue<string>();
+            int index = processor.ProbeNodes.ToList().IndexOf(node);
+            var offline = new double[length];
+            var inputs = new[] { new double[256] };
+            var outputs = new[] { new double[256] };
+            for (long start = 0; start < length; start += 256)
+            {
+                for (int n = 0; n < 256; n++)
+                    inputs[0][n] = 0.5 * Math.Sin(2 * Math.PI * 220 * ((start + n) / 48000.0)) / processor.InputFullScale;
+                processor.Process(inputs, outputs, 256);
+                for (int n = 0; n < 256 && start + n < length; n++)
+                    offline[start + n] = index >= 0 ? processor.ProbeSamples[index][n] : double.NaN;
+            }
+            double worst = 0, peak = 0;
+            for (int n = 0; n < streamed.Length; n++)
+            {
+                worst = Math.Max(worst, Math.Abs(streamed[n] - offline[(long)first + n]));
+                peak = Math.Max(peak, Math.Abs(offline[(long)first + n]));
+            }
+            Check(index >= 0 && peak > 0.05 && worst < 1e-5,
+                $"the Speaker voltage matches SchematicProcessor offline: {streamed.Length} samples from {first}, peak {peak:F3} V, worst difference {worst:E1} V");
+        }
+
+        await client.Request("sim.set", new JsonObject { ["sim"] = id, ["pots"] = new JsonObject { ["Distortion"] = 1.0 } });
+        // Earlier sim.controls events (from the build) are still queued: look for one with the new position.
+        double? distortion = null;
+        for (JsonObject? controls; distortion != 1.0 && (controls = await client.WaitForEvent("sim.controls", TimeSpan.FromSeconds(2))) != null;)
+            distortion = controls["pots"]?.AsArray().FirstOrDefault(p => p!["name"]?.GetValue<string>() == "Distortion")?["position"]?.GetValue<double>();
+        Check(distortion == 1.0, "sim.set moves a pot, and sim.controls says so");
+        Check(Code(await client.Request("sim.set", new JsonObject { ["sim"] = id, ["pots"] = new JsonObject { ["Distortion"] = 2.0 } })) == "invalid_value",
+            "a pot position outside 0 to 1 is refused");
+        Check(Code(await client.Request("sim.setInput", new JsonObject { ["sim"] = id, ["element"] = input, ["source"] = new JsonObject { ["expression"] = "Sin(2*Pi*f*t)" } })) == "invalid_value",
+            "an expression in anything but t is refused");
+        Check(Code(await client.Request("sim.start", new JsonObject { ["document"] = document.DeepClone() })) == "audio_busy",
+            "a second sim.start without replace is audio_busy");
+
+        await client.Request("sim.update", new JsonObject { ["sim"] = id, ["document"] = document.DeepClone() });
+        state = await WaitForState(client, id, "running");
+        JsonObject updated = Result(await client.Request("sim.get", new JsonObject { ["sim"] = id }));
+        double? kept = updated["pots"]?.AsArray().FirstOrDefault(p => p!["name"]?.GetValue<string>() == "Distortion")?["position"]?.GetValue<double>();
+        Check(state == "running" && kept == 1.0 && updated["probes"]?.AsArray().Count == 1, "sim.update rebuilds, keeping pot positions and probes");
+
+        var broken = (JsonObject)document.DeepClone();
+        foreach (JsonNode? e in broken["elements"]!.AsArray())
+            if (e?["component"]?["properties"]?["Name"]?.GetValue<string>() == "R1")
+                e["component"]!["properties"]!["Name"] = "R2";
+        Check(Code(await client.Request("sim.update", new JsonObject { ["sim"] = id, ["document"] = broken })) == "build_failed",
+            "an update that doesn't build is build_failed, and the simulation carries on");
+
+        await client.Request("sim.stop", new JsonObject { ["sim"] = id });
+        state = await WaitForState(client, id, "stopped");
+        Check(state == "stopped" && Code(await client.Request("sim.get", new JsonObject { ["sim"] = id })) == "not_found", "sim.stop stops it");
+    }
+
+    /// <summary>Waits for a simulation to reach a state, or an error; returns the state it got to.</summary>
+    private static async Task<string?> WaitForState(Client client, string id, string wanted)
+    {
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        while (DateTime.UtcNow < until)
+        {
+            JsonObject? e = await client.WaitForEvent("sim.state", until - DateTime.UtcNow);
+            if (e == null)
+                return null;
+            string? state = e["state"]?.GetValue<string>();
+            if (e["sim"]?.GetValue<string>() == id && (state == wanted || state == "error"))
+                return state == "error" ? $"error: {e["message"]}" : state;
+        }
+        return null;
+    }
+
+    private sealed record Frame(ulong First, Dictionary<int, float[]> Signals);
+
+    private static Frame ParseFrame(byte[] data)
+    {
+        ReadOnlySpan<byte> span = data;
+        ulong first = BinaryPrimitives.ReadUInt64LittleEndian(span[8..]);
+        int count = BinaryPrimitives.ReadUInt16LittleEndian(span[20..]);
+        var signals = new Dictionary<int, float[]>();
+        int at = 24;
+        for (int s = 0; s < count; s++)
+        {
+            int stream = (int)BinaryPrimitives.ReadUInt32LittleEndian(span[at..]);
+            int n = (int)BinaryPrimitives.ReadUInt32LittleEndian(span[(at + 4)..]);
+            var samples = new float[n];
+            for (int i = 0; i < n; i++)
+                samples[i] = BinaryPrimitives.ReadSingleLittleEndian(span[(at + 8 + 4 * i)..]);
+            signals[stream] = samples;
+            at += 8 + 4 * n;
+        }
+        return new Frame(first, signals);
     }
 
     /// <summary>
@@ -336,6 +481,9 @@ internal static class ServerCheck
         private readonly ClientWebSocket socket = new();
         private readonly Dictionary<int, TaskCompletionSource<JsonObject>> waiting = new();
         private readonly List<JsonObject> events = new();
+
+        /// <summary>Binary frames (scope samples) as they came.</summary>
+        public System.Collections.Concurrent.ConcurrentQueue<byte[]> Frames { get; } = new();
         private readonly object sync = new();
         private Task? reading;
         private int nextId;
@@ -394,6 +542,12 @@ internal static class ServerCheck
                     message.Write(buffer, 0, result.Count);
                     if (!result.EndOfMessage)
                         continue;
+                    if (result.MessageType == WebSocketMessageType.Binary)
+                    {
+                        Frames.Enqueue(message.ToArray());
+                        message.SetLength(0);
+                        continue;
+                    }
                     var json = (JsonObject)JsonNode.Parse(message.ToArray())!;
                     message.SetLength(0);
                     lock (sync)

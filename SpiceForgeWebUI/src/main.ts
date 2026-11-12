@@ -10,6 +10,7 @@ import { snap } from "./geometry";
 import { LayoutCache } from "./layouts";
 import { LibraryPanel, WireType } from "./library";
 import { PropertiesPanel } from "./properties";
+import { SimulationPanel } from "./simulation";
 import type { CatalogEntry, Element, FileRead, Hello, Point, SchematicDocument, SymbolElement } from "./protocol";
 import { applyTheme, currentTheme, initTheme, isTheme, Themes } from "./theme";
 import { SchematicView } from "./view";
@@ -43,6 +44,7 @@ const buttons = {
   fit: $<HTMLButtonElement>("fit"),
   zoomIn: $<HTMLButtonElement>("zoom-in"),
   zoomOut: $<HTMLButtonElement>("zoom-out"),
+  simulate: $<HTMLButtonElement>("simulate"),
 };
 
 const client = new ApiClient();
@@ -51,6 +53,17 @@ const view = new SchematicView(svg);
 const editor = new Editor(svg, drawing, overlay, view, layouts);
 const library = new LibraryPanel($("library"), client);
 const properties = new PropertiesPanel($("properties"), editor, client, () => library.types);
+const simulation = new SimulationPanel({
+  client,
+  root: $("sim"),
+  svg,
+  probeLayer: document.getElementById("probes") as unknown as SVGGElement,
+  view,
+  layouts,
+  shown: () => active?.state ?? null,
+  status: (text, kind) => setStatus(text, kind),
+  changed: () => updateChrome(),
+});
 let hello: Hello | null = null;
 let connected = false;
 /** The last elements copied, as LiveSPICE clipboard XML: used when the system clipboard can't be read. */
@@ -108,6 +121,7 @@ function activate(tab: Tab | null) {
   showBanner();
   updateChrome();
   remember();
+  simulation.shownChanged();
 }
 
 function addTab(state: EditorState, file: Tab["file"]): Tab {
@@ -123,6 +137,7 @@ function newTab() {
 
 function closeTab(tab: Tab) {
   if (tab.state.history.dirty && !confirm(`Discard the changes to ${tabName(tab)}?`)) return;
+  if (simulation.simulates(tab.state)) void simulation.stop();
   const index = tabs.indexOf(tab);
   tabs = tabs.filter((t) => t !== tab);
   if (active === tab) {
@@ -187,6 +202,7 @@ svg.addEventListener("pointerleave", () => (pointerAt = null));
 editor.onChange = () => {
   updateChrome();
   properties.render();
+  simulation.documentChanged();
 };
 editor.onError = (message) => setStatus(message, "error");
 properties.onError = (message) => setStatus(message, "error");
@@ -217,9 +233,20 @@ function updateChrome() {
   buttons.paste.disabled = !open || !connected;
   buttons.wire.disabled = !open;
   buttons.wire.classList.toggle("active", editor.tool === "wire");
+  buttons.simulate.disabled = !connected || !open;
+  buttons.simulate.classList.toggle("active", simulation.simulates(active?.state ?? null));
+  buttons.simulate.title = simulation.simulates(active?.state ?? null)
+    ? "Simulating this schematic: click to start again from scratch (F5)"
+    : "Simulate this schematic (F5)";
   document.title = active ? `${h.dirty ? "• " : ""}${tabName(active)} - SpiceForge` : "SpiceForge";
   selectionLabel.textContent = selected ? `${selected} selected` : "";
-  toolLabel.textContent = editor.tool === "place" ? "Placing (Esc to stop)" : editor.tool === "wire" ? "Wiring (Esc to stop)" : "";
+  toolLabel.textContent = simulation.probing
+    ? "Probing (Esc to stop)"
+    : editor.tool === "place"
+      ? "Placing (Esc to stop)"
+      : editor.tool === "wire"
+        ? "Wiring (Esc to stop)"
+        : "";
   // The tab's dirty marker, when it changes.
   if (active && shownDirty.get(active) !== h.dirty) {
     shownDirty.set(active, h.dirty);
@@ -583,6 +610,14 @@ buttons.copy.addEventListener("click", () => void copySelection(false));
 buttons.paste.addEventListener("click", () => void pasteFromClipboard(null));
 buttons.remove.addEventListener("click", () => editor.deleteSelection());
 buttons.wire.addEventListener("click", () => (editor.tool === "wire" ? editor.escape() : editor.startWiring()));
+buttons.simulate.addEventListener("click", () => simulate());
+
+/** Simulates the schematic shown, replacing any simulation running. */
+function simulate() {
+  if (!active || !connected) return;
+  editor.escape();
+  void simulation.start(active.state, tabName(active));
+}
 buttons.fit.addEventListener("click", () => view.fit(editor.bounds));
 buttons.zoomIn.addEventListener("click", () => view.zoomAt(1.5));
 buttons.zoomOut.addEventListener("click", () => view.zoomAt(1 / 1.5));
@@ -593,6 +628,14 @@ window.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
   const handled = () => e.preventDefault();
   if (!menu.hidden && e.key === "Escape") return hideMenu();
+  if (e.key === "F5") {
+    // F5 simulates, as in LiveSPICE, rather than reloading the page; Shift+F5 stops.
+    handled();
+    if (e.shiftKey) void simulation.stop();
+    else simulate();
+    return;
+  }
+  if (e.key === "Escape" && simulation.probing) return simulation.setProbing(false);
   if (ctrl && key === "o") (handled(), buttons.open.click());
   else if (ctrl && key === "s" && e.shiftKey) (handled(), void saveAs());
   else if (ctrl && key === "s") (handled(), void save());
@@ -637,6 +680,7 @@ async function start() {
   }
   client.onClose = (reason) => {
     connected = false;
+    simulation.disconnected();
     buttons.open.disabled = buttons.new.disabled = true;
     updateChrome();
     setStatus(`Disconnected from the server: ${reason}`, "error");

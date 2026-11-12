@@ -17,6 +17,9 @@ export class ApiClient {
   private readonly waiting = new Map<number, { op: string; resolve: (r: unknown) => void; reject: (e: Error) => void }>();
   private readonly listeners = new Map<string, Set<Listener>>();
 
+  /** Called with each binary frame (scope samples, WebSocketApi.md, Binary frames). */
+  onBinary: (frame: ArrayBuffer) => void = () => {};
+
   /** Called when the connection closes, with the reason if there was one. */
   onClose: (reason: string) => void = () => {};
 
@@ -26,6 +29,7 @@ export class ApiClient {
     const url = `${where}/api?token=${encodeURIComponent(token)}`;
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(url);
+      socket.binaryType = "arraybuffer";
       this.socket = socket;
       socket.onopen = () => resolve();
       socket.onerror = () => reject(new Error("Couldn't connect to the server."));
@@ -49,6 +53,13 @@ export class ApiClient {
     });
   }
 
+  /** Sends a request without an id, for which no response comes (an error comes as an `error` event): for a stream
+   * of updates such as a knob being dragged, where only the latest matters. */
+  notify(op: string, args?: Record<string, unknown>) {
+    const socket = this.socket;
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ op, args: args ?? {} }));
+  }
+
   /** Listens for an event; returns a function that stops listening. */
   on(event: string, listener: Listener): () => void {
     let set = this.listeners.get(event);
@@ -58,7 +69,8 @@ export class ApiClient {
   }
 
   private receive(data: unknown) {
-    if (typeof data !== "string") return; // binary frames (scope samples) aren't used yet
+    if (data instanceof ArrayBuffer) return this.onBinary(data);
+    if (typeof data !== "string") return;
     const message = JSON.parse(data) as { re?: number; result?: unknown; error?: ApiError; event?: string; data?: unknown };
     if (message.re !== undefined) {
       const w = this.waiting.get(message.re);

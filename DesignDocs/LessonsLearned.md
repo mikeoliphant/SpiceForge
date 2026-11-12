@@ -883,6 +883,37 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
 - **Browsers keep some of LiveSPICE's shortcuts.** Ctrl+W and Ctrl+T can't be taken by a page, so the tools also
   have plain letters (W, G, P, R, C, L, T). LiveSPICE's other Ctrl shortcuts work too.
 
+## Simulating without audio
+
+`SpiceForgeServer` simulates through the API before it has an audio device: `sim.*` runs on a clock of its own, and
+the web front end shows it on a scope.
+
+- **A thread can stand in for the device.** The simulation thread processes 256-sample blocks whenever the wall
+  clock says one is due (48 kHz), drives the Input from a compiled expression, and sends the output only to the
+  meters. When real audio comes, the device's callback replaces the clock; nothing else in `Simulation` changes.
+  The Pro Co Rat runs at 18 to 30% of real time at 4× sinc, from build to running in 0.6 to 0.75 s.
+- **Probe every node, read at step rate.** Adding a probe mustn't rebuild. `SchematicProcessorOptions.Probes` makes
+  every node voltage the engine solves for an output after the Speakers', and the processor runs the engine stage by
+  stage: the Speakers' outputs go through the oversampler exactly as `CompiledCircuit.Run` does, while the probes
+  read each sample's last step. Copying a few dozen unknowns per step costs little; resampling each through the sinc
+  filter would have cost far more. The plugin path, without `Probes`, is untouched: `SpiceForge.Validate processor`
+  still passes, allocation-free.
+- **Checked end to end against the processor offline.** `SpiceForge.Validate server` starts the Rat through the API,
+  probes the Speaker, and compares 72,000 streamed samples with `SchematicProcessor` run offline on the same file,
+  input and settings: the worst difference is 7.5 nV, float32's rounding of a 0.15 V signal. That covers the
+  document-to-circuit build, the input's scaling, and the probes.
+- **Map probe targets through `circuit.check`'s nodes.** Dynamic pots and switches replace their components, and the
+  replacements lose LiveSPICE's element tags, so a pot's terminal can't be traced in the simulated circuit. The nodes
+  themselves survive, and LiveSPICE names them by construction order, so the same document gives the same names in
+  both builds: a target resolves to a node name through `circuit.check`, and to an output by that name.
+- **A builder, not a path.** `CircuitLoader.Load` and `SchematicProcessor` also take a function that builds the
+  circuit (called twice: baked for LiveSPICE's solve, then dynamic), so the server simulates the client's document
+  without writing a file.
+- **Edits follow the simulation.** The client sends `sim.update` 0.4 s after the last edit to the simulated tab; the
+  old build keeps running until the new one is ready. Deleting the Rat's clipping diodes took the output from 287 mV
+  to 1.37 V peak to peak, and undo brought it back. An edit that doesn't build is refused, and the panel says it's
+  still running the last version that did.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was
@@ -919,5 +950,8 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   won't compensate for it. A minimum-phase or shorter filter would cut it, at some cost in phase or rejection.
 - The plugin defaults to sinc resampling (the processor and renderer keep LiveSPICE's linear), so its 40 samples of
   latency, unreported to the host, are now the norm in a DAW.
+- Simulation has no audio device yet: the server's clock drives it, from expressions only. `sim.setOutput`, channel
+  sources and `audio.*` answer `unsupported`, and `sim.stats` reports `cappedSteps` as null (the engine doesn't count
+  capped steps when `RecordIterations` is off).
 - The plugin defaults to 4× with a cap of 32, which the study found nearly as accurate as 8× for about 40% less CPU.
   With sinc resampling, error falls about 12 dB per doubling of N, so a user choosing sinc may want 8× back.

@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using SpiceForgeServer.Catalogue;
 using SpiceForgeServer.Documents;
 using SpiceForgeServer.Protocol;
+using SpiceForgeServer.Simulating;
 using Util;
 
 namespace SpiceForgeServer;
@@ -15,6 +16,7 @@ public sealed class ServerContext : IDisposable
     public LogHub Log { get; }
     public SettingsStore Settings { get; }
     public FileService Files { get; }
+    public SimulationService Simulations { get; }
     private Catalog? catalog;
 
     public ServerContext(ServerOptions options)
@@ -23,6 +25,7 @@ public sealed class ServerContext : IDisposable
         Log = new LogHub(Hub);
         Settings = new SettingsStore(options.SettingsPath);
         Files = new FileService(Settings, Log, Hub);
+        Simulations = new SimulationService(this);
     }
 
     /// <summary>The catalogue, loaded on first use (it takes a moment) and again on <c>catalog.refresh</c>.</summary>
@@ -33,7 +36,11 @@ public sealed class ServerContext : IDisposable
         return catalog;
     }
 
-    public void Dispose() => Files.Dispose();
+    public void Dispose()
+    {
+        Simulations.Dispose();
+        Files.Dispose();
+    }
 }
 
 /// <summary>The operations of WebSocketApi.md, by name.</summary>
@@ -49,10 +56,7 @@ public sealed class Api
     // Operations the spec defines that this server doesn't do yet: they answer `unsupported` rather than `unknown_op`.
     private static readonly string[] NotYet =
     {
-        "audio.devices", "audio.getConfig", "audio.setConfig", "audio.test",
-        "sim.start", "sim.update", "sim.configure", "sim.restart", "sim.get", "sim.stop",
-        "sim.set", "sim.click", "sim.setInput", "sim.setGain", "sim.setOutput",
-        "sim.probe", "sim.removeProbes", "sim.scope",
+        "audio.devices", "audio.getConfig", "audio.setConfig", "audio.test", "sim.setOutput",
     };
 
     public Api(ServerContext context)
@@ -78,6 +82,19 @@ public sealed class Api
             ["circuit.check"] = (_, a) => Engine.Run<JsonNode?>(() => CircuitChecker.Check(a.Object("document"))),
             ["log.history"] = (_, a) => Done(new JsonObject { ["entries"] = context.Log.History(Math.Clamp(a.Int("limit", 200), 0, LogHub.HistoryLength)) }),
             ["log.setVerbosity"] = LogSetVerbosity,
+            ["sim.start"] = context.Simulations.Start,
+            ["sim.update"] = context.Simulations.Update,
+            ["sim.configure"] = context.Simulations.Configure,
+            ["sim.restart"] = context.Simulations.Restart,
+            ["sim.get"] = context.Simulations.GetJson,
+            ["sim.stop"] = context.Simulations.Stop,
+            ["sim.set"] = context.Simulations.Set,
+            ["sim.click"] = context.Simulations.Click,
+            ["sim.setInput"] = context.Simulations.SetInput,
+            ["sim.setGain"] = context.Simulations.SetGain,
+            ["sim.probe"] = context.Simulations.Probe,
+            ["sim.removeProbes"] = context.Simulations.RemoveProbes,
+            ["sim.scope"] = context.Simulations.Scope,
         };
     }
 
@@ -90,7 +107,7 @@ public sealed class Api
         if (handlers.TryGetValue(op, out Handler? handler))
             return handler(session, args);
         if (NotYet.Contains(op))
-            throw new ApiException(ErrorCodes.Unsupported, $"'{op}' isn't implemented yet: this server does editing only so far.");
+            throw new ApiException(ErrorCodes.Unsupported, $"'{op}' isn't implemented yet: this server has no audio device so far.");
         throw new ApiException(ErrorCodes.UnknownOp, $"There's no operation '{op}'.");
     }
 
@@ -111,13 +128,13 @@ public sealed class Api
             ["server"] = new JsonObject { ["name"] = "SpiceForgeServer", ["version"] = version },
             ["capabilities"] = new JsonObject
             {
-                ["simulation"] = false,
+                ["simulation"] = true,
                 ["audio"] = false,
                 ["maxInputs"] = 1,
                 ["resampling"] = Json.Strings(new[] { "linear", "sinc" }),
                 ["oversample"] = new JsonObject { ["min"] = 1, ["max"] = 64 },
                 ["iterationCap"] = new JsonObject { ["min"] = 1, ["max"] = 127 },
-                ["expressions"] = false,
+                ["expressions"] = true,
             },
             ["simulationDefaults"] = context.Settings.SimulationDefaults,
             ["folders"] = new JsonObject

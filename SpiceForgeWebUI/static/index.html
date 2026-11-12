@@ -34,6 +34,8 @@
       <span class="separator"></span>
       <button id="wire" disabled title="Draw wires (W)">Wire</button>
       <span class="separator"></span>
+      <button id="simulate" disabled title="Simulate this schematic (F5)">Simulate</button>
+      <span class="separator"></span>
       <button id="zoom-out" title="Zoom out (−)">−</button>
       <span id="zoom" class="zoom">100%</span>
       <button id="zoom-in" title="Zoom in (+)">+</button>
@@ -48,10 +50,12 @@
         <svg id="schematic" xmlns="http://www.w3.org/2000/svg" tabindex="0" data-tool="select">
           <g id="drawing"></g>
           <g id="overlay"></g>
+          <g id="probes"></g>
         </svg>
       </main>
       <aside id="properties" class="panel properties"></aside>
     </div>
+    <section id="sim" class="sim" hidden></section>
     <footer class="statusbar">
       <span id="status">Connecting…</span>
       <span id="tool" class="tool"></span>

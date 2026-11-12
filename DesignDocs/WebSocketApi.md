@@ -405,6 +405,12 @@ Events:
 
 At most one simulation runs on the audio device at a time.
 
+**Without an audio device** (SpiceForgeServer so far: `capabilities.audio` is false), a simulation runs on its own
+clock instead, in real time at 48 kHz, in blocks of 256 samples. The Input is driven by an expression (a 220 Hz sine
+at half its full scale until the client sets one), and the output only drives the meters; `outputs` is empty, and
+`sim.setOutput` and channel sources answer `unsupported`. If processing falls more than a quarter second behind, the
+clock skips ahead and `sim.stats` counts a dropout. Everything else is as below.
+
 ### Lifecycle
 
 | Op | Args | Result |
@@ -530,6 +536,8 @@ A probe:
   The client keeps where it draws each probe's flag.
 - **Failure:** a target that isn't connected to a node fails with `not_found`.
 - **Colours** come from LiveSPICE's order: red, green, blue, yellow, cyan, magenta, orange.
+- **Samples:** a probe reads its node's voltage at the last internal step of each sample, unfiltered by the output
+  resampling (so it has none of `latency`'s delay). A node the circuit doesn't solve for, such as ground, reads 0 V.
 - **`sim.probes`** is broadcast with the whole list after any change. After a `sim.update`, a probe whose target is
   gone is dropped.
 - **`sim.scope`** turns the sample stream on or off for this connection (off by default). While it's on, the server
@@ -547,7 +555,8 @@ A probe:
 
 - **Levels** are linear peaks after the gains, each decaying over about 0.25 s. The client colours its lamps
   directly: green below 0.5, yellow below 0.75, orange below 0.95, red above.
-- **`cappedSteps`** counts Newton steps that hit the iteration cap since the last report.
+- **`cappedSteps`** counts Newton steps that hit the iteration cap since the last report; null where it isn't
+  measured (SpiceForgeServer doesn't count them while running, for speed).
 - **`rejectedSettings`** is SpiceForge's count of control settings it couldn't solve.
 
 ## Log
@@ -691,7 +700,8 @@ New beyond LiveSPICE:
 - editing while a simulation runs (`sim.update`), with rebuilds that keep the audio playing;
 - `circuit.check` before simulating;
 - reporting `latency` and `sim.stats`;
-- `expectModified` on save.
+- `expectModified` on save;
+- running without an audio device, from expressions, to look at circuits on the scope.
 
 ## What the client must implement
 

@@ -50,12 +50,22 @@ public static class CircuitLoader
     /// skipped instead of throwing (for restoring saved settings onto a schematic that may have changed).</remarks>
     public static LoadedCircuit Load(string schematicPath, Expression h, bool dynamicPots = true, ILog? log = null,
         IReadOnlyDictionary<string, double>? potPositions = null, bool dynamicSwitches = true,
+        IReadOnlyDictionary<string, int>? switchPositions = null, bool ignoreUnknownControls = false) =>
+        Load(l => BuildSchematic(schematicPath, l), h, dynamicPots, log, potPositions, dynamicSwitches, switchPositions, ignoreUnknownControls);
+
+    /// <summary>
+    /// Loads and extracts the circuit <paramref name="build"/> makes, as the overload taking a path does a schematic
+    /// file: for a schematic held in memory, say. <paramref name="build"/> is called more than once, and must return a
+    /// new, built circuit each time.
+    /// </summary>
+    public static LoadedCircuit Load(Func<ILog, Circuit.Circuit> build, Expression h, bool dynamicPots = true, ILog? log = null,
+        IReadOnlyDictionary<string, double>? potPositions = null, bool dynamicSwitches = true,
         IReadOnlyDictionary<string, int>? switchPositions = null, bool ignoreUnknownControls = false)
     {
         log ??= new NullLog();
         Circuit.Circuit Build()
         {
-            Circuit.Circuit built = BuildSchematic(schematicPath, log);
+            Circuit.Circuit built = build(log);
             if (potPositions != null)
                 SetPots(built, potPositions, ignoreUnknownControls);
             if (switchPositions != null)
@@ -174,7 +184,7 @@ public static class CircuitLoader
         }
     }
 
-    private static Circuit.Circuit BuildSchematic(string schematicPath, ILog log)
+    internal static Circuit.Circuit BuildSchematic(string schematicPath, ILog log)
     {
         Circuit.Circuit circuit = Schematic.Load(schematicPath, log).Build();
         circuit.Name = Path.GetFileNameWithoutExtension(schematicPath);

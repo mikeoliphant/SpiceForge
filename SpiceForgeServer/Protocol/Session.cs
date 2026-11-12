@@ -26,6 +26,9 @@ public sealed class Session
     /// <summary>The files this connection wants watched (<c>file.watch</c>), as full paths.</summary>
     public IReadOnlyCollection<string> WatchedPaths { get; set; } = Array.Empty<string>();
 
+    /// <summary>The simulation whose scope samples this connection receives (<c>sim.scope</c>), or null.</summary>
+    public volatile string? ScopeSimulation;
+
     public Session(WebSocket socket) => this.socket = socket;
 
     public bool IsOpen => socket.State == WebSocketState.Open;
@@ -43,6 +46,33 @@ public sealed class Session
         catch (WebSocketException)
         {
             // The client went away; the receive loop notices and ends the session.
+        }
+        finally
+        {
+            sending.Release();
+        }
+    }
+
+    /// <summary>Sends a binary frame unless a send is already in progress, in which case the frame is dropped: scope
+    /// frames must never queue up behind a slow client. Returns whether it was sent.</summary>
+    public bool TrySendBinary(byte[] frame)
+    {
+        if (!IsOpen || !sending.Wait(0))
+            return false;
+        _ = SendBinaryAsync(frame);
+        return true;
+    }
+
+    private async Task SendBinaryAsync(byte[] frame)
+    {
+        try
+        {
+            if (IsOpen)
+                await socket.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
+        }
+        catch (WebSocketException)
+        {
+            // As in SendAsync.
         }
         finally
         {

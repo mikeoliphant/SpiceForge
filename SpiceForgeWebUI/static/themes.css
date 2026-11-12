@@ -254,3 +254,12 @@
 
 /* The placement ghost: every shape in the ghost colour, unfilled. */
 .ghost :not(.terminal) { stroke: var(--sch-ghost); fill: none; }
+
+/* Backgrounds in an edge colour, for swatches. */
+.b-red { background: var(--edge-red); }
+.b-green { background: var(--edge-green); }
+.b-blue { background: var(--edge-blue); }
+.b-yellow { background: var(--edge-yellow); }
+.b-cyan { background: var(--edge-cyan); }
+.b-magenta { background: var(--edge-magenta); }
+.b-orange { background: var(--edge-orange); }

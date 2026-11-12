@@ -20,8 +20,12 @@ export class EditStack {
   /** Called after any change to the history. */
   onChange: () => void = () => {};
 
+  /** Counts changes to the document (edits, undos, redos), so a watcher can tell whether it changed since it looked. */
+  version = 0;
+
   /** Records an edit that has already been applied. */
   push(edit: Edit) {
+    this.version++;
     this.done.push(edit);
     this.undone.length = 0;
     this.onChange();
@@ -31,6 +35,7 @@ export class EditStack {
     const edit = this.done.pop();
     if (!edit) return null;
     edit.revert();
+    this.version++;
     this.undone.push(edit);
     this.onChange();
     return edit;
@@ -40,6 +45,7 @@ export class EditStack {
     const edit = this.undone.pop();
     if (!edit) return null;
     edit.apply();
+    this.version++;
     this.done.push(edit);
     this.onChange();
     return edit;

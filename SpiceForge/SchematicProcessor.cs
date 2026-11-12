@@ -5,7 +5,6 @@ using Expression = ComputerAlgebra.Expression;
 
 namespace SpiceForge;
 
-/// <summary>Options for <see cref="SchematicProcessor"/>.</summary>
 /// <summary>How a processor converts between the sample rate and its internal step rate (see <see cref="Oversampler"/>).</summary>
 public enum Resampling
 {
@@ -18,6 +17,7 @@ public enum Resampling
     Sinc,
 }
 
+/// <summary>Options for <see cref="SchematicProcessor"/>.</summary>
 public sealed class SchematicProcessorOptions
 {
     /// <summary>Independent copies of the circuit, one per audio channel.</summary>
@@ -58,6 +58,15 @@ public sealed class SchematicProcessorOptions
     /// positions, which is slightly faster but leaves <see cref="SchematicProcessor.Pots"/> and
     /// <see cref="SchematicProcessor.Switches"/> empty.</summary>
     public bool DynamicControls { get; init; } = true;
+
+    /// <summary>Whether a circuit with no Input, or no Speaker, still runs: with nothing driven, or silent output. For
+    /// a host that simulates circuits to look at rather than to listen to; a plugin wants the error.</summary>
+    public bool AllowNoInputOrSpeaker { get; init; }
+
+    /// <summary>Whether every node's voltage can be read after each block (<see cref="SchematicProcessor.ProbeNodes"/>,
+    /// <see cref="SchematicProcessor.ProbeSamples"/>), for a scope. The probes read each sample's last step, unfiltered;
+    /// the audio output is exactly as without them.</summary>
+    public bool Probes { get; init; }
 }
 
 /// <summary>
@@ -87,6 +96,9 @@ public sealed class SchematicProcessor
     private readonly SwitchControl[] switches;
     private double[] chunkIn = Array.Empty<double>();
     private readonly double[][] spanIn = new double[1][], spanOut = new double[1][];
+    private readonly bool probes;
+    private double[] stepIn = Array.Empty<double>();
+    private double[][] stepOut = Array.Empty<double[]>();
 
     /// <summary>The schematic's name (its file name).</summary>
     public string Name { get; }
@@ -98,6 +110,21 @@ public sealed class SchematicProcessor
     public int Latency { get; }
 
     public int Channels => engines.Length;
+
+    /// <summary>Whether the circuit has an Input for the input samples to drive.</summary>
+    public bool HasInput { get; }
+
+    /// <summary>The Input's full-scale voltage (its V0dBFS): an input sample of 1 is this many volts.</summary>
+    public double InputFullScale { get; }
+
+    /// <summary>With <see cref="SchematicProcessorOptions.Probes"/>, the names of the nodes that can be probed: every
+    /// node of the circuit whose voltage it solves for. Empty otherwise.</summary>
+    public IReadOnlyList<string> ProbeNodes { get; }
+
+    /// <summary>With <see cref="SchematicProcessorOptions.Probes"/>, each probe node's voltage in volts at every sample
+    /// of the last block that <see cref="Process(double[][], double[][], int)"/> ran, on channel 0. Only the first
+    /// <c>count</c> values of each are that block's; the arrays grow, and are reused.</summary>
+    public double[][] ProbeSamples { get; }
 
     /// <summary>How many times a pot or switch setting couldn't be solved, so the circuit stayed at its last good one,
     /// summed over the channels. It has never happened on the test circuits; a host can watch it to say so.</summary>
@@ -119,24 +146,34 @@ public sealed class SchematicProcessor
     public IReadOnlyList<SwitchControl> Switches { get; }
 
     public SchematicProcessor(string schematicPath, double sampleRate, SchematicProcessorOptions? options = null)
+        : this(log => CircuitLoader.BuildSchematic(schematicPath, log), sampleRate, options)
+    {
+    }
+
+    /// <summary>A processor for the circuit <paramref name="build"/> makes (a schematic held in memory, say). It's called
+    /// more than once, for a new built circuit each time, as <see cref="CircuitLoader"/>'s Load does.</summary>
+    public SchematicProcessor(Func<ILog, Circuit.Circuit> build, double sampleRate, SchematicProcessorOptions? options = null)
     {
         options ??= new SchematicProcessorOptions();
         if (options.Channels < 1)
             throw new ArgumentOutOfRangeException(nameof(options), "Channels must be at least 1.");
         SampleRate = sampleRate;
         Expression h = 1 / ((Real)sampleRate * options.Oversample);
-        LoadedCircuit loaded = CircuitLoader.Load(schematicPath, h, options.DynamicControls, options.Log, options.PotPositions,
+        LoadedCircuit loaded = CircuitLoader.Load(build, h, options.DynamicControls, options.Log, options.PotPositions,
             options.DynamicControls, options.SwitchPositions, options.IgnoreUnknownControls);
         Circuit.Circuit circuit = loaded.Circuit;
         Name = circuit.Name;
         parameters = loaded.Parameters;
 
         var inputs = circuit.Components.OfType<Input>().ToList();
-        if (inputs.Count != 1)
+        if (inputs.Count != 1 && !(options.AllowNoInputOrSpeaker && inputs.Count == 0))
             throw new InvalidOperationException($"The schematic needs exactly one Input component, and it has {inputs.Count}.");
-        Expression input = Component.DependentVariable(inputs[0].Name, Component.t);
+        // With no Input, the engine's input is a symbol the circuit doesn't mention, so it drives nothing.
+        Expression input = Component.DependentVariable(inputs.Count > 0 ? inputs[0].Name : "_NoInput", Component.t);
+        HasInput = inputs.Count > 0;
+        InputFullScale = inputs.Count > 0 ? (double)inputs[0].V0dBFS : 1;
         var speakers = circuit.Components.OfType<Speaker>().ToList();
-        if (speakers.Count == 0)
+        if (speakers.Count == 0 && !options.AllowNoInputOrSpeaker)
             throw new InvalidOperationException("The schematic has no Speaker component to take the output from.");
         Expression[] nodes = speakers.SelectMany(s => new[] { s.Anode.V, s.Cathode.V }).ToArray();
         foreach (Expression node in nodes)
@@ -145,8 +182,15 @@ public sealed class SchematicProcessor
         scales = speakers.Select(s => 1 / (double)s.V0dBFS).ToArray();
         speakerCount = speakers.Count;
 
+        // Probes: the circuit's own nodes whose voltages the engine solves for, as outputs after the speakers'.
+        Node[] probed = options.Probes ? circuit.Nodes.Where(n => loaded.System.Unknowns.Contains(n.V)).ToArray() : Array.Empty<Node>();
+        ProbeNodes = probed.Select(n => n.Name).ToArray();
+        ProbeSamples = probed.Select(_ => Array.Empty<double>()).ToArray();
+        probes = options.Probes;
+        Expression[] outputs = nodes.Concat(probed.Select(n => n.V)).ToArray();
+
         engines = Enumerable.Range(0, options.Channels)
-            .Select(_ => new CompiledCircuit(loaded.System, input, nodes, h, options.Oversample, options.IterationCap, loaded.Solution) { RecordIterations = false })
+            .Select(_ => new CompiledCircuit(loaded.System, input, outputs, h, options.Oversample, options.IterationCap, loaded.Solution) { RecordIterations = false })
             .ToArray();
         if (options.Resampling == Resampling.Sinc)
             foreach (CompiledCircuit engine in engines)
@@ -223,7 +267,7 @@ public sealed class SchematicProcessor
                     pots[k].Apply(values);
                 for (int k = 0; k < switches.Length; k++)
                     switches[k].Apply(values);
-                Run(engines[c], inputs[c], start, length, outputs[c]);
+                Run(engines[c], inputs[c], start, length, outputs[c], c == 0 && probes);
             }
             start += length;
         }
@@ -255,12 +299,46 @@ public sealed class SchematicProcessor
         chunkIn = new double[size];
     }
 
-    private void Run(CompiledCircuit engine, double[] input, int start, int length, double[] output)
+    /// <summary>What <see cref="CompiledCircuit.Run(double[], double[][], int)"/> does, stage by stage, so the speakers'
+    /// outputs are resampled exactly as there, while the probes (the outputs after them) are read at each sample's last
+    /// step into <see cref="ProbeSamples"/>, from <paramref name="start"/>.</summary>
+    private void RunProbed(CompiledCircuit engine, int start, int length)
     {
-        if (buffers.Length != 2 * speakerCount || buffers[0].Length < length || chunkIn.Length < length)
+        int factor = engine.Oversampler.Factor;
+        int steps = length * factor;
+        int count = 2 * speakerCount + ProbeSamples.Length;
+        if (stepIn.Length < steps || stepOut.Length != count)
+        {
+            int size = Math.Max(steps, 4096 * factor);
+            stepIn = new double[size];
+            stepOut = Enumerable.Range(0, count).Select(_ => new double[size]).ToArray();
+        }
+        for (int p = 0; p < ProbeSamples.Length; p++)
+            if (ProbeSamples[p].Length < start + length)
+                Array.Resize(ref ProbeSamples[p], Math.Max(start + length, 4096));
+
+        engine.Oversampler.Upsample(chunkIn.AsSpan(0, length), stepIn.AsSpan(0, steps));
+        engine.RunSteps(stepIn, stepOut, steps);
+        // A speaker terminal that isn't an unknown reads 0 at every step, which resamples to 0, as Run's shortcut gives.
+        for (int o = 0; o < 2 * speakerCount; o++)
+            engine.Oversampler.Downsample(o, stepOut[o].AsSpan(0, steps), buffers[o].AsSpan(0, length));
+        for (int p = 0; p < ProbeSamples.Length; p++)
+        {
+            double[] from = stepOut[2 * speakerCount + p], to = ProbeSamples[p];
+            for (int n = 0; n < length; n++)
+                to[start + n] = from[(n + 1) * factor - 1];
+        }
+    }
+
+    private void Run(CompiledCircuit engine, double[] input, int start, int length, double[] output, bool probing)
+    {
+        if (buffers.Length != 2 * speakerCount || chunkIn.Length < length || (buffers.Length > 0 && buffers[0].Length < length))
             Grow(length);
         Array.Copy(input, start, chunkIn, 0, length);
-        engine.Run(chunkIn, buffers, length);
+        if (probing)
+            RunProbed(engine, start, length);
+        else
+            engine.Run(chunkIn, buffers, length);
         for (int n = 0; n < length; n++)
         {
             double sum = 0;

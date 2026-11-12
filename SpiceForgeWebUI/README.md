@@ -11,7 +11,8 @@ terminals (red when unconnected). You can:
 - delete, cut, copy and paste them;
 - edit properties;
 - undo and redo;
-- create new schematics, save, and Save As.
+- create new schematics, save, and Save As;
+- simulate, with pots, switches, a test signal at the Input, and probes on a scope.
 
 ## Building
 
@@ -127,6 +128,23 @@ that doesn't parse is outlined in red, with the reason in the status bar, and so
 has. Each change is one undo step.
 
 
+### Simulating
+
+Simulate (F5) runs the schematic shown on the server; Shift+F5 or Stop ends it. Pressing F5 again starts over. A panel
+opens under the canvas:
+
+| Part | Does |
+|---|---|
+| Input | The Input's signal, in volts: a preset, or any expression in `t` (Enter applies it) |
+| In, Out | Level meters against the Input's and Speakers' full scale; then the processing load |
+| Pots, switches | Drag to turn, double-click for the schematic's position; click a switch for its next position |
+| Probe | Click wires or terminals to clip probes on (Esc to stop); each gets a numbered flag in its colour |
+| Scope | The probes' voltages, triggered on the first so a steady wave stands still, with peak-to-peak and frequency |
+
+Editing the simulated schematic updates the simulation as you go: it rebuilds a moment after the last change, and
+keeps running the last version that built while an edit leaves it broken. There's no audio device yet, so nothing
+plays: the output drives the Out meter, and probes show what any node does.
+
 ## The conformance test
 
 `npm test` checks the editor's contract with the file format: on every schematic in LiveSPICE's `Tests` folder, the
@@ -152,6 +170,9 @@ server and runs it.
 | `test/conformance.ts` | The conformance test |
 | `src/library.ts` | The component library panel |
 | `src/properties.ts` | The properties panel |
-| `src/fileDialog.ts` | The Open dialog, on `fs.list` and `fs.recent` |
+| `src/fileDialog.ts` | The Open and Save As dialogs, on `fs.list` and `fs.recent` |
+| `src/theme.ts` | The colour theme: the picker's choice, kept locally and in the server's client settings |
+| `src/simulation.ts` | The simulation panel: controls, input, meters, the probe tool and flags, live updates |
+| `src/scope.ts` | The scope: binary frames into per-probe history, triggered and drawn on a canvas |
 | `src/main.ts` | The page: toolbar, status, opening and saving files |
-| `static/` | `index.html` and `style.css`, copied to `dist/` |
+| `static/` | `index.html`, `themes.css` and `style.css`, copied to `dist/` |
