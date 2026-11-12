@@ -21,6 +21,10 @@ string testsDir = Path.Combine(repo, "Dependencies", "LiveSPICE", "Tests");
 if (args.Length > 0 && args[0] == "server")
     return ServerCheck.Run(repo, testsDir);
 
+// JACK, with a dummy-backend JACK server of its own: jack [seconds].
+if (args.Length > 0 && args[0] == "jack")
+    return ServerCheck.RunJack(repo, testsDir, args.Length > 1 && int.TryParse(args[1], out int jackSeconds) ? jackSeconds : 5);
+
 // Opt-in, for a person with the hardware: asio "driver" [bufferSize] [seconds] [sampleRate].
 if (args.Length > 1 && args[0] == "asio")
     return ServerCheck.RunAsio(repo, testsDir, args[1], args.Length > 2 && int.TryParse(args[2], out int buffer) ? buffer : null,

@@ -962,8 +962,8 @@ the web front end shows it on a scope.
 ## Audio I/O
 
 `SpiceForgeServer` plays simulations on ASIO devices, through NAudio, and keeps the clock of Simulating without audio
-as its `None` driver and its fallback. JACK (through JackSharpCore) and maybe WASAPI are to follow behind the same
-interface: a driver opens a stream for one client, prepares it while stopped, and calls it once per block.
+as its `None` driver and its fallback, and on JACK through JackSharpCore. Each sits behind the same interface: a
+driver opens a stream for one client, prepares it while stopped, and calls it once per block. WASAPI may follow.
 
 - **The device is the clock; everything else moves off its thread.** `Simulation.Process` runs once per device
   block and does only the audio work: the input, `SchematicProcessor.Process`, the outputs, the peaks, and the probe
@@ -1032,6 +1032,28 @@ interface: a driver opens a stream for one client, prepares it while stopped, an
   (0.66 to 0.88 µs a sample on the SD-1), and pacing blocks in real time rather than running flat out changes little
   (5.6 against 6.3%). The server now warns at startup when it's a Debug build, and the README runs it with
   `-c Release`.
+- **JackSharpCore needed a rewrite before it could carry audio.** Its process path allocated every cycle (LINQ arrays,
+  an object per port, each buffer copied into a new array and pinned to copy back), and patching lived on a separate
+  `Controller`, so a program that both processes and patches needed two JACK clients. JackSharpCore 1.0
+  (`Dependencies/JackSharpCore`, merged upstream) layers it as JACK does: `Client` has the server's state, the graph
+  and patching; `Processor` adds ports and a process callback over spans of JACK's own buffers; `Controller` is a
+  client without ports. Its tests measure 0 bytes allocated on JACK's thread over 200 cycles of audio and MIDI.
+- **Test JACK on the dummy backend.** `jackd -d dummy` runs a real server on a timer, with no sound card: the
+  library's tests and `SpiceForge.Validate jack` start their own (the check under a private server name, set for
+  SpiceForgeServer through `JACK_DEFAULT_SERVER`), so neither touches a sound card or the user's server. A test run
+  that crashes leaves its jackd behind, and later runs then use that server instead: every connection and latency
+  failure after one crash came from such an orphan, not the code.
+- **JACK2 1.9.22 on Windows has two bugs worth knowing.** Closing a client within milliseconds of activating it can
+  deadlock in `jack_client_close` (the race jack2 pull request 889 addresses, unmerged): opening, activating and
+  closing in a loop hung after 1 to 16 rounds, and a 100 ms wait before closing made 60 rounds clean, so JackSharpCore
+  keeps a client active at least 100 ms. With a second client of the same process watching the graph, a close could
+  still stall (once for about four minutes); SpiceForge's one long-lived client doesn't meet it. And
+  `JackUseExactName` is ignored: a second client of the same name opens, so JackSharpCore checks the name it got.
+- **JACK works as a driver like any other.** `SpiceForge.Validate jack` runs the Rat at the server's 48 kHz and 256
+  frames: SpiceForge's ports connected to `system:capture_1` and `system:playback_1` and `_2` (as another client sees
+  the graph), load 0.20 of real time, no dropouts in 5 s, reported latencies of 256 frames in and 512 out, the client
+  leaving the graph when the simulation stops, and the internal clock taking over, with JACK's reason, when the
+  server is killed mid-simulation.
 - **Close the device when nothing runs.** The device opens when a simulation or the test starts, and closes when it
   stops, so an idle server doesn't hold an ASIO driver another program (a DAW) wants. A configuration that doesn't
   check is refused before the running device is touched, unless a different ASIO driver has to be loaded to check
@@ -1076,9 +1098,12 @@ interface: a driver opens a stream for one client, prepares it while stopped, an
 - Knobs and switch buttons go to the least crowded of eight spots beside their symbols; on a dense schematic every
   spot may overlap something, and the least bad one is used.
 - A simulation's remembered setup is per file and per browser; an untitled schematic's isn't remembered.
-- Audio runs on ASIO (Windows) or the internal clock; JACK, through JackSharpCore, is next. JackSharpCore's process
-  callback allocates on every cycle (arrays, buffers, a copy of each port), so it needs a span-based path before it
-  can carry audio without the GC pauses above.
+- The JACK client is opened when a simulation or the test starts and closed when it stops, as an ASIO device is, so
+  connections made to SpiceForge's ports in a patchbay don't outlast a simulation; and changes made in a patchbay
+  while it runs aren't reflected in the audio settings. Keeping the client registered while JACK is the configured
+  driver, and following the graph's connection events, would be the next step.
+- JACK2 1.9.22 on Windows can stall closing a client opened and closed in quick succession while another client of
+  the same process watches the graph (see Audio I/O, JACK); SpiceForge's one long-lived client doesn't do that.
 - Output signals can be the Speakers or the voltage across picked two-terminal components, not an expression
   (`sim.setOutput` answers `unsupported` for one): that needs a way for a client to name voltages, and evaluation
   after the step for anything not linear in node voltages. Remembered output signals are put back a few seconds

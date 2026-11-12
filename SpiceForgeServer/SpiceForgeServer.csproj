@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SpiceForge\SpiceForge.csproj" />
+    <!-- JACK through JackSharpCore (Dependencies/JackSharpCore): Windows, Linux (including PipeWire) and macOS. -->
+    <ProjectReference Include="..\Dependencies\JackSharpCore\JackSharp\JackSharp.csproj" />
   </ItemGroup>
 
   <!-- ASIO through NAudio's AsioDevice (duplex, one callback per buffer). Windows only at run time; see Audio/AsioDriver.cs. -->

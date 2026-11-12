@@ -258,6 +258,228 @@ internal static class ServerCheck
         }
     }
 
+    /// <summary>
+    /// <c>jack [seconds]</c>: SpiceForgeServer on JACK, with a JACK server of its own: jackd on the dummy backend (a
+    /// timer, no sound card) under a private server name, which SpiceForgeServer is pointed at through
+    /// <c>JACK_DEFAULT_SERVER</c>, so neither a sound card nor a JACK server of the user's is touched. Checks the device's
+    /// ports and settings, the Rat running at the server's rate and buffer size, the connections in the JACK graph (seen
+    /// by a client of its own), the load and dropouts, the client leaving when the simulation stops, and the fallback to
+    /// the internal clock when the JACK server goes away.
+    /// </summary>
+    public static int RunJack(string repo, string testsDir, int seconds)
+    {
+        problems = 0;
+        RunJackAsync(repo, testsDir, seconds).GetAwaiter().GetResult();
+        Console.WriteLine($"{problems} problem(s).");
+        return problems == 0 ? 0 : 1;
+    }
+
+    private const string JackServerName = "spiceforge-check";
+
+    private static async Task RunJackAsync(string repo, string testsDir, int seconds)
+    {
+        Console.WriteLine($"=== The Rat on JACK (a dummy-backend server, '{JackServerName}', of this check's own)");
+        if (!JackSharp.JackLibrary.IsAvailable)
+        {
+            Console.WriteLine("  skipped: JACK isn't installed");
+            return;
+        }
+        JackSharp.JackLibrary.SetMessageHandlers(null, null);
+        string? jackd = FindJackd();
+        string? server = FindServer(repo);
+        if (jackd == null || server == null)
+        {
+            Check(false, jackd == null ? "jackd not found" : "SpiceForgeServer.dll not found: build SpiceForgeServer first");
+            return;
+        }
+        Process? jack = StartJack(jackd);
+        if (jack == null)
+        {
+            Check(false, "jackd started on the dummy backend");
+            return;
+        }
+        int port = FreePort();
+        string scratch = Path.Combine(Path.GetTempPath(), "SpiceForgeJackCheck-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(scratch);
+        var start = new ProcessStartInfo("dotnet", $"\"{server}\" --port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" " +
+            $"--userFolder \"{scratch}\" --audio JACK")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.Environment["JACK_DEFAULT_SERVER"] = JackServerName;
+        Process? spiceforge = null;
+        JackSharp.Controller? watch = null;
+        try
+        {
+            spiceforge = Process.Start(start)!;
+            if (!await WaitForListening(spiceforge))
+            {
+                Check(false, "server started");
+                return;
+            }
+            watch = new JackSharp.Controller("spiceforge-check-watch", new JackSharp.ClientOptions { ServerName = JackServerName });
+            await using Client client = await Client.Connect(port);
+            JsonObject hello = Result(await client.Request("hello", new JsonObject { ["protocol"] = 1, ["client"] = "JackCheck" }));
+            Check(hello["capabilities"]?["audioDrivers"]?.AsArray().Any(d => d?.GetValue<string>() == "JACK") == true, "hello lists the JACK driver");
+
+            JsonObject info = Result(await client.Request("audio.deviceInfo", new JsonObject { ["driver"] = "JACK" }));
+            string[] inputs = info["inputs"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray();
+            string[] outputs = info["outputs"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray();
+            Check(inputs.SequenceEqual(new[] { "system:capture_1", "system:capture_2" }) && outputs.SequenceEqual(new[] { "system:playback_1", "system:playback_2" }),
+                $"audio.deviceInfo lists the server's ports: in {string.Join(", ", inputs)}; out {string.Join(", ", outputs)}");
+            Check(info["sampleRates"]!.AsArray().Single()!.GetValue<int>() == 48000 && info["bufferSizes"]!.AsArray().Single()!.GetValue<int>() == 256,
+                "and its rate and buffer size, as the only ones");
+            Check(Code(await client.Request("audio.setConfig", new JsonObject { ["driver"] = "JACK", ["sampleRate"] = 44100 })) == "invalid_value",
+                "another rate is invalid_value: the server's settings are the user's");
+
+            JsonObject read = Result(await client.Request("file.read", new JsonObject { ["path"] = Path.Combine(testsDir, "Examples", "Pro Co Rat.schx") }));
+            JsonObject document = read["document"]!.AsObject();
+            JsonObject sim = Result(await client.Request("sim.start", new JsonObject { ["document"] = document.DeepClone(), ["title"] = "Rat" }));
+            string id = sim["sim"]!.GetValue<string>();
+            JsonObject? state = await WaitFor(client, "audio.state", e => e["open"]?.GetValue<bool>() == true, TimeSpan.FromSeconds(20));
+            Check(state?["driver"]?.GetValue<string>() == "JACK" && state["fallback"]?.GetValue<bool>() == false
+                    && state["sampleRate"]?.GetValue<double>() == 48000 && state["bufferSize"]?.GetValue<int>() == 256,
+                $"the simulation opens JACK: {state?.ToJsonString()}");
+            string? running = await WaitForState(client, id, "running");
+            Check(running == "running", $"the simulation runs ({running})");
+            JsonObject got = Result(await client.Request("sim.get", new JsonObject { ["sim"] = id }));
+            Check(got["sampleRate"]?.GetValue<double>() == 48000 && got["inputs"]?[0]?["source"]?["channel"]?.GetValue<string>() == "system:capture_1",
+                "at the server's rate, the Input playing system:capture_1");
+
+            bool connected = WaitUntil(() =>
+                watch.GetConnections($"{JackSharp_ClientName}:in_1").SequenceEqual(new[] { "system:capture_1" })
+                && watch.GetConnections($"{JackSharp_ClientName}:out_1").SequenceEqual(new[] { "system:playback_1" })
+                && watch.GetConnections($"{JackSharp_ClientName}:out_2").SequenceEqual(new[] { "system:playback_2" }));
+            Check(connected, $"in the JACK graph: {JackSharp_ClientName}:in_1 from system:capture_1, out_1 and out_2 to system:playback_1 and _2");
+
+            JsonArray elements = document["elements"]!.AsArray();
+            string input = elements.First(e => e!["component"]?["type"]?.GetValue<string>().StartsWith("Circuit.Input") == true)!["id"]!.GetValue<string>();
+            Result(await client.Request("sim.setInput", new JsonObject { ["sim"] = id, ["element"] = input, ["source"] = new JsonObject { ["expression"] = "0.5*Sin(2*Pi*220*t)" } }));
+            await Task.Delay(1500);
+            while (await client.WaitForEvent("sim.stats", TimeSpan.Zero) != null) { }
+            var loads = new List<double>();
+            long firstDropouts = -1, lastDropouts = 0;
+            for (int s = 0; s < seconds; s++)
+            {
+                JsonObject? stats = await client.WaitForEvent("sim.stats", TimeSpan.FromSeconds(3));
+                if (stats == null)
+                    break;
+                loads.Add(stats["load"]!.GetValue<double>());
+                lastDropouts = stats["dropouts"]!.GetValue<long>();
+                if (firstDropouts < 0)
+                    firstDropouts = lastDropouts;
+            }
+            Check(loads.Count == seconds && loads.Min() > 0,
+                $"{loads.Count} seconds of stats; load {(loads.Count > 0 ? $"{loads.Average():F3} on average, {loads.Max():F3} at most" : "-")}");
+            Check(lastDropouts - Math.Max(0, firstDropouts) == 0, $"no dropouts while it runs: {lastDropouts - Math.Max(0, firstDropouts)} in {loads.Count} s");
+            JsonObject? levels = await WaitFor(client, "sim.levels", e => e["outputs"]?.AsArray().Count == 2 && e["outputs"]![0]!.GetValue<double>() > 0.01, TimeSpan.FromSeconds(3));
+            Check(levels != null, $"each output has its level: {levels?["outputs"]?.ToJsonString()}");
+
+            await client.Request("sim.stop", new JsonObject { ["sim"] = id });
+            Check(WaitUntil(() => watch.GetPorts($"^{JackSharp_ClientName}:").Count == 0), "stopping it takes SpiceForge's client out of the graph");
+
+            // The JACK server going away mid-simulation: the simulation carries on, on the internal clock.
+            JsonObject again = Result(await client.Request("sim.start", new JsonObject { ["document"] = document.DeepClone(), ["title"] = "Rat" }));
+            string id2 = again["sim"]!.GetValue<string>();
+            await WaitForState(client, id2, "running");
+            watch.Dispose();
+            watch = null;
+            StopProcess(jack);
+            jack = null;
+            JsonObject? fallback = await WaitFor(client, "audio.state", e => e["fallback"]?.GetValue<bool>() == true, TimeSpan.FromSeconds(10));
+            Check(fallback?["driver"]?.GetValue<string>() == "None" && fallback["error"]?.GetValue<string>().Contains("shut down") == true,
+                $"when the JACK server goes, it falls back to the internal clock: {fallback?["error"]}");
+            JsonObject after = Result(await client.Request("sim.get", new JsonObject { ["sim"] = id2 }));
+            Check(after["state"]?.GetValue<string>() is "running" or "rebuilding", $"and the simulation carries on ({after["state"]})");
+        }
+        finally
+        {
+            watch?.Dispose();
+            StopProcess(spiceforge);
+            StopProcess(jack);
+            try { Directory.Delete(scratch, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    private const string JackSharp_ClientName = "SpiceForge";
+
+    private static string? FindJackd()
+    {
+        if (OperatingSystem.IsWindows())
+            foreach (string programs in new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) })
+                if (File.Exists(Path.Combine(programs, "JACK2", "jackd.exe")))
+                    return Path.Combine(programs, "JACK2", "jackd.exe");
+        foreach (string folder in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+            foreach (string name in new[] { "jackd", "jackd.exe" })
+                if (folder.Length > 0 && File.Exists(Path.Combine(folder, name)))
+                    return Path.Combine(folder, name);
+        return null;
+    }
+
+    // jackd on the dummy backend under the check's server name, once a client can connect to it.
+    private static Process? StartJack(string jackd)
+    {
+        var process = Process.Start(new ProcessStartInfo(jackd, $"-n {JackServerName} -d dummy -r 48000 -p 256 -C 2 -P 2")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        });
+        if (process == null)
+            return null;
+        process.OutputDataReceived += (_, _) => { };
+        process.ErrorDataReceived += (_, _) => { };
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        bool up = WaitUntil(() =>
+        {
+            try
+            {
+                using var probe = new JackSharp.Controller("spiceforge-check-probe", new JackSharp.ClientOptions { ServerName = JackServerName });
+                return true;
+            }
+            catch (JackSharp.JackException)
+            {
+                return false;
+            }
+        }, 10000);
+        if (up)
+            return process;
+        StopProcess(process);
+        return null;
+    }
+
+    private static void StopProcess(Process? process)
+    {
+        if (process == null)
+            return;
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(5000);
+            }
+        }
+        catch (InvalidOperationException) { }
+        process.Dispose();
+    }
+
+    private static bool WaitUntil(Func<bool> condition, int milliseconds = 5000)
+    {
+        var until = DateTime.UtcNow + TimeSpan.FromMilliseconds(milliseconds);
+        while (DateTime.UtcNow < until)
+        {
+            if (condition())
+                return true;
+            Thread.Sleep(50);
+        }
+        return condition();
+    }
+
     private static void Check(bool ok, string what)
     {
         Console.WriteLine($"  {(ok ? "ok  " : "FAIL")} {what}");

@@ -396,7 +396,12 @@ A property descriptor:
 | `audio.test` | `enabled` | |
 
 - **Drivers:** `None` is the internal clock (see Simulation): one device, `Internal clock`, with no channels. `ASIO`
-  (Windows) lists the installed ASIO drivers as its devices, through NAudio. JACK is planned.
+  (Windows) lists the installed ASIO drivers as its devices, through NAudio. `JACK` (where libjack is installed:
+  JACK2, or PipeWire's JACK on Linux) has one device, `JACK server`, the running server: its channels are other
+  clients' ports by full name (`system:capture_1` as an input, `system:playback_1` as an output), physical ones first.
+  SpiceForge registers a port of its own for each chosen channel (`SpiceForge:in_1`, `SpiceForge:out_1`…) and
+  connects it there; the rate and buffer size are the server's, offered as the only ones. SpiceForge never starts a
+  JACK server or changes its settings; with none running, a simulation falls back to the internal clock and says so.
 - **Listing and probing are separate.** `audio.devices` only names the devices, which is quick. `audio.deviceInfo`
   loads an ASIO driver to read its channels, rates and buffer sizes, which can take a moment. While an ASIO device
   is open, looking at a different one fails with `audio_busy`: ASIO drivers don't take kindly to two being loaded.
@@ -780,7 +785,7 @@ from the command line, environment variables prefixed `SPICEFORGE_`, or `appsett
 | `--allowedOrigins` | None, besides the server's own (comma-separated) |
 | `--settings` | `%APPDATA%/SpiceForge/server-settings.json` |
 | `--userFolder` | `Documents/LiveSPICE` |
-| `--audio` | The saved driver, else `None` (`None` or `ASIO`) |
+| `--audio` | The saved driver, else `None` (`None`, `ASIO` or `JACK`) |
 | `--audioDevice` | The saved device, else the driver's first |
 | `--audioInputs`, `--audioOutputs` | The saved channels, else the device's defaults (comma-separated names; empty for none, as `--audioOutputs=`) |
 | `--sampleRate`, `--bufferSize` | The saved ones, else the device's |
@@ -818,7 +823,8 @@ What the server needs beyond today's SpiceForge:
 - **Lossless files.** A file read and then written without edits should come back unchanged, apart from formatting:
   unresolved components and subcircuit bodies included. A round-trip test over the `Tests` folder checks it.
 - **Audio drivers:** ASIO through NAudio's `AsioDevice` (duplex: one callback reads the inputs and writes the
-  outputs), with every driver call on one STA thread. JACK, through JackSharpCore, is next; WASAPI maybe after.
+  outputs), with every driver call on one STA thread. JACK through JackSharpCore (`Dependencies/JackSharpCore`): one
+  `Processor` client, its process callback copying spans of JACK's buffers. WASAPI maybe later.
 - **Threading:** LiveSPICE's computer algebra isn't known to be thread-safe (see LessonsLearned.md, Validation).
   Builds, layouts and checks should therefore run one at a time, on a dedicated thread.
 

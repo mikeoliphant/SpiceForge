@@ -174,7 +174,8 @@ keeps running the last version that built while an edit leaves it broken.
 
 ### Audio
 
-Audio… (in the toolbar, or Configure… in the simulation panel) chooses where simulations play: an ASIO device, or
+Audio… (in the toolbar, or Configure… in the simulation panel) chooses where simulations play: an ASIO device, the
+JACK server (whose channels are other programs' ports, such as `system:capture_1`, to connect SpiceForge's to), or
 None, the server's own clock, where nothing plays and the output only drives the Out meter and the scope. Choose the
 device's input and output channels, its rate and buffer size (or the device's own), or open the driver's control
 panel. Test loops the inputs to the outputs, with level meters and a scope of the summed input. OK applies and saves

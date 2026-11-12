@@ -17,6 +17,11 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
 - [UILayout](https://github.com/mikeoliphant/UILayout) (Mozilla Public License 2.0), in
   `SpiceForgePlugin/Dependencies/UILayout`: the plugin's user interface and the image sheet processor that renders its
   textures. MPL 2.0 applies file by file, so UILayout's files stay under it while SpiceForge's own code is MIT.
+- [JackSharpCore](https://github.com/mikeoliphant/JackSharpCore) (MIT), in `Dependencies/JackSharpCore`: a .NET wrapper
+  of the JACK audio library, for SpiceForgeServer's JACK support. It's a fork of
+  [JackSharp](https://github.com/residuum/JackSharp) by Thomas Mayer, by way of
+  [h3ll5ur7er/JackSharp](https://github.com/h3ll5ur7er/JackSharp)'s move to .NET Core, and finds the native JACK
+  library with `NativeLibrary` on each platform.
 
 ### NuGet packages
 
@@ -62,6 +67,10 @@ The web front end, `SpiceForgeWebUI`, has no runtime dependencies. These build i
 
 These didn't contribute code, but they contributed understanding that went directly into SpiceForge's solutions.
 `DesignDocs/LessonsLearned.md` has the details.
+
+- [jack2 pull request 889](https://github.com/jackaudio/jack2/pull/889), "JackClient: Lock before killing client
+  notification thread", by DeviLaxmii, and its discussion: explained the stall in `jack_client_close` that JACK2 1.9.22
+  on Windows showed when a client closed soon after activating, and why JackSharpCore keeps a client active 100 ms.
 
 - [netlist_codegen](https://github.com/jatinchowdhury18/netlist_codegen) by Jatin Chowdhury: the original inspiration
   for the N-port, port-reduced approach. Reading its code generation led to extrapolating Newton's starting guess

@@ -18,6 +18,7 @@ public sealed class AudioService : IDisposable
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly ClockDriver clock = new();
     private readonly AudioDriver? asio;
+    private readonly AudioDriver? jack;
 
     // Guarded by gate.
     private AudioConfig config;
@@ -33,12 +34,26 @@ public sealed class AudioService : IDisposable
         config = initial;
         if (OperatingSystem.IsWindows())
             asio = new AsioDriver();
+        if (JackDriver.IsAvailable)
+            jack = new JackDriver();
     }
 
     /// <summary>The drivers this platform has, the internal clock first.</summary>
-    public IReadOnlyList<AudioDriver> Drivers => asio != null ? new[] { clock, asio } : new AudioDriver[] { clock };
+    public IReadOnlyList<AudioDriver> Drivers => new[] { clock, asio, jack }.OfType<AudioDriver>().ToList();
 
-    public static IReadOnlyList<string> DriverNames => OperatingSystem.IsWindows() ? new[] { ClockDriver.Name, AsioDriver.Name } : new[] { ClockDriver.Name };
+    /// <summary>The drivers this platform has: the internal clock, ASIO on Windows, and JACK where it's installed.</summary>
+    public static IReadOnlyList<string> DriverNames
+    {
+        get
+        {
+            var names = new List<string> { ClockDriver.Name };
+            if (OperatingSystem.IsWindows())
+                names.Add(AsioDriver.Name);
+            if (JackDriver.IsAvailable)
+                names.Add(JackDriver.Name);
+            return names;
+        }
+    }
 
     public AudioDriver Driver(string name) =>
         Drivers.FirstOrDefault(d => string.Equals(d.DriverName, name, StringComparison.OrdinalIgnoreCase))
