@@ -309,3 +309,231 @@ button:disabled {
   display: flex;
   justify-content: flex-end;
 }
+
+/* ---- The workspace: library, canvas, properties ---- */
+
+.workspace {
+  display: grid;
+  grid-template-columns: 220px 1fr 270px;
+  min-height: 0;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--chrome);
+}
+
+.library {
+  border-right: 1px solid var(--chrome-border);
+}
+
+.properties {
+  border-left: 1px solid var(--chrome-border);
+}
+
+.panel-title {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.muted {
+  color: var(--muted);
+  padding: 4px 8px;
+}
+
+.toolbar button.active {
+  background: #dcebff;
+  border-color: var(--accent);
+}
+
+.statusbar .tool {
+  color: var(--accent);
+  margin-right: 12px;
+}
+
+/* The canvas's cursors per tool: crosshair to select, none while a ghost follows the pointer, a pen to wire. */
+#schematic:focus {
+  outline: none;
+}
+
+#schematic[data-tool="place"] {
+  cursor: none;
+}
+
+#schematic[data-tool="wire"],
+#schematic[data-tool="wire"] * {
+  cursor: crosshair;
+}
+
+#schematic .ghost * {
+  pointer-events: none;
+}
+
+/* The wire tool's preview: LiveSPICE draws it in the highlight colour. */
+#schematic .wire-preview {
+  fill: none;
+  stroke: #808080;
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* ---- The library ---- */
+
+.library-bar {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 6px;
+}
+
+.library-bar .filter {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 2px 6px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+}
+
+.library-bar button {
+  padding: 0 8px;
+}
+
+.library .tree,
+.library .flat {
+  overflow: auto;
+  padding: 0 4px 8px 8px;
+}
+
+.library .category {
+  margin: 2px 0;
+}
+
+.library .category > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.library .category .category {
+  margin-left: 10px;
+}
+
+.library .icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px 0 4px;
+}
+
+.library .entry {
+  padding: 2px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+}
+
+.library .entry.named {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.library .icon * {
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+}
+
+/* ---- Properties ---- */
+
+.properties .picker {
+  margin: 0 8px 6px;
+  font: inherit;
+}
+
+.properties .grid {
+  flex: 1;
+  overflow: auto;
+  padding: 0 8px 8px;
+}
+
+.properties .subject {
+  font-weight: 600;
+  padding: 2px 0 6px;
+}
+
+.properties .category {
+  margin: 8px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.properties .row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.properties .row label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.properties .row input,
+.properties .row select {
+  font: inherit;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+  background: #fff;
+}
+
+.properties .row input:disabled,
+.properties .row select:disabled {
+  color: var(--muted);
+  background: transparent;
+}
+
+.properties .row .invalid {
+  border-color: var(--error);
+  outline: 1px solid var(--error);
+}
+
+.properties .units {
+  color: var(--muted);
+  min-width: 14px;
+}
+
+.properties .help {
+  min-height: 64px;
+  max-height: 120px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-top: 1px solid var(--chrome-border);
+  color: var(--muted);
+}
+
+.properties .help strong {
+  color: var(--text);
+}

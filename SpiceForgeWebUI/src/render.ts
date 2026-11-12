@@ -122,7 +122,26 @@ function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wire
   const height = box.max[1] - box.min[1];
   g.append(el("rect", { class: "hit", x: box.min[0], y: box.min[1], width, height }));
 
-  const color = (e: Edge) => EdgeColors[e];
+  drawLayout(g, layout, m, { text: true, connected: (at) => onAnyWire(at, wires) });
+  g.append(el("rect", { class: "outline", x: box.min[0], y: box.min[1], width, height }));
+  const title = el("title");
+  title.textContent = tooltip(s, layout);
+  g.append(title);
+  return g;
+}
+
+interface LayoutOptions {
+  /** Draw every shape in this colour, unfilled, instead of its own (SymbolControl's Pen, for the placement ghost). */
+  pen?: string;
+  /** Draw the texts. */
+  text: boolean;
+  /** Draw the terminals, coloured by whether each is connected; omitted, they aren't drawn. */
+  connected?: (at: Point) => boolean;
+}
+
+/** SymbolControl.DrawLayout: a layout's shapes, mapped into the schematic and appended to `g`. */
+function drawLayout(g: SVGGElement, layout: Layout, m: Mapping, options: LayoutOptions) {
+  const color = (e: Edge) => options.pen ?? EdgeColors[e];
   const P = (p: Point) => mapPoint(m, p);
 
   for (const line of layout.lines) {
@@ -138,7 +157,7 @@ function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wire
         width: Math.abs(b[0] - a[0]),
         height: Math.abs(b[1] - a[1]),
         stroke: color(r.edge),
-        fill: r.fill ? color(r.edge) : "none",
+        fill: r.fill && !options.pen ? color(r.edge) : "none",
       }),
     );
   }
@@ -151,7 +170,7 @@ function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wire
         rx: Math.abs(b[0] - a[0]) / 2,
         ry: Math.abs(b[1] - a[1]) / 2,
         stroke: color(e.edge),
-        fill: e.fill ? color(e.edge) : "none",
+        fill: e.fill && !options.pen ? color(e.edge) : "none",
       }),
     );
   }
@@ -173,20 +192,41 @@ function drawSymbol(s: SymbolElement, layout: Layout, m: Mapping, box: Box, wire
       }),
     );
   }
-  for (const t of layout.texts) {
+  for (const t of options.text ? layout.texts : []) {
     if (!t.text) continue;
     g.append(drawText(m, t.text, t.at, Alignments[t.h], Alignments[t.v], FontSize * TextScale[t.size]));
   }
-  for (const terminal of layout.terminals) {
+  for (const terminal of options.connected ? layout.terminals : []) {
     const at = P(terminal.at);
-    g.append(square(at, TerminalSize, onAnyWire(at, wires) ? EdgeColors.wire : EdgeColors.red));
+    g.append(square(at, TerminalSize, options.connected!(at) ? EdgeColors.wire : EdgeColors.red));
   }
 
-  g.append(el("rect", { class: "outline", x: box.min[0], y: box.min[1], width, height }));
-  const title = el("title");
-  title.textContent = tooltip(s, layout);
-  g.append(title);
-  return g;
+}
+
+/** The placement ghost (SymbolTool's overlay): gray, without text, its terminals red as they're unconnected. */
+export function drawGhost(root: SVGGElement, layout: Layout, m: Mapping) {
+  root.replaceChildren();
+  const g = el("g", { class: "ghost" });
+  drawLayout(g, layout, m, { pen: EdgeColors.gray, text: false, connected: () => false });
+  root.append(g);
+}
+
+/** A library icon (LiveSPICE's LayoutControl): the symbol unrotated, without text or terminals, fitted to a box. */
+export function drawIcon(layout: Layout, size: number): SVGSVGElement {
+  const svg = el("svg", { width: size, height: size, class: "icon" });
+  const m = { cos: 1, sin: 0, ySign: -1, px: 0, py: 0 };
+  const box = mapBox(m, layout.bounds);
+  const pad = 2;
+  const w = Math.max(box.max[0] - box.min[0], 1);
+  const h = Math.max(box.max[1] - box.min[1], 1);
+  const span = Math.max(w, h) + 2 * pad;
+  const cx = (box.min[0] + box.max[0]) / 2;
+  const cy = (box.min[1] + box.max[1]) / 2;
+  svg.setAttribute("viewBox", `${cx - span / 2} ${cy - span / 2} ${span} ${span}`);
+  const g = el("g");
+  drawLayout(g, layout, m, { text: false });
+  svg.append(g);
+  return svg;
 }
 
 // SymbolControl.DrawLayout's text placement: upright text, its box placed from the alignment, with the alignment

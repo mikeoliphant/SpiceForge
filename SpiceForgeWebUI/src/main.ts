@@ -1,10 +1,14 @@
-// SpiceForge's web front end: open a schematic, draw it, select and move its elements, undo, and save.
+// SpiceForge's web front end: open a schematic, draw it, and edit it: place components from the library, wire them,
+// select, move, rotate, flip, delete, cut, copy and paste, edit properties, undo, and save.
 
 import { ApiClient, RequestError } from "./client";
+import { nameAdded } from "./edits";
 import { Editor } from "./editor";
 import { chooseFile } from "./fileDialog";
 import { LayoutCache } from "./layouts";
-import type { FileRead, Hello, SymbolElement } from "./protocol";
+import { LibraryPanel, WireType } from "./library";
+import { PropertiesPanel } from "./properties";
+import type { CatalogEntry, Element, FileRead, Hello, SymbolElement } from "./protocol";
 import { SchematicView } from "./view";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -13,6 +17,7 @@ const svg = document.getElementById("schematic") as unknown as SVGSVGElement;
 const drawing = document.getElementById("drawing") as unknown as SVGGElement;
 const overlay = document.getElementById("overlay") as unknown as SVGGElement;
 const status = $<HTMLSpanElement>("status");
+const toolLabel = $<HTMLSpanElement>("tool");
 const selectionLabel = $<HTMLSpanElement>("selection");
 const pointer = $<HTMLSpanElement>("pointer");
 const zoomLabel = $<HTMLSpanElement>("zoom");
@@ -22,6 +27,11 @@ const buttons = {
   save: $<HTMLButtonElement>("save"),
   undo: $<HTMLButtonElement>("undo"),
   redo: $<HTMLButtonElement>("redo"),
+  cut: $<HTMLButtonElement>("cut"),
+  copy: $<HTMLButtonElement>("copy"),
+  paste: $<HTMLButtonElement>("paste"),
+  remove: $<HTMLButtonElement>("delete"),
+  wire: $<HTMLButtonElement>("wire"),
   fit: $<HTMLButtonElement>("fit"),
   zoomIn: $<HTMLButtonElement>("zoom-in"),
   zoomOut: $<HTMLButtonElement>("zoom-out"),
@@ -31,38 +41,61 @@ const client = new ApiClient();
 const layouts = new LayoutCache(client);
 const view = new SchematicView(svg);
 const editor = new Editor(svg, drawing, overlay, view, layouts);
+const library = new LibraryPanel($("library"), client);
+const properties = new PropertiesPanel($("properties"), editor, client, () => library.types);
 let hello: Hello | null = null;
 let connected = false;
 let file: { path: string; modified: string } | null = null;
+/** The last elements copied, as LiveSPICE clipboard XML: used when the system clipboard can't be read. */
+let clipboardFallback: string | null = null;
+
+// For scripted tests and the browser console.
+Object.assign(window, { spiceforge: { editor, library, layouts } });
 
 view.onChange = (zoom) => (zoomLabel.textContent = `${Math.round(zoom * 100)}%`);
 view.onPointer = (x, y) => (pointer.textContent = `${Math.round(x)}, ${Math.round(y)}`);
-editor.onChange = updateChrome;
+editor.onChange = () => {
+  updateChrome();
+  properties.render();
+};
+editor.onError = (message) => setStatus(message, "error");
+properties.onError = (message) => setStatus(message, "error");
+library.onPick = pick;
 
 function setStatus(text: string, kind: "info" | "error" = "info") {
   status.textContent = text;
   status.className = kind;
 }
 
+function errorText(e: unknown): string {
+  return e instanceof RequestError ? e.error.message : (e as Error).message;
+}
+
 function fileName(path: string) {
   return path.split(/[\\/]/).pop()!.replace(/\.(schx|xml)$/i, "");
 }
 
-/** Brings the toolbar, title and selection count up to date with the editor. */
+/** Brings the toolbar, title and status up to date with the editor. */
 function updateChrome() {
   const h = editor.history;
   const dirty = h.dirty;
+  const open = editor.document !== null;
+  const selected = editor.selection.size;
   buttons.save.disabled = !connected || !file;
   buttons.undo.disabled = !h.canUndo;
   buttons.redo.disabled = !h.canRedo;
   buttons.undo.title = h.undoLabel ? `Undo ${h.undoLabel} (Ctrl+Z)` : "Undo (Ctrl+Z)";
   buttons.redo.title = h.redoLabel ? `Redo ${h.redoLabel} (Ctrl+Y)` : "Redo (Ctrl+Y)";
+  buttons.cut.disabled = buttons.copy.disabled = buttons.remove.disabled = selected === 0;
+  buttons.paste.disabled = !open || !connected;
+  buttons.wire.disabled = !open;
+  buttons.wire.classList.toggle("active", editor.tool === "wire");
   const name = file ? fileName(file.path) : "";
   title.textContent = name ? `${name}${dirty ? " •" : ""}` : "";
   title.title = file?.path ?? "";
   document.title = name ? `${dirty ? "• " : ""}${name} - SpiceForge` : "SpiceForge";
-  const n = editor.selection.size;
-  selectionLabel.textContent = n ? `${n} selected` : "";
+  selectionLabel.textContent = selected ? `${selected} selected` : "";
+  toolLabel.textContent = editor.tool === "place" ? "Placing (Esc to stop)" : editor.tool === "wire" ? "Wiring (Esc to stop)" : "";
 }
 
 /** The token comes in the URL the server prints (?token=...); it's kept for reloads, then dropped from the address bar. */
@@ -97,7 +130,7 @@ async function open(path: string) {
     const notes = [...read.messages.map((m) => m.message), ...editor.problems];
     setStatus(`${symbols.length} symbols, ${wires} wires${notes.length ? ` — ${notes.join("; ")}` : ""}`, notes.length ? "error" : "info");
   } catch (e) {
-    setStatus(e instanceof RequestError ? e.error.message : (e as Error).message, "error");
+    setStatus(errorText(e), "error");
   }
   updateChrome();
 }
@@ -121,9 +154,110 @@ async function save() {
     editor.history.markSaved();
     setStatus(`Saved ${written.path}`);
   } catch (e) {
-    setStatus(e instanceof RequestError ? e.error.message : (e as Error).message, "error");
+    setStatus(errorText(e), "error");
   }
 }
+
+// ---- Components and wiring ----
+
+/** A library entry clicked or chosen by its shortcut: the wire tool for the conductor, else placing the component. */
+function pick(entry: CatalogEntry) {
+  if (!editor.document) return setStatus("Open a schematic first.", "error");
+  if (entry.component.type === WireType) editor.startWiring();
+  else editor.startPlacing(entry.component, entry.layout);
+  svg.focus();
+}
+
+// LiveSPICE's shortcuts for the Common components. Browsers keep Ctrl+W and Ctrl+T for themselves, so the plain letters
+// work too.
+const ShortcutTypes: Record<string, string> = {
+  w: WireType,
+  g: "Circuit.Ground, Circuit",
+  p: "Circuit.Rail, Circuit",
+  r: "Circuit.Resistor, Circuit",
+  c: "Circuit.Capacitor, Circuit",
+  l: "Circuit.Inductor, Circuit",
+  t: "Circuit.Label, Circuit",
+};
+const CtrlShortcutTypes: Record<string, string> = {
+  g: "Circuit.Ground, Circuit",
+  p: "Circuit.Rail, Circuit",
+  r: "Circuit.Resistor, Circuit",
+  f: "Circuit.Capacitor, Circuit",
+  l: "Circuit.Inductor, Circuit",
+  h: "Circuit.Inductor, Circuit",
+};
+
+function pickType(type: string) {
+  const entry = library.find("Common", type);
+  if (entry) pick(entry);
+}
+
+// ---- Clipboard: LiveSPICE's format, so copies go between this editor and the desktop app ----
+
+async function copySelection(cut: boolean) {
+  const elements = editor.selectedElements();
+  if (elements.length === 0) return;
+  try {
+    const { xml } = await client.request<{ xml: string }>("schx.toXml", { elements });
+    clipboardFallback = xml;
+    try {
+      await navigator.clipboard.writeText(xml);
+    } catch {
+      // No system clipboard (permission, or an insecure context): the fallback still pastes here.
+    }
+    if (cut) editor.deleteSelection("Cut");
+    setStatus(`${cut ? "Cut" : "Copied"} ${elements.length} element${elements.length === 1 ? "" : "s"}.`);
+  } catch (e) {
+    setStatus(errorText(e), "error");
+  }
+}
+
+async function paste(text: string | null) {
+  const xml = text?.trim().startsWith("<") ? text : clipboardFallback;
+  if (!xml || !editor.document) return;
+  try {
+    const { elements } = await client.request<{ elements: Element[] }>("schx.fromXml", { xml });
+    for (const e of elements) e.id = editor.newId();
+    // Rename clashing components first: a renamed component's layout differs (its name is drawn).
+    nameAdded(editor.document, elements);
+    await layouts.fetch(elements.filter((e): e is SymbolElement => e.kind === "symbol").map((s) => s.component));
+    editor.addElements(elements, "Paste");
+  } catch (e) {
+    setStatus(`Couldn't paste: ${errorText(e)}`, "error");
+  }
+}
+
+async function pasteFromClipboard() {
+  let text: string | null = null;
+  try {
+    text = await navigator.clipboard.readText();
+  } catch {
+    // Reading needs permission; without it, paste what was last copied here.
+  }
+  await paste(text);
+}
+
+const editingText = (target: EventTarget | null) =>
+  target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+
+document.addEventListener("copy", (e) => {
+  if (editingText(document.activeElement) || editor.selection.size === 0) return;
+  e.preventDefault();
+  void copySelection(false);
+});
+document.addEventListener("cut", (e) => {
+  if (editingText(document.activeElement) || editor.selection.size === 0) return;
+  e.preventDefault();
+  void copySelection(true);
+});
+document.addEventListener("paste", (e) => {
+  if (editingText(document.activeElement) || !editor.document) return;
+  e.preventDefault();
+  void paste(e.clipboardData?.getData("text/plain") ?? null);
+});
+
+// ---- Buttons and keys ----
 
 buttons.open.addEventListener("click", async () => {
   if (!discardOk()) return;
@@ -136,12 +270,17 @@ buttons.open.addEventListener("click", async () => {
 buttons.save.addEventListener("click", () => void save());
 buttons.undo.addEventListener("click", () => editor.undo());
 buttons.redo.addEventListener("click", () => editor.redo());
+buttons.cut.addEventListener("click", () => void copySelection(true));
+buttons.copy.addEventListener("click", () => void copySelection(false));
+buttons.paste.addEventListener("click", () => void pasteFromClipboard());
+buttons.remove.addEventListener("click", () => editor.deleteSelection());
+buttons.wire.addEventListener("click", () => (editor.tool === "wire" ? editor.escape() : editor.startWiring()));
 buttons.fit.addEventListener("click", () => view.fit(editor.bounds));
 buttons.zoomIn.addEventListener("click", () => view.zoomAt(1.5));
 buttons.zoomOut.addEventListener("click", () => view.zoomAt(1 / 1.5));
 
 window.addEventListener("keydown", (e) => {
-  if (e.target instanceof HTMLInputElement || document.querySelector("dialog[open]")) return;
+  if (editingText(e.target) || document.querySelector("dialog[open]")) return;
   const ctrl = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
   const handled = () => e.preventDefault();
@@ -150,12 +289,15 @@ window.addEventListener("keydown", (e) => {
   else if (ctrl && key === "z" && !e.shiftKey) (handled(), editor.undo());
   else if (ctrl && (key === "y" || (key === "z" && e.shiftKey))) (handled(), editor.redo());
   else if (ctrl && key === "a") (handled(), editor.selectAll());
+  else if (ctrl && !e.shiftKey && !e.altKey && CtrlShortcutTypes[key]) (handled(), pickType(CtrlShortcutTypes[key]!));
   else if (e.key === "Escape") editor.escape();
+  else if (e.key === "Delete") (handled(), editor.deleteSelection());
   else if (ctrl || e.altKey) return;
-  // SelectionTool.KeyDown: Left and Right rotate, Up and Down flip.
+  // SelectionTool.KeyDown: Left and Right rotate, Up and Down flip (the ghost, while placing).
   else if (e.key === "ArrowLeft") (handled(), editor.rotate(1));
   else if (e.key === "ArrowRight") (handled(), editor.rotate(-1));
   else if (e.key === "ArrowUp" || e.key === "ArrowDown") (handled(), editor.flip());
+  else if (ShortcutTypes[key]) (handled(), pickType(ShortcutTypes[key]!));
   else if (e.key === "+" || e.key === "=") view.zoomAt(1.5);
   else if (e.key === "-") view.zoomAt(1 / 1.5);
   else if (e.key === "0" || key === "f") view.fit(editor.bounds);
@@ -167,6 +309,7 @@ window.addEventListener("beforeunload", (e) => {
 
 async function start() {
   updateChrome();
+  properties.render();
   const t = token();
   if (!t) {
     setStatus("No token: open the address SpiceForgeServer printed when it started.", "error");
@@ -189,6 +332,12 @@ async function start() {
   buttons.open.disabled = false;
   updateChrome();
   setStatus(`Connected to ${hello.server.name} ${hello.server.version}. Open a schematic (Ctrl+O).`);
+  try {
+    await library.load();
+  } catch (e) {
+    setStatus(`Couldn't load the components: ${errorText(e)}`, "error");
+  }
+  properties.render();
   const requested = new URLSearchParams(location.search).get("file") ?? localStorage.getItem("spiceforge.lastFile");
   if (requested) await open(requested);
 }

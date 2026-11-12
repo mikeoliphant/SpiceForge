@@ -2,7 +2,7 @@
 // pushed; undo and redo revert and re-apply it.
 
 import { cos90, roundHalfEven, sin90 } from "./geometry";
-import type { Point, SchematicDocument } from "./protocol";
+import type { Element, Point, SchematicDocument } from "./protocol";
 
 export interface Edit {
   /** Shown in the Undo and Redo tooltips, as LiveSPICE names them. */
@@ -163,6 +163,117 @@ export class FlipEdit implements Edit {
 
   revert() {
     flipElements(this.doc, this.ids, this.y);
+  }
+}
+
+/**
+ * Elements removed and added, as SchematicEdits.AddElements and RemoveElements do it: removed elements remember their
+ * place in the document, so undo puts them back where they were (the file's order is kept), and added elements go
+ * at the end.
+ */
+export class ChangeEdit implements Edit {
+  private readonly removed: { element: Element; index: number }[];
+
+  constructor(
+    readonly label: string,
+    private readonly doc: SchematicDocument,
+    removed: Element[],
+    private readonly added: Element[],
+  ) {
+    this.removed = removed
+      .map((element) => ({ element, index: doc.elements.indexOf(element) }))
+      .filter((r) => r.index >= 0)
+      .sort((a, b) => a.index - b.index);
+  }
+
+  get removedIds(): string[] {
+    return this.removed.map((r) => r.element.id);
+  }
+
+  apply() {
+    const gone = new Set(this.removed.map((r) => r.element));
+    this.doc.elements = this.doc.elements.filter((e) => !gone.has(e));
+    this.doc.elements.push(...this.added);
+  }
+
+  revert() {
+    const added = new Set(this.added);
+    this.doc.elements = this.doc.elements.filter((e) => !added.has(e));
+    for (const r of this.removed) this.doc.elements.splice(r.index, 0, r.element);
+  }
+}
+
+/** Several edits as one undo step: applied in order, reverted in reverse (SchematicEditor's edit groups). */
+export class CompositeEdit implements Edit {
+  constructor(
+    readonly label: string,
+    private readonly edits: Edit[],
+  ) {}
+
+  apply() {
+    for (const e of this.edits) e.apply();
+  }
+
+  revert() {
+    for (const e of [...this.edits].reverse()) e.revert();
+  }
+}
+
+/** A property set on several components (or on the schematic's circuit), each remembering its old value: Edit's
+ * PropertyEdit, for a multi-selection. A missing old value means the property wasn't stored. */
+export class PropertyEdit implements Edit {
+  readonly label: string;
+  private readonly old: (string | undefined)[];
+
+  constructor(
+    private readonly targets: Record<string, string>[],
+    private readonly property: string,
+    private readonly value: string,
+  ) {
+    this.label = `Set ${property}`;
+    this.old = targets.map((t) => t[property]);
+  }
+
+  apply() {
+    for (const t of this.targets) t[this.property] = this.value;
+  }
+
+  revert() {
+    this.targets.forEach((t, i) => {
+      const old = this.old[i];
+      if (old === undefined) delete t[this.property];
+      else t[this.property] = old;
+    });
+  }
+}
+
+/** Component.UniqueName: a name already used becomes its letters plus the first free number from 1. */
+export function uniqueName(used: ReadonlySet<string>, name: string): string {
+  if (!used.has(name)) return name;
+  const prefix = name.match(/^\D*/)![0];
+  for (let i = 1; ; i++) if (!used.has(prefix + i)) return prefix + i;
+}
+
+/** Every component name in the document. */
+export function componentNames(doc: SchematicDocument): Set<string> {
+  const names = new Set<string>();
+  for (const e of doc.elements) {
+    const name = e.kind === "symbol" ? e.component.properties["Name"] : undefined;
+    if (name !== undefined) names.add(name);
+  }
+  return names;
+}
+
+/** Gives each added symbol a name no other component has, as LiveSPICE's ComponentCollection does when they're added. */
+export function nameAdded(doc: SchematicDocument, added: Element[]) {
+  const used = componentNames(doc);
+  for (const e of added) {
+    if (e.kind !== "symbol") continue;
+    const name = e.component.properties["Name"];
+    if (name === undefined) continue;
+    const unique = uniqueName(used, name);
+    e.component.properties["Name"] = unique;
+    used.add(unique);
   }
 }
 

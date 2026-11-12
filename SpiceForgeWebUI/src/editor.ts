@@ -1,6 +1,7 @@
-// The document being edited, its selection and history, and LiveSPICE's selection tool (UISpec.md, Tools;
-// LiveSPICE/Controls/Editor/SelectionTool.cs and MoveTool.cs):
+// The document being edited, its selection and history, and LiveSPICE's editing tools (UISpec.md, Tools;
+// LiveSPICE/Controls/Editor):
 //
+// Selection tool (SelectionTool.cs, MoveTool.cs):
 // - pressing on a selected element, without Ctrl, starts a move: the selection follows the pointer in grid steps,
 //   live, and the whole drag is one undo step (right button or Escape cancels it);
 // - otherwise a press starts a rubber band. Releasing without moving is a click: it selects the element under the
@@ -8,19 +9,34 @@
 //   Releasing after a drag selects everything the band touches (Ctrl adds to the selection);
 // - a double-click adds every symbol of the same type to the selection;
 // - the arrow keys rotate (Left counter-clockwise, Right clockwise) and flip (Up, Down) the selection about its centre.
+//
+// Symbol tool (SymbolTool.cs): a gray ghost of the component follows the pointer; the arrow keys rotate and flip it;
+// a click places a copy and selects it, then returns to the selection tool unless Ctrl is held.
+//
+// Wire tool (WireTool.cs): a drag draws an L-shaped wire along the pointer's path, joined to what it meets on
+// release; then back to the selection tool unless Ctrl is held.
+//
+// Escape returns to the selection tool from the others.
 
+import { ChangeEdit, CompositeEdit, EditStack, FlipEdit, MoveEdit, PropertyEdit, RotateEdit, flipElements, moveElements, nameAdded, rotateElements, type Edit } from "./edits";
 import { boxIntersects, mapBox, mappingOf, normalize, snap, unionBoxes, wireIntersects, type Box } from "./geometry";
-import { EditStack, FlipEdit, MoveEdit, RotateEdit, flipElements, moveElements, rotateElements } from "./edits";
 import type { LayoutCache } from "./layouts";
-import type { Point, SchematicDocument, SymbolElement } from "./protocol";
-import { renderDocument, type Rendered } from "./render";
+import type { ComponentData, Element, Layout, Point, SchematicDocument, SymbolElement } from "./protocol";
+import { drawGhost, renderDocument, type Rendered } from "./render";
 import type { SchematicView } from "./view";
+import { addWire, findWirePath } from "./wires";
 
 const SVG = "http://www.w3.org/2000/svg";
 
+export type Tool =
+  | { kind: "select" }
+  | { kind: "place"; component: ComponentData; layout: Layout; rotation: number; flip: boolean; at: Point | null }
+  | { kind: "wire" };
+
 type Gesture =
   | { kind: "band"; pointer: number; from: Point; to: Point; hit: string | null; additive: boolean }
-  | { kind: "move"; pointer: number; ids: Set<string>; last: Point; total: Point };
+  | { kind: "move"; pointer: number; ids: Set<string>; last: Point; total: Point }
+  | { kind: "wire"; pointer: number; mouse: Point[] };
 
 export class Editor {
   readonly history = new EditStack();
@@ -28,10 +44,16 @@ export class Editor {
   private doc: SchematicDocument | null = null;
   private rendered: Rendered = { bounds: null, problems: [] };
   private gesture: Gesture | null = null;
+  private current: Tool = { kind: "select" };
+  private nextId = 0;
   private readonly band: SVGRectElement;
+  private readonly ghost: SVGGElement;
+  private readonly wirePreview: SVGPolylineElement;
 
-  /** Called after the drawing changes, and after the selection or history does. */
+  /** Called after the drawing changes, and after the selection, tool or history does. */
   onChange: () => void = () => {};
+  /** Reports a failure the user should see (the status bar). */
+  onError: (message: string) => void = () => {};
 
   constructor(
     private readonly svg: SVGSVGElement,
@@ -43,13 +65,18 @@ export class Editor {
     this.band = document.createElementNS(SVG, "rect");
     this.band.setAttribute("class", "band");
     this.band.style.display = "none";
-    overlay.append(this.band);
+    this.ghost = document.createElementNS(SVG, "g");
+    this.wirePreview = document.createElementNS(SVG, "polyline");
+    this.wirePreview.setAttribute("class", "wire-preview");
+    this.wirePreview.style.display = "none";
+    overlay.append(this.band, this.ghost, this.wirePreview);
     this.history.onChange = () => this.onChange();
 
     svg.addEventListener("pointerdown", (e) => this.pointerDown(e));
     svg.addEventListener("pointermove", (e) => this.pointerMove(e));
     svg.addEventListener("pointerup", (e) => this.pointerUp(e));
     svg.addEventListener("pointercancel", () => this.cancel());
+    svg.addEventListener("pointerleave", () => this.hideGhost());
     // The right button cancels a gesture in progress, as in LiveSPICE. Pressed while the left is held, it doesn't
     // make a pointerdown (pointer events report a second button as a "chorded" move), but it does make a mousedown.
     svg.addEventListener("mousedown", (e) => e.button === 2 && this.cancel());
@@ -69,9 +96,14 @@ export class Editor {
     return this.rendered.problems;
   }
 
-  /** Starts editing a new document, with an empty selection and history. */
+  get tool(): Tool["kind"] {
+    return this.current.kind;
+  }
+
+  /** Starts editing a document, with an empty selection and history. */
   load(doc: SchematicDocument) {
     this.cancel();
+    this.setTool({ kind: "select" });
     this.doc = doc;
     this.selection.clear();
     this.history.clear();
@@ -84,39 +116,162 @@ export class Editor {
     this.onChange();
   }
 
+  // ---- Edits ----
+
+  /** Records an edit that has been applied, drops vanished elements from the selection, and redraws. */
+  private commit(edit: Edit) {
+    this.history.push(edit);
+    this.pruneSelection();
+    this.redraw();
+  }
+
+  private pruneSelection() {
+    if (!this.doc) return;
+    const present = new Set(this.doc.elements.map((e) => e.id));
+    for (const id of [...this.selection]) if (!present.has(id)) this.selection.delete(id);
+  }
+
   undo() {
     if (this.gesture) return;
-    if (this.history.undo()) this.redraw();
+    if (this.history.undo()) {
+      this.pruneSelection();
+      this.redraw();
+    }
   }
 
   redo() {
     if (this.gesture) return;
-    if (this.history.redo()) this.redraw();
+    if (this.history.redo()) {
+      this.pruneSelection();
+      this.redraw();
+    }
   }
 
-  selectAll() {
+  /** A fresh element id, unused in the document. */
+  newId = (): string => {
+    const used = new Set(this.doc?.elements.map((e) => e.id));
+    let id: string;
+    do id = `n${++this.nextId}`;
+    while (used.has(id));
+    return id;
+  };
+
+  /** Adds elements (renamed where their names clash, as LiveSPICE does) as one undo step, and selects them alone.
+   * Their layouts must already be cached. */
+  addElements(elements: Element[], label: string) {
+    if (!this.doc || elements.length === 0) return;
+    nameAdded(this.doc, elements);
+    const edit = new ChangeEdit(label, this.doc, [], elements);
+    edit.apply();
+    this.commit(edit);
+    this.select(
+      elements.map((e) => e.id),
+      true,
+    );
+  }
+
+  /** The selected elements, in document order. */
+  selectedElements(): Element[] {
+    return this.doc?.elements.filter((e) => this.selection.has(e.id)) ?? [];
+  }
+
+  /** Delete: removes the selection, as one undo step. */
+  deleteSelection(label = "Delete") {
+    const doomed = this.selectedElements();
+    if (!this.doc || this.gesture || doomed.length === 0) return;
+    const edit = new ChangeEdit(label, this.doc, doomed, []);
+    edit.apply();
+    this.commit(edit);
+  }
+
+  /** Sets a property, as one undo step: each group's value on its property bags (components', or the circuit's). The
+   * layouts the new values need are fetched first. */
+  async setProperty(property: string, groups: { targets: Record<string, string>[]; value: string }[], components: ComponentData[]) {
+    if (!this.doc || groups.length === 0) return;
+    const edits = groups.map((g) => new PropertyEdit(g.targets, property, g.value));
+    const edit = edits.length === 1 ? edits[0]! : new CompositeEdit(edits[0]!.label, edits);
+    edit.apply();
+    try {
+      await this.layouts.fetch(components);
+    } catch (e) {
+      edit.revert();
+      this.onError((e as Error).message);
+      return;
+    }
+    this.commit(edit);
+  }
+
+  /** Adds a wire along a path of horizontal and vertical segments, joined as LiveSPICE joins it, as one undo step. */
+  drawWire(path: Point[]) {
     if (!this.doc) return;
-    this.select(this.doc.elements.filter((e) => e.kind !== "raw").map((e) => e.id), true);
+    const edit = addWire(this.doc, this.layouts, path, this.newId);
+    if (edit) this.commit(edit);
   }
 
-  /** Rotates the selection by quarter turns (+1 counter-clockwise) about its centre: SelectionTool.Rotate. */
+  // ---- Tools ----
+
+  /** The symbol tool, placing copies of `component`. */
+  startPlacing(component: ComponentData, layout: Layout) {
+    if (!this.doc) return;
+    this.cancel();
+    this.setTool({ kind: "place", component, layout, rotation: 0, flip: false, at: null });
+  }
+
+  startWiring() {
+    if (!this.doc) return;
+    this.cancel();
+    this.setTool({ kind: "wire" });
+  }
+
+  private setTool(tool: Tool) {
+    this.current = tool;
+    this.svg.dataset["tool"] = tool.kind;
+    this.hideGhost();
+    this.onChange();
+  }
+
+  /** Arrow keys: turn the ghost while placing, or else the selection. +1 is counter-clockwise. */
   rotate(turns: number) {
+    const t = this.current;
+    if (t.kind === "place") {
+      t.rotation += turns;
+      this.showGhost();
+      return;
+    }
     const about = this.selectionCenter();
     if (!this.doc || this.gesture || !about) return;
     const ids = new Set(this.selection);
     rotateElements(this.doc, ids, turns, about);
-    this.history.push(new RotateEdit(this.doc, ids, turns, about));
-    this.redraw();
+    this.commit(new RotateEdit(this.doc, ids, turns, about));
   }
 
-  /** Flips the selection over the horizontal line through its centre: SelectionTool.Flip. */
   flip() {
+    const t = this.current;
+    if (t.kind === "place") {
+      t.flip = !t.flip;
+      this.showGhost();
+      return;
+    }
     const about = this.selectionCenter();
     if (!this.doc || this.gesture || !about) return;
     const ids = new Set(this.selection);
     flipElements(this.doc, ids, about[1]);
-    this.history.push(new FlipEdit(this.doc, ids, about[1]));
-    this.redraw();
+    this.commit(new FlipEdit(this.doc, ids, about[1]));
+  }
+
+  selectAll() {
+    if (!this.doc) return;
+    this.select(
+      this.doc.elements.filter((e) => e.kind !== "raw").map((e) => e.id),
+      true,
+    );
+  }
+
+  /** Escape: cancels a gesture in progress; else leaves the symbol or wire tool; else clears the selection. */
+  escape() {
+    if (this.gesture) this.cancel();
+    else if (this.current.kind !== "select") this.setTool({ kind: "select" });
+    else this.select([], true);
   }
 
   /** SelectionTool.GetSelectionCenter: the middle of the selection's bounds, in integers (C#'s division truncates
@@ -137,19 +292,13 @@ export class Editor {
     return snap([Math.trunc((bounds.min[0] + bounds.max[0]) / 2), Math.trunc((bounds.min[1] + bounds.max[1]) / 2)]);
   }
 
-  /** Escape: cancels a gesture in progress, or else clears the selection. */
-  escape() {
-    if (this.gesture) this.cancel();
-    else this.select([], true);
-  }
-
   // ---- Hit testing ----
 
   /** The element under the pointer, by the SVG it drew (symbols are drawn over wires, so they win). By position, not
    * the event's target: while the pointer is captured, clicks are aimed at the SVG itself. */
   private hitAt(e: MouseEvent): string | null {
     const target = document.elementFromPoint(e.clientX, e.clientY);
-    return (target?.closest?.("[data-id]") as SVGElement | null)?.dataset["id"] ?? null;
+    return (target?.closest?.("#drawing [data-id]") as SVGElement | null)?.dataset["id"] ?? null;
   }
 
   /** SchematicControl.InRect: the symbols whose bounds and the wires whose segments touch the rectangle. */
@@ -189,6 +338,22 @@ export class Editor {
     if (changed) this.redraw();
   }
 
+  // ---- The ghost ----
+
+  private ghostSymbol(t: Extract<Tool, { kind: "place" }>, at: Point): SymbolElement {
+    return { id: "", kind: "symbol", position: at, rotation: t.rotation, flip: t.flip, component: t.component };
+  }
+
+  private showGhost() {
+    const t = this.current;
+    if (t.kind !== "place" || !t.at) return this.hideGhost();
+    drawGhost(this.ghost, t.layout, mappingOf(this.ghostSymbol(t, t.at)));
+  }
+
+  private hideGhost() {
+    this.ghost.replaceChildren();
+  }
+
   // ---- The gestures ----
 
   private point(e: PointerEvent): Point {
@@ -198,10 +363,19 @@ export class Editor {
   private pointerDown(e: PointerEvent) {
     if (!this.doc || this.view.panning || e.button !== 0 || this.gesture) return;
     e.preventDefault();
-    this.svg.setPointerCapture(e.pointerId);
     const at = this.point(e);
-    const hit = this.hitAt(e);
     const ctrl = e.ctrlKey || e.metaKey;
+    const tool = this.current;
+    if (tool.kind === "place") {
+      void this.place(tool, at, ctrl);
+      return;
+    }
+    this.svg.setPointerCapture(e.pointerId);
+    if (tool.kind === "wire") {
+      this.gesture = { kind: "wire", pointer: e.pointerId, mouse: [at] };
+      return;
+    }
+    const hit = this.hitAt(e);
     if (hit && this.selection.has(hit) && !ctrl) {
       this.gesture = { kind: "move", pointer: e.pointerId, ids: new Set(this.selection), last: at, total: [0, 0] };
       this.svg.classList.add("moving");
@@ -210,7 +384,32 @@ export class Editor {
     }
   }
 
+  /** SymbolTool.MouseDown: places a copy of the ghost, selects it, and returns to the selection tool unless Ctrl is
+   * held. The copy's layout is fetched first: a renamed copy's differs (its name is drawn). */
+  private async place(tool: Extract<Tool, { kind: "place" }>, at: Point, keepTool: boolean) {
+    if (!this.doc) return;
+    const symbol: SymbolElement = {
+      ...this.ghostSymbol(tool, at),
+      id: this.newId(),
+      component: structuredClone(tool.component),
+    };
+    nameAdded(this.doc, [symbol]);
+    try {
+      await this.layouts.fetch([symbol.component]);
+    } catch (e) {
+      this.onError((e as Error).message);
+      return;
+    }
+    this.addElements([symbol], "Add");
+    if (!keepTool) this.setTool({ kind: "select" });
+  }
+
   private pointerMove(e: PointerEvent) {
+    const tool = this.current;
+    if (tool.kind === "place" && !this.view.panning) {
+      tool.at = this.point(e);
+      this.showGhost();
+    }
     const g = this.gesture;
     if (!g || e.pointerId !== g.pointer || !this.doc) return;
     if (e.buttons & 2) {
@@ -226,10 +425,15 @@ export class Editor {
       g.total = [g.total[0] + by[0], g.total[1] + by[1]];
       g.last = at;
       this.redraw();
+    } else if (g.kind === "wire") {
+      const last = g.mouse[g.mouse.length - 1]!;
+      if (last[0] !== at[0] || last[1] !== at[1]) g.mouse.push(at);
+      this.wirePreview.setAttribute("points", findWirePath(g.mouse).map((p) => p.join(",")).join(" "));
+      this.wirePreview.style.display = "";
     } else {
       g.to = at;
       const r = normalize(g.from, g.to);
-      Object.assign(this.band.style, { display: g.from[0] === g.to[0] && g.from[1] === g.to[1] ? "none" : "" });
+      this.band.style.display = g.from[0] === g.to[0] && g.from[1] === g.to[1] ? "none" : "";
       this.band.setAttribute("x", String(r.min[0]));
       this.band.setAttribute("y", String(r.min[1]));
       this.band.setAttribute("width", String(r.max[0] - r.min[0]));
@@ -240,15 +444,15 @@ export class Editor {
   private pointerUp(e: PointerEvent) {
     const g = this.gesture;
     if (!g || e.pointerId !== g.pointer || e.button !== 0) return;
-    this.gesture = null;
-    this.svg.classList.remove("moving");
-    this.band.style.display = "none";
+    this.endGesture();
     if (!this.doc) return;
     if (g.kind === "move") {
       if (g.total[0] !== 0 || g.total[1] !== 0) this.history.push(new MoveEdit(this.doc, g.ids, g.total));
-      return;
-    }
-    if (g.from[0] === g.to[0] && g.from[1] === g.to[1]) {
+    } else if (g.kind === "wire") {
+      // WireTool.MouseUp: the routed path, joined to what it meets.
+      this.drawWire(findWirePath(g.mouse));
+      if (!(e.ctrlKey || e.metaKey)) this.setTool({ kind: "select" });
+    } else if (g.from[0] === g.to[0] && g.from[1] === g.to[1]) {
       // A click: ToggleSelect of the element under the pointer (or of nothing, which clears the selection).
       this.select(g.hit ? [g.hit] : [], !g.additive, true);
     } else {
@@ -257,21 +461,29 @@ export class Editor {
   }
 
   private doubleClick(e: MouseEvent) {
-    if (!this.doc || e.button !== 0) return;
+    if (!this.doc || e.button !== 0 || this.current.kind !== "select") return;
     const hit = this.hitAt(e);
     const symbol = this.doc.elements.find((x): x is SymbolElement => x.id === hit && x.kind === "symbol");
     if (!symbol) return;
     const type = symbol.component.type;
-    this.select(this.doc.elements.filter((x) => x.kind === "symbol" && x.component.type === type).map((x) => x.id), false);
+    this.select(
+      this.doc.elements.filter((x) => x.kind === "symbol" && x.component.type === type).map((x) => x.id),
+      false,
+    );
   }
 
-  /** Abandons a gesture: a move goes back where it started; a rubber band selects nothing. */
-  private cancel() {
-    const g = this.gesture;
-    if (!g) return;
+  private endGesture() {
     this.gesture = null;
     this.svg.classList.remove("moving");
     this.band.style.display = "none";
+    this.wirePreview.style.display = "none";
+  }
+
+  /** Abandons a gesture: a move goes back where it started; a rubber band selects nothing; a wire isn't drawn. */
+  private cancel() {
+    const g = this.gesture;
+    if (!g) return;
+    this.endGesture();
     if (g.kind === "move" && this.doc && (g.total[0] !== 0 || g.total[1] !== 0)) {
       moveElements(this.doc, g.ids, [-g.total[0], -g.total[1]]);
       this.redraw();

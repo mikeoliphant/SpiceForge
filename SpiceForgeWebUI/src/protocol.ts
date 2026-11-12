@@ -86,6 +86,45 @@ export interface FileRead {
   messages: { level: string; message: string }[];
 }
 
+// ---- The catalogue (WebSocketApi.md, Catalogue) ----
+
+export interface CatalogEntry {
+  name: string;
+  description: string | null;
+  component: ComponentData;
+  layout: Layout;
+}
+
+export interface CatalogCategory {
+  name: string;
+  expanded: boolean;
+  entries: string[];
+  children: CatalogCategory[];
+}
+
+export interface PropertyDescriptor {
+  name: string;
+  category: string;
+  description: string | null;
+  kind: "text" | "number" | "integer" | "boolean" | "enum" | "quantity";
+  units: string | null;
+  default: string | null;
+  readOnly: boolean;
+  values?: string[];
+}
+
+export interface Catalog {
+  categories: CatalogCategory[];
+  entries: Record<string, CatalogEntry>;
+  types: Record<string, { name: string; properties: PropertyDescriptor[] }>;
+}
+
+export interface ValueCheck {
+  ok: boolean;
+  value?: string;
+  message?: string;
+}
+
 export interface ApiError {
   code: string;
   message: string;

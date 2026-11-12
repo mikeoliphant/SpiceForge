@@ -817,6 +817,26 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   rotated once, a flip left 9 terminals unconnected, in LiveSPICE's own code as in the web editor. The web editor
   matches it, so files behave the same in both, and the README says how to avoid it. Fixing it (flipping x
   instead at odd rotations) would be a deliberate departure from LiveSPICE.
+- **Wire joining matches LiveSPICE's `AddWire`, checked on randomized paths.** `AddWire` lives in the WPF editor, so a
+  scratch program carried a near-verbatim copy of it (with `CoincidentWires` and `InRect`), running on LiveSPICE's
+  own `Schematic`, `Wire` and `Symbol`. It and the web editor each drew the same 60 paths, from a fixed seed, on the
+  Pro Co Rat:
+  - straight runs along existing wires, which merge and split;
+  - L-shapes between wire ends;
+  - L-shapes to arbitrary points, for crossings and T junctions.
+  Both ended with 173 wires and no unconnected terminals, and their geometry was identical on all 215 elements, in
+  the same order.
+- **Editing works end to end in the browser, checked by script on copies of the Pro Co Rat.**
+  - Placing: a resistor placed from the library was named R10 (R1 to R9 exist), turned by the arrow keys, and
+    selected.
+  - Wiring: a wire drawn from its terminal joined it, and the red terminals went from 2 to 1.
+  - Values: "4.7k" was stored as "4.7 kΩ"; "banana" and a clashing name were refused, with the reason shown.
+  - Clipboard: copy and paste made R11 at the same place, and Delete removed it.
+  - Undo: four undos brought the document back to its original 105 elements.
+  - Multiple selection: R1 and R4 together showed their different resistances blank, and "22k" set both in one
+    undo step.
+- **Browsers keep some of LiveSPICE's shortcuts.** Ctrl+W and Ctrl+T can't be taken by a page, so the tools also
+  have plain letters (W, G, P, R, C, L, T). LiveSPICE's other Ctrl shortcuts work too.
 
 ## Open issues
 
