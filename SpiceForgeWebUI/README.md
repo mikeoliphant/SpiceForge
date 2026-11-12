@@ -63,6 +63,11 @@ dotnet run -c Release --project SpiceForge.Package [-- --version 0.1.0] [--rid w
 
 Packages are unsigned: Windows SmartScreen asks before the installer or the zip's server runs for the first time.
 
+On GitHub, the **Build** workflow (`.github/workflows/build.yml`) runs on pull requests, or by hand: it builds the
+solution (Windows), runs `SpiceForge.Validate server` on Windows and Linux, and `processor` on Linux. The **Release**
+workflow, run by hand with a version, runs the server check, builds the three packages, and creates a GitHub release
+tagged `v<version>` with them attached and notes generated from the commits.
+
 The app's icon is `Assets/Icon/SpiceForge.svg`. `node Assets/Icon/make-icon.mjs` renders it (with headless Chrome or
 Edge) into the `.ico` the server's executable and the installer carry, and the PNGs this editor uses as its favicons
 (which its own window shows) and the Linux package includes as `spiceforge.png`.

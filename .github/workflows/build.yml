@@ -1,0 +1,74 @@
+# Builds SpiceForge and runs its checks: on pull requests, and by hand (Actions > Build > Run workflow).
+name: Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The whole solution, the plugin included, which needs Windows.
+  solution:
+    name: Solution (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet tool restore
+      - run: dotnet build SpiceForge.slnx -c Release
+
+  # The server and its editor, checked on both platforms: the JSON document round trip, every operation against a
+  # running server (audio on the internal clock), simulation against the processor run offline, and the web editor's
+  # connectivity against the server's (its conformance test).
+  server:
+    name: Server checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: SpiceForgeWebUI/package-lock.json
+      - name: Build the web editor
+        working-directory: SpiceForgeWebUI
+        run: |
+          npm ci
+          npm run build
+      - name: Build the server and the checks
+        run: |
+          dotnet build SpiceForgeServer -c Release
+          dotnet build SpiceForge.Validate -c Release
+      - name: SpiceForge.Validate server
+        run: dotnet run --project SpiceForge.Validate -c Release --no-build -- server
+
+  # The processor against the compiled engine it wraps, on every test circuit.
+  processor:
+    name: Processor checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet build SpiceForge.Validate -c Release
+      - name: SpiceForge.Validate processor
+        run: dotnet run --project SpiceForge.Validate -c Release --no-build -- processor

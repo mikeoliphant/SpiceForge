@@ -1,0 +1,75 @@
+# Makes a release, by hand (Actions > Release > Run workflow, with a version): checks the server, builds the packages
+# (the Windows installer and zip, the Linux tarball), and creates a GitHub release tagged v<version> on this commit,
+# with notes generated from the commits since the last release and the packages attached.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, without the v (0.2.0)"
+        required: true
+      prerelease:
+        description: "Mark it a pre-release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Check the version
+        shell: pwsh
+        run: |
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { throw "The version '$env:VERSION' isn't like 0.2.0 (or 0.2.0-beta.1)." }
+          if (git tag --list "v$env:VERSION") { throw "There's already a tag v$env:VERSION." }
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: SpiceForgeWebUI/package-lock.json
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+
+      - name: Build the web editor
+        working-directory: SpiceForgeWebUI
+        run: |
+          npm ci
+          npm run build
+
+      # A release only of a build that passes the server's checks.
+      - name: SpiceForge.Validate server
+        run: |
+          dotnet build SpiceForgeServer -c Release
+          dotnet build SpiceForge.Validate -c Release
+          dotnet run --project SpiceForge.Validate -c Release --no-build -- server
+
+      - name: Build the packages
+        run: dotnet run -c Release --project SpiceForge.Package -- --version ${{ inputs.version }} --skipWeb --requireInstaller
+
+      - name: Create the release
+        shell: pwsh
+        run: |
+          $assets = Get-ChildItem artifacts -File | Where-Object { $_.Name -like "SpiceForge-$env:VERSION*" } | ForEach-Object { $_.FullName }
+          if ($assets.Count -ne 3) { throw "Expected 3 packages, found: $($assets -join ', ')" }
+          $flags = @()
+          if ("${{ inputs.prerelease }}" -eq "true") { $flags += "--prerelease" }
+          gh release create "v$env:VERSION" @assets --target "$env:GITHUB_SHA" --title "SpiceForge $env:VERSION" --generate-notes @flags

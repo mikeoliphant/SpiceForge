@@ -6,6 +6,7 @@ using System.IO.Compression;
 // component libraries and examples.
 //
 //   dotnet run -c Release --project SpiceForge.Package [-- --version 0.1.0] [--rid win-x64,linux-x64] [--skipWeb]
+//       [--requireInstaller]   fail, rather than skip the installer, without Inno Setup (for releases)
 //
 // - win-x64: SpiceForge-<version>-win-x64.zip (portable), and SpiceForge-<version>-setup.exe when Inno Setup's
 //   compiler (ISCC) is installed. The server is built without a console window, and logs to server.log in its
@@ -18,6 +19,7 @@ string repo = FindRepository();
 string version = Option("--version") ?? "0.1.0";
 string[] rids = (Option("--rid") ?? "win-x64,linux-x64").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 bool skipWeb = args.Contains("--skipWeb");
+bool requireInstaller = args.Contains("--requireInstaller");
 string artifacts = Path.Combine(repo, "artifacts");
 Directory.CreateDirectory(artifacts);
 
@@ -73,6 +75,8 @@ foreach (string rid in rids)
             Step("Building the installer");
             Run(iscc, $"/Q /DAppVersion={version} \"/DSourceDir={stage}\" \"/DOutputDir={artifacts}\" \"{Path.Combine(repo, "SpiceForge.Package", "SpiceForge.iss")}\"", repo);
         }
+        else if (requireInstaller)
+            Fail("Inno Setup's compiler (ISCC) isn't installed, and the installer is required.");
         else
             Console.WriteLine("  Inno Setup's compiler (ISCC) isn't installed, so there's no installer; the zip is complete. " +
                 "Install it from https://jrsoftware.org/isinfo.php (or: winget install JRSoftware.InnoSetup).");
