@@ -29,6 +29,7 @@ internal static class ServerCheck
     {
         problems = 0;
         RoundTrip(testsDir);
+        OutputSignals(testsDir).GetAwaiter().GetResult();
         Live(repo, testsDir).GetAwaiter().GetResult();
         Console.WriteLine($"{problems} problem(s).");
         return problems == 0 ? 0 : 1;
@@ -146,6 +147,114 @@ internal static class ServerCheck
         {
             try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
             try { Directory.Delete(scratch, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// Output signals, in process: a simulation of the Rat given three output channels, as a device would open them, and
+    /// run block by block here, with no sound. Out 1 plays the Speakers; Out 2 the voltage across the Speaker (its
+    /// output times its 0 dBFS voltage); Out 3 the voltage across the Input (the 0.5 V test sine, through the
+    /// resampling filters). Each must play its own, and a change must rebuild.
+    /// </summary>
+    private static async Task OutputSignals(string testsDir)
+    {
+        Console.WriteLine("=== Output signals, in process");
+        string scratch = Path.Combine(Path.GetTempPath(), "SpiceForgeOutputCheck-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(scratch);
+        try
+        {
+            using var context = new SpiceForgeServer.ServerContext(new SpiceForgeServer.ServerOptions
+            {
+                SettingsPath = Path.Combine(scratch, "settings.json"),
+                UserFolder = scratch,
+            });
+            string rat = Path.Combine(testsDir, "Examples", "Pro Co Rat.schx");
+            JsonObject document = SchxConverter.ToDocument(XDocument.Load(rat).Root!, SchxConverter.ResolveComponent);
+            JsonObject check = SpiceForgeServer.Simulating.Simulation.Check(document);
+            JsonObject[] elements = document["elements"]!.AsArray().OfType<JsonObject>().ToArray();
+            string IdOf(string type) => elements.First(e => e["component"]?["type"]?.GetValue<string>().StartsWith(type) == true)["id"]!.GetValue<string>();
+            string speaker = IdOf("Circuit.Speaker"), input = IdOf("Circuit.Input"), pot = IdOf("Circuit.Potentiometer");
+
+            var sim = new SpiceForgeServer.Simulating.Simulation(context, 1, "Rat", document, check, context.Settings.SimulationDefaults);
+            var format = new SpiceForgeServer.Audio.AudioFormat(48000, 256, Array.Empty<string>(), new[] { "Out 1", "Out 2", "Out 3" });
+            sim.Prepare(format);
+            sim.Start();
+            var block = SpiceForgeServer.Audio.AudioBlock.For(format);
+            async Task<bool> Running()
+            {
+                for (int i = 0; i < 600; i++)
+                {
+                    if (sim.ToJson()["state"]?.GetValue<string>() == "running")
+                        return true;
+                    await Task.Delay(100);
+                }
+                return false;
+            }
+            // A second of each channel's peak, after a second to settle.
+            double[] Peaks()
+            {
+                var peaks = new double[3];
+                var outs = new List<float[]>[] { new(), new(), new() };
+                for (int b = 0; b < 2 * 48000 / 256; b++)
+                {
+                    block.Frames = 256;
+                    sim.Process(block);
+                    if (b >= 48000 / 256)
+                        for (int o = 0; o < 3; o++)
+                        {
+                            outs[o].Add(block.Outputs[o][..256]);
+                            for (int n = 0; n < 256; n++)
+                                peaks[o] = Math.Max(peaks[o], Math.Abs(block.Outputs[o][n]));
+                        }
+                }
+                lastOuts = outs.Select(l => l.SelectMany(x => x).ToArray()).ToArray();
+                return peaks;
+            }
+            Check(await Running(), "the simulation builds");
+            Check(Code(() => sim.SetOutput("Out 9", new JsonObject { ["speakers"] = true })) == "invalid_value", "a channel that isn't open is invalid_value");
+            Check(Code(() => sim.SetOutput("Out 2", new JsonObject { ["voltageOf"] = new JsonArray(pot) })) == "invalid_value", "a pot isn't a two-terminal component: invalid_value");
+            Check(Code(() => sim.SetOutput("Out 2", new JsonObject { ["expression"] = "V" })) == "unsupported", "an expression is unsupported, for now");
+            double[] before = Peaks();
+            Check(before.All(p => p > 0.01) && before[0] == before[1] && before[1] == before[2], $"every channel plays the Speakers at first: peaks {string.Join(", ", before.Select(p => p.ToString("F4")))}");
+
+            sim.SetOutput("Out 2", new JsonObject { ["voltageOf"] = new JsonArray(speaker) });
+            sim.SetOutput("out 3", new JsonObject { ["voltageOf"] = new JsonArray(input) });
+            Check(await Running(), "setting a signal rebuilds");
+            double[] after = Peaks();
+            float[][] outs = lastOuts!;
+            // The Speaker's output is its voltage over its 0 dBFS voltage: Out 2 is Out 1 times that, sample for sample.
+            double fullScale = after[1] / after[0], worst = 0;
+            for (int n = 0; n < outs[0].Length; n++)
+                worst = Math.Max(worst, Math.Abs(outs[1][n] - outs[0][n] * fullScale));
+            Check(worst < 1e-5 * Math.Max(1, after[1]), $"Out 2 plays the voltage across the Speaker: its output times {fullScale:G4} V, worst difference {worst:E1}");
+            Check(Math.Abs(after[2] - 0.5) < 0.01 && after[0] == before[0], $"Out 3 plays the voltage across the Input, the 0.5 V sine (peak {after[2]:F4} V); Out 1 the Speakers still");
+            JsonArray listed = sim.ToJson()["outputs"]!.AsArray();
+            Check(listed[1]?["signal"]?["voltageOf"]?[0]?.GetValue<string>() == speaker && listed[0]?["signal"]?["speakers"]?.GetValue<bool>() == true,
+                "sim.get lists each channel's signal");
+            sim.SetOutput("Out 3", new JsonObject { ["speakers"] = true });
+            await Running();
+            double[] reset = Peaks();
+            Check(reset[2] == reset[0], "setting the Speakers back puts the channel back");
+            sim.Stop();
+        }
+        finally
+        {
+            try { Directory.Delete(scratch, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    private static float[][]? lastOuts;
+
+    private static string? Code(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (SpiceForgeServer.Protocol.ApiException ex)
+        {
+            return ex.Code;
         }
     }
 

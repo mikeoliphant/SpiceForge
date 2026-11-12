@@ -1014,6 +1014,16 @@ interface: a driver opens a stream for one client, prepares it while stopped, an
   simulation's don't mix. Checked in headless Chrome against ASIO4ALL with its outputs unticked: the dialog read the
   device, applied 128-sample buffers, the Rat played the mic input at 21% of real time, and the test was refused
   while it ran.
+- **Output signals are extra engine outputs, resampled as the Speakers are.** LiveSPICE's pick tool plays the
+  voltage across two-terminal components, summed, in volts. `SchematicProcessorOptions.Signals` takes each signal as
+  a weighted sum of node voltages; their nodes become outputs after the Speakers' (and before the probes'), go
+  through the same oversampler, and are combined per sample into `SignalSamples`. With no signals the engine's outputs
+  are exactly as before, so the plugin's path is unchanged: `SpiceForge.Validate processor` passes on every test
+  circuit, with the audio output bit-identical and a signal across the Speaker equal to its output (0 difference:
+  the Speakers' cathodes are grounded), probes off and on. The server resolves an element to its Anode and Cathode
+  nodes through `circuit.check`, as probes do, and each channel's signal is kept by name. Checked in process on the
+  Rat with three output channels driven block by block: Out 2 (across the Speaker) equals Out 1 (the Speakers) times
+  its 1 V full scale, exactly, and Out 3 (across the Input) peaks at the 0.5 V test sine.
 - **Run the server in Release: a Debug build simulates four to five times slower.** The SD-1 read 33% of real time
   in the server against far less in the VST. `SchematicProcessor` alone, at 48 kHz, 4×, cap 32, sinc, probes on:
   6% of real time in Release and 25 to 27% in Debug; the Rat 20% against 42 to 44%. The compiled step is a dynamic
@@ -1068,8 +1078,11 @@ interface: a driver opens a stream for one client, prepares it while stopped, an
 - A simulation's remembered setup is per file and per browser; an untitled schematic's isn't remembered.
 - Audio runs on ASIO (Windows) or the internal clock; JACK, through JackSharpCore, is next. JackSharpCore's process
   callback allocates on every cycle (arrays, buffers, a copy of each port), so it needs a span-based path before it
-  can carry audio without the GC pauses above. `sim.setOutput` still answers `unsupported`: every output plays the
-  Speakers.
+  can carry audio without the GC pauses above.
+- Output signals can be the Speakers or the voltage across picked two-terminal components, not an expression
+  (`sim.setOutput` answers `unsupported` for one): that needs a way for a client to name voltages, and evaluation
+  after the step for anything not linear in node voltages. Remembered output signals are put back a few seconds
+  after a simulation starts, so a change made in those seconds can be overridden.
 - A rebuild at the smallest buffers (96 kHz, 64 samples) can still glitch, from the build's own garbage collections
   (see Audio I/O). Options not yet tried: `GCSettings.LatencyMode = SustainedLowLatency` while a device runs, a
   `SchematicProcessor` method that sizes its buffers on the build thread so the first block allocates nothing, and

@@ -49,6 +49,8 @@ public sealed class Simulation : IAudioClient
     private volatile ProbeSet probeSnapshot = ProbeSet.Empty;
     private int nextProbe = 1;
     private InputSource? source;
+    // What each output channel plays, by channel name, where it isn't the Speakers.
+    private readonly Dictionary<string, OutputSignal> outputSignals = new(StringComparer.OrdinalIgnoreCase);
     private volatile Func<double, double>? sourceFunction;
     private volatile int sourceChannel = -1;   // The device input driving the Input, or -1.
     private volatile float inputGain = 1, outputGain = 1;
@@ -64,6 +66,7 @@ public sealed class Simulation : IAudioClient
     private long dropouts;
     private long busyTicks;
     private double inputPeak, outputPeak;
+    private double[] outputPeaks = Array.Empty<double>();   // One per output channel, replaced by Prepare.
     private volatile bool scopeWatched;
     private volatile SchematicProcessor? failed;   // A build the audio thread has given up on.
     private Failure? pendingFailure;
@@ -72,6 +75,15 @@ public sealed class Simulation : IAudioClient
     private sealed record InputSource(JsonObject Json, Func<double, double>? Function, string? Channel);
 
     private sealed record Failure(SchematicProcessor Processor, bool Diverged, string Message);
+
+    /// <summary>A channel's signal other than the Speakers': the voltage across two-terminal elements, summed.</summary>
+    private sealed record OutputSignal(JsonObject Json, string[] Elements);
+
+    /// <summary>Which of a build's signals each output channel plays (-1: the Speakers), with the build and its
+    /// signals' channels, so the audio thread never reads one build's signals by another's map.</summary>
+    private sealed record OutputLookup(SchematicProcessor? Processor, string[] Channels, int[] Map);
+
+    private volatile OutputLookup outputMap = new(null, Array.Empty<string>(), Array.Empty<int>());
 
     /// <summary>The probes as the audio thread reads them: their nodes, and the streams they go out on. A new set is
     /// made whenever the probes change, so the scope can tell where one set ends.</summary>
@@ -179,6 +191,9 @@ public sealed class Simulation : IAudioClient
             document = newDocument;
             check = newCheck;
             ReattachProbes();
+            foreach (var (channel, signal) in outputSignals.ToList())
+                if (signal.Elements.Any(e => TwoTerminalNodes(e) == null))
+                    outputSignals.Remove(channel);
         }
         BroadcastProbes();
         _ = BuildAsync();
@@ -201,6 +216,8 @@ public sealed class Simulation : IAudioClient
         Dictionary<string, int> switches;
         bool first, needSource;
         AudioFormat device = format;
+        string[] signalChannels;
+        List<IReadOnlyList<(string, double)>> signals;
         lock (sync)
         {
             if (stopping)
@@ -212,6 +229,8 @@ public sealed class Simulation : IAudioClient
             switches = new Dictionary<string, int>(switchPositions, StringComparer.OrdinalIgnoreCase);
             first = processor == null;
             needSource = source == null;
+            signalChannels = outputSignals.Keys.ToArray();
+            signals = signalChannels.Select(c => (IReadOnlyList<(string, double)>)Terms(outputSignals[c])).ToList();
         }
         SetState(first ? "building" : "rebuilding");
 
@@ -220,7 +239,7 @@ public sealed class Simulation : IAudioClient
             CapturingLog log = context.Log.For(Id);
             var (built, initialSource) = await Engine.Run(() =>
             {
-                SchematicProcessor p = Create(doc, options, pots, switches, log, device.SampleRate);
+                SchematicProcessor p = Create(doc, options, pots, switches, log, device.SampleRate, signals);
                 // The first time, the Input plays the device's first input, or without one a 220 Hz sine at half its
                 // full scale, until the client sets a source.
                 InputSource? initial = null;
@@ -251,6 +270,7 @@ public sealed class Simulation : IAudioClient
                     if (switchPositions.TryGetValue(control.Name, out int position) && position < control.Positions)
                         control.Position = position;
                 lookup = new ProbeLookup(built, built.ProbeNodes.Select((name, i) => (name, i)).ToDictionary(p => p.name, p => p.i));
+                outputMap = new OutputLookup(built, signalChannels, MapOutputs(signalChannels, format));
                 processor = built;
                 runningSince = DateTime.UtcNow;
             }
@@ -268,7 +288,8 @@ public sealed class Simulation : IAudioClient
         }
     }
 
-    private SchematicProcessor Create(JsonObject doc, JsonObject options, Dictionary<string, double> pots, Dictionary<string, int> switches, ILog log, double sampleRate)
+    private SchematicProcessor Create(JsonObject doc, JsonObject options, Dictionary<string, double> pots, Dictionary<string, int> switches, ILog log, double sampleRate,
+        IReadOnlyList<IReadOnlyList<(string, double)>> signals)
     {
         XElement xml = SchxConverter.ToSchematic(doc);
         string title = Title;
@@ -291,6 +312,7 @@ public sealed class Simulation : IAudioClient
             IgnoreUnknownControls = true,
             AllowNoInputOrSpeaker = true,
             Probes = true,
+            Signals = signals,
             Log = log,
         });
     }
@@ -411,11 +433,12 @@ public sealed class Simulation : IAudioClient
             ["pots"] = pots,
             ["switches"] = switches,
             ["inputs"] = inputs,
-            // Every output channel plays the Speakers. Without a device there are none: the output only drives the meters.
+            // Each output channel plays the Speakers unless set otherwise. Without a device there are none: the output only
+            // drives the meters.
             ["outputs"] = Json.Array(format.Outputs.Select(channel => (JsonNode?)new JsonObject
             {
                 ["channel"] = channel,
-                ["signal"] = new JsonObject { ["speakers"] = true },
+                ["signal"] = outputSignals.TryGetValue(channel, out OutputSignal? signal) ? signal.Json.DeepClone() : new JsonObject { ["speakers"] = true },
             })),
             ["gains"] = new JsonObject { ["inputDb"] = inputDb, ["outputDb"] = outputDb },
         };
@@ -574,6 +597,83 @@ public sealed class Simulation : IAudioClient
         BroadcastControls();
     }
 
+    // ---- Output signals ----
+
+    /// <summary><c>sim.setOutput</c>: what an open output channel plays, the Speakers or the voltage across two-terminal
+    /// elements (summed, in volts: 1 V is full scale, as LiveSPICE's pick tool does it). A change rebuilds.</summary>
+    public void SetOutput(string channel, JsonObject signalJson)
+    {
+        lock (sync)
+        {
+            string name = format.Outputs.FirstOrDefault(o => string.Equals(o, channel, StringComparison.OrdinalIgnoreCase))
+                ?? throw new ApiException(ErrorCodes.InvalidValue, format.Outputs.Count > 0
+                    ? $"The audio device has no output '{channel}' open. Its outputs are: {string.Join(", ", format.Outputs)}."
+                    : "No audio outputs are open: configure the audio device's outputs.", Json.Strings(format.Outputs));
+            if (signalJson["speakers"] is JsonValue)
+                outputSignals.Remove(name);
+            else if (signalJson["voltageOf"] is JsonArray list)
+            {
+                string[] elements = list.Select(e => e is JsonValue v && v.TryGetValue(out string? id) ? id
+                    : throw new ApiException(ErrorCodes.InvalidValue, "voltageOf lists element ids.")).Distinct().ToArray();
+                if (elements.Length == 0)
+                    throw new ApiException(ErrorCodes.InvalidValue, "voltageOf needs at least one element.");
+                foreach (string element in elements)
+                    if (TwoTerminalNodes(element) == null)
+                        throw new ApiException(ErrorCodes.InvalidValue,
+                            $"{NameOf(element)} isn't a two-terminal component connected at both ends, so it has no voltage across it to play.");
+                outputSignals[name] = new OutputSignal(new JsonObject { ["voltageOf"] = Json.Strings(elements) }, elements);
+            }
+            else if (signalJson["expression"] != null)
+                throw new ApiException(ErrorCodes.Unsupported, "Output expressions aren't supported yet: use speakers or voltageOf.");
+            else
+                throw new ApiException(ErrorCodes.InvalidValue, "A signal is { \"speakers\": true } or { \"voltageOf\": [ids] }.");
+        }
+        BroadcastControls();
+        _ = BuildAsync();
+    }
+
+    /// <summary>An element's Anode and Cathode nodes, from <c>circuit.check</c>'s nodes; null unless it's a two-terminal
+    /// component with both ends connected. Called under sync.</summary>
+    private (string Anode, string Cathode)? TwoTerminalNodes(string element)
+    {
+        string? anode = null, cathode = null;
+        foreach (JsonObject node in (check["nodes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+            foreach (JsonObject terminal in (node["terminals"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+            {
+                if (terminal["element"]?.GetValue<string>() != element)
+                    continue;
+                switch (terminal["terminal"]?.GetValue<string>())
+                {
+                    case "Anode": anode = node["name"]?.GetValue<string>(); break;
+                    case "Cathode": cathode = node["name"]?.GetValue<string>(); break;
+                    default: return null;   // A terminal a two-terminal component doesn't have.
+                }
+            }
+        return anode != null && cathode != null ? (anode, cathode) : null;
+    }
+
+    // A signal's terms for the processor: each element's Anode minus its Cathode. Called under sync.
+    private List<(string, double)> Terms(OutputSignal signal)
+    {
+        var terms = new List<(string, double)>();
+        foreach (string element in signal.Elements)
+            if (TwoTerminalNodes(element) is var (anode, cathode))
+            {
+                terms.Add((anode, 1));
+                terms.Add((cathode, -1));
+            }
+        return terms;
+    }
+
+    // The element's Name property, for messages, or its id.
+    private string NameOf(string element) =>
+        (document["elements"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(e => e["id"]?.GetValue<string>() == element)
+            ?["component"]?["properties"]?["Name"]?.GetValue<string>() ?? element;
+
+    // For each open output channel, the index of its signal among a build's, or -1 for the Speakers.
+    private static int[] MapOutputs(string[] signalChannels, AudioFormat device) =>
+        device.Outputs.Select(o => Array.FindIndex(signalChannels, c => string.Equals(c, o, StringComparison.OrdinalIgnoreCase))).ToArray();
+
     // ---- Probes ----
 
     /// <summary>The node a target names, from <c>circuit.check</c>'s nodes, or null. Called under sync.</summary>
@@ -673,8 +773,13 @@ public sealed class Simulation : IAudioClient
         inputs = new[] { new double[newFormat.MaxFrames] };
         outputs = new[] { new double[newFormat.MaxFrames] };
         format = newFormat;
+        outputPeaks = new double[newFormat.Outputs.Count];
         lock (sync)
+        {
             sourceChannel = ChannelIndex(source?.Channel, newFormat);
+            OutputLookup o = outputMap;
+            outputMap = o with { Map = MapOutputs(o.Channels, newFormat) };
+        }
         if (!started || stopping)
             return;
         if (newFormat.SampleRate != old.SampleRate)
@@ -751,12 +856,23 @@ public sealed class Simulation : IAudioClient
             Silence(block);
             return;
         }
-        // Every output channel plays the Speakers.
+        // Each output channel plays its signal: the Speakers, or one of the build's signals.
+        OutputLookup map = outputMap;
+        double[] peaks = outputPeaks;
         for (int o = 0; o < block.Outputs.Length; o++)
         {
+            int signal = map.Processor == p && o < map.Map.Length ? map.Map[o] : -1;
+            double[] from = signal >= 0 && signal < p.SignalSamples.Length ? p.SignalSamples[signal] : output;
             float[] to = block.Outputs[o];
+            double peak = 0;
             for (int n = 0; n < frames; n++)
-                to[n] = (float)(output[n] * outGain);
+            {
+                double x = from[n] * outGain;
+                to[n] = (float)x;
+                peak = Math.Max(peak, Math.Abs(x));
+            }
+            if (o < peaks.Length)
+                Accumulate.Max(ref peaks[o], peak);
         }
         Accumulate.Max(ref inputPeak, blockIn);
         Accumulate.Max(ref outputPeak, blockOut);
@@ -814,6 +930,7 @@ public sealed class Simulation : IAudioClient
         var clock = Stopwatch.StartNew();
         double nextLevels = 0, lastLevels = 0, nextStats = 1, statsSince = 0;
         double shownIn = 0, shownOut = 0;
+        double[] shownOutputs = Array.Empty<double>();
         SchematicProcessor? statsOf = null;
         long cappedBefore = 0;
         while (!stopping)
@@ -842,11 +959,19 @@ public sealed class Simulation : IAudioClient
                 nextLevels = now + 1.0 / LevelRate;
                 shownIn = Math.Max(shownIn * decay, Interlocked.Exchange(ref inputPeak, 0));
                 shownOut = Math.Max(shownOut * decay, Interlocked.Exchange(ref outputPeak, 0));
+                double[] peaks = outputPeaks;
+                if (shownOutputs.Length != peaks.Length)
+                    shownOutputs = new double[peaks.Length];
+                for (int o = 0; o < peaks.Length; o++)
+                    shownOutputs[o] = Math.Max(shownOutputs[o] * decay, Interlocked.Exchange(ref peaks[o], 0));
                 if (p != null)
                 {
+                    // Each output channel's level; without any, the Speakers'.
                     var levels = new JsonArray();
-                    for (int o = 0; o < Math.Max(1, format.Outputs.Count); o++)
+                    if (peaks.Length == 0)
                         levels.Add(shownOut);
+                    foreach (double level in shownOutputs)
+                        levels.Add(level);
                     context.Hub.Broadcast("sim.levels", new JsonObject
                     {
                         ["sim"] = Id,

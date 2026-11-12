@@ -63,10 +63,7 @@ public sealed class Api
     private readonly Dictionary<string, Handler> handlers;
 
     // Operations the spec defines that this server doesn't do yet: they answer `unsupported` rather than `unknown_op`.
-    private static readonly string[] NotYet =
-    {
-        "sim.setOutput",
-    };
+    private static readonly string[] NotYet = Array.Empty<string>();
 
     public Api(ServerContext context)
     {
@@ -101,6 +98,7 @@ public sealed class Api
             ["sim.click"] = context.Simulations.Click,
             ["sim.setInput"] = context.Simulations.SetInput,
             ["sim.setGain"] = context.Simulations.SetGain,
+            ["sim.setOutput"] = context.Simulations.SetOutput,
             ["sim.probe"] = context.Simulations.Probe,
             ["sim.removeProbes"] = context.Simulations.RemoveProbes,
             ["sim.scope"] = context.Simulations.Scope,
@@ -122,7 +120,7 @@ public sealed class Api
         if (handlers.TryGetValue(op, out Handler? handler))
             return handler(session, args);
         if (NotYet.Contains(op))
-            throw new ApiException(ErrorCodes.Unsupported, $"'{op}' isn't implemented yet: every output plays the Speakers.");
+            throw new ApiException(ErrorCodes.Unsupported, $"'{op}' isn't implemented yet.");
         throw new ApiException(ErrorCodes.UnknownOp, $"There's no operation '{op}'.");
     }
 

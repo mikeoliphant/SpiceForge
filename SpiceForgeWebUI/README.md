@@ -151,6 +151,7 @@ double-click the edge to fit it to the controls:
 |---|---|
 | Input | What drives the Input: one of the audio device's open inputs, a preset signal in volts, or any expression in `t` (Enter applies it) |
 | Audio | The device it plays on, its rate, buffer and round-trip latency; Configure… opens the audio settings |
+| Out | A row per open output channel: what it plays, and its level. Pick, then click a two-terminal component (a resistor, capacitor, diode…) to play the voltage across it, in volts; Ctrl+click adds more to the sum. Speakers puts the channel back |
 | In, Out | Level meters against the Input's and Speakers' full scale; then the processing load |
 | Pots, switches | Sliders and buttons in the panel, and knobs and buttons on the schematic itself: drag a knob up or down, or scroll over it; double-click for the schematic's position; click a switch for its next position |
 | Engine | Oversampling, Newton's iteration cap and resampling; changing them rebuilds |

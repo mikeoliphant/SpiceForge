@@ -431,7 +431,7 @@ Events:
 At most one simulation runs on the audio device at a time.
 
 **On a device**, the Input plays the device's first open input until the client sets a source, and every open
-output plays the Speakers. `sim.setOutput` isn't implemented yet, and answers `unsupported`.
+output plays the Speakers until the client sets its signal with `sim.setOutput`.
 
 **Without an audio device** (the `None` driver, or a fallback), a simulation runs on the internal clock instead, in
 real time at the configured rate (48 kHz by default), in blocks of the configured size (256 samples by default). The
@@ -535,10 +535,15 @@ A simulation:
 - **Gains** run from −40 to +40 dB.
 - **Output `signal`** is one of:
   - `{ "speakers": true }`: the sum of the Speaker outputs (the default);
-  - `{ "voltageOf": ["e40", "e41"] }`: the sum of these two-terminal components' voltages, for the pick tool, where
-    Ctrl+click adds to the list;
-  - `{ "expression": "..." }`.
-  Changing a signal rebuilds the simulation.
+  - `{ "voltageOf": ["e40", "e41"] }`: the sum of these two-terminal components' voltages (Anode minus Cathode), in
+    volts, so 1 V is full scale, as LiveSPICE's pick tool plays them; Ctrl+click adds to the list;
+  - `{ "expression": "..." }`: not supported yet, and answers `unsupported`.
+- **`sim.setOutput`:**
+  - The channel must be one the device has open, or it fails with `invalid_value`, listing those it has.
+  - Each element must be a two-terminal component connected at both ends, or it fails with `invalid_value`.
+  - Changing a signal rebuilds the simulation. Each channel's signal is kept by its name, so it comes back when a
+    device with that channel opens again.
+  - After a `sim.update`, a signal whose elements are gone goes back to the Speakers.
 - **`sim.controls`** is broadcast after any change, with `pots`, `switches`, `inputs`, `outputs` and `gains`, so every
   client's controls follow.
 
@@ -755,10 +760,10 @@ The price of owning the document, in one list:
 - files, watching and the clipboard format;
 - `circuit.check`;
 - the log;
-- simulation, with controls, probes and the scope;
+- simulation, with controls, probes, the scope and output signals;
 - audio, on ASIO devices (Windows) or the internal clock.
 
-`sim.setOutput` answers `unsupported`: every output plays the Speakers.
+Output signals given as expressions answer `unsupported`.
 
 **Running it.** It listens on 127.0.0.1, port 8370 by default ('S' is 83 and 'F' is 70 in ASCII). The settings come
 from the command line, environment variables prefixed `SPICEFORGE_`, or `appsettings.json`:
@@ -797,8 +802,11 @@ What the server needs beyond today's SpiceForge:
 - **Probes and output signals** are extra outputs of the compiled circuit. Outputs are fixed when it's compiled, so
   adding a probe recompiles from the already-extracted system. That takes tens of milliseconds, against seconds for
   a full build, and the swap happens at a block boundary.
+- **Output signals** are weighted sums of node voltages (`SchematicProcessorOptions.Signals`): their nodes are
+  extra outputs of the compiled circuit, resampled exactly as the Speakers' are. Choosing one rebuilds, since outputs
+  are fixed when the circuit is compiled.
 - **Output expressions** that aren't linear in node voltages need evaluating after the step. `voltageOf` and
-  `speakers` are always linear.
+  `speakers` are always linear. Expressions also need a way to name voltages that a client can write: not done.
 - **Element ids:** the server maps the client's element ids to LiveSPICE's components (by name) and wires (by
   position) when it builds, to report problems, nodes, controls and probes in the client's terms.
 - **Lossless files.** A file read and then written without edits should come back unchanged, apart from formatting:

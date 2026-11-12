@@ -260,7 +260,9 @@ function updateChrome() {
     : "Simulate this schematic (F5)";
   document.title = active ? `${h.dirty ? "• " : ""}${tabName(active)} - SpiceForge` : "SpiceForge";
   selectionLabel.textContent = selected ? `${selected} selected` : "";
-  toolLabel.textContent = simulation.probing
+  toolLabel.textContent = simulation.picking !== null
+    ? `Picking what ${simulation.picking} plays: click a component (Ctrl+click adds; Esc to stop)`
+    : simulation.probing
     ? "Probing (Esc to stop)"
     : editor.tool === "place"
       ? "Placing (Esc to stop)"
@@ -823,6 +825,7 @@ window.addEventListener("keydown", (e) => {
     else simulate();
     return;
   }
+  if (e.key === "Escape" && simulation.picking !== null) return simulation.setPicking(null);
   if (e.key === "Escape" && simulation.probing) return simulation.setProbing(false);
   if (ctrl && key === "o") (handled(), buttons.open.click());
   else if (ctrl && key === "f") (handled(), showFind());

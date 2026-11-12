@@ -35,10 +35,22 @@ interface Input {
   source: { expression?: string; silence?: boolean; channel?: string };
 }
 
+/** What an output channel plays: the Speakers, or the voltage across two-terminal elements, summed. */
+interface OutputSignal {
+  speakers?: boolean;
+  voltageOf?: string[];
+}
+
+interface Output {
+  channel: string;
+  signal: OutputSignal;
+}
+
 interface Controls {
   pots: Pot[];
   switches: Switch[];
   inputs: Input[];
+  outputs: Output[];
   gains: { inputDb: number; outputDb: number };
 }
 
@@ -121,6 +133,8 @@ interface Remembered {
   timeScale: number;
   voltScale: number;
   source: { expression?: string; silence?: boolean; channel?: string } | null;
+  /** What each output channel plays, by channel name, where it isn't the Speakers. */
+  outputs?: Record<string, OutputSignal>;
   pots: Record<string, number>;
   switches: Record<string, number>;
 }
@@ -153,6 +167,8 @@ export class SimulationPanel {
   private sentVersion = 0;
   private updateTimer = 0;
   private probingNow = false;
+  /** The output channel the pick tool is choosing a signal for, or null. */
+  private pickingFor: string | null = null;
   /** Where each probe's flag is drawn, from where it was clipped on. */
   private readonly flags = new Map<string, Point>();
   private rememberTimer = 0;
@@ -175,6 +191,7 @@ export class SimulationPanel {
     expression: HTMLInputElement;
     audio: HTMLElement;
     audioButton: HTMLButtonElement;
+    outputs: HTMLElement;
     inputMeter: HTMLElement;
     outputMeter: HTMLElement;
     load: HTMLElement;
@@ -201,6 +218,7 @@ export class SimulationPanel {
       expression: h("input", { type: "text", className: "sim-expression", spellcheck: false, title: "The Input's signal, in volts, as an expression in t (seconds). Enter applies it." }),
       audio: h("span", { className: "sim-audio-text" }),
       audioButton: h("button", { textContent: "Configure…", title: "The audio device, its channels, rate and buffer size, and a test" }),
+      outputs: h("div", { className: "sim-outputs" }),
       inputMeter: h("div", { className: "meter-bar" }),
       outputMeter: h("div", { className: "meter-bar" }),
       load: h("span", { className: "sim-load" }),
@@ -229,6 +247,7 @@ export class SimulationPanel {
         h("div", { className: "sim-row" }, h("label", { textContent: "Input" }), e.preset),
         h("div", { className: "sim-row" }, h("span"), e.expression),
         h("div", { className: "sim-row" }, h("label", { textContent: "Audio" }), h("div", { className: "sim-audio" }, e.audio, e.audioButton)),
+        e.outputs,
         h(
           "div",
           { className: "sim-row meters" },
@@ -364,6 +383,23 @@ export class SimulationPanel {
     return this.probingNow;
   }
 
+  /** The output channel the pick tool is choosing for, or null. */
+  get picking() {
+    return this.pickingFor;
+  }
+
+  /** Starts the pick tool for an output channel (null stops it): a click on a two-terminal component plays the
+   * voltage across it on that channel; Ctrl+click adds it to what the channel plays. */
+  setPicking(channel: string | null) {
+    if (channel !== null && !this.info) channel = null;
+    if (channel === this.pickingFor) return;
+    if (channel !== null) this.setProbing(false);
+    this.pickingFor = channel;
+    this.host.svg.classList.toggle("picking", channel !== null);
+    for (const b of this.el.outputs.querySelectorAll<HTMLButtonElement>("button[data-pick]")) b.classList.toggle("active", b.dataset["pick"] === channel);
+    this.host.changed();
+  }
+
   /** Whether this editor state is the schematic being simulated. */
   simulates(state: EditorState | null) {
     return state !== null && state === this.state;
@@ -488,6 +524,7 @@ export class SimulationPanel {
         timeScale: Number(this.el.timeScale.value),
         voltScale: Number(this.el.voltScale.value),
         source: info.inputs[0]?.source ?? null,
+        outputs: Object.fromEntries((info.outputs ?? []).filter((o) => o.signal.voltageOf).map((o) => [o.channel, o.signal])),
         pots: Object.fromEntries(info.pots.map((p) => [p.name, p.position])),
         switches: Object.fromEntries(info.switches.map((s) => [s.name, s.position])),
       };
@@ -520,6 +557,9 @@ export class SimulationPanel {
     const input = info.inputs[0];
     if (input && saved.source && (saved.source.expression || saved.source.silence || saved.source.channel))
       await this.host.client.request("sim.setInput", { sim: info.sim, element: input.element, source: saved.source }).catch(() => {});
+    for (const [channel, signal] of Object.entries(saved.outputs ?? {}))
+      if (info.outputs?.some((o) => o.channel === channel))
+        await this.host.client.request("sim.setOutput", { sim: info.sim, channel, signal }).catch(() => {});
     for (const p of saved.probes ?? []) {
       try {
         const probe = await this.host.client.request<Probe>("sim.probe", { sim: info.sim, target: p.target });
@@ -553,6 +593,7 @@ export class SimulationPanel {
     this.scope.clear();
     this.scope.setSignals([]);
     this.setProbing(false);
+    this.setPicking(null);
     this.host.root.hidden = true;
     this.el.controls.replaceChildren();
     // So the next simulation builds its sliders afresh, even of the same circuit.
@@ -571,6 +612,7 @@ export class SimulationPanel {
 
   setProbing(on: boolean) {
     on &&= this.info !== null;
+    if (on) this.setPicking(null);
     if (on === this.probingNow) return;
     this.probingNow = on;
     this.el.probe.classList.toggle("active", on);
@@ -673,6 +715,65 @@ export class SimulationPanel {
     this.remember();
 
     this.showSource(c);
+    if (this.info) this.info.outputs = c.outputs ?? [];
+    this.showOutputs(c.outputs ?? []);
+  }
+
+  /** A row per open output channel: what it plays, its level, and the pick tool and Speakers buttons. */
+  private showOutputs(outputs: Output[]) {
+    const box = this.el.outputs;
+    const key = outputs.map((o) => o.channel).join("\n");
+    if (box.dataset["key"] !== key) {
+      box.dataset["key"] = key;
+      const shortNames = distinctParts(outputs.map((o) => o.channel));
+      box.replaceChildren(
+        ...outputs.map((o, i) => {
+          const pick = h("button", { textContent: "Pick", title: "Click a component to play the voltage across it on this channel (Ctrl+click adds more; Esc to stop)" });
+          pick.dataset["pick"] = o.channel;
+          pick.addEventListener("click", () => this.setPicking(this.pickingFor === o.channel ? null : o.channel));
+          const speakers = h("button", { textContent: "Speakers", title: "Play the Speakers on this channel" });
+          speakers.addEventListener("click", () => this.info && void this.call("sim.setOutput", { sim: this.info.sim, channel: o.channel, signal: { speakers: true } }));
+          const row = h(
+            "div",
+            { className: "sim-row" },
+            h("label", { textContent: i === 0 ? "Out" : "" }),
+            h(
+              "div",
+              { className: "sim-output" },
+              h("span", { className: "sim-output-channel", textContent: shortNames[i]!, title: o.channel }),
+              h("span", { className: "sim-output-text" }),
+              h("div", { className: "meter" }, h("div", { className: "meter-bar" })),
+              pick,
+              speakers,
+            ),
+          );
+          row.dataset["channel"] = o.channel;
+          return row;
+        }),
+      );
+      if (this.pickingFor !== null && !outputs.some((o) => o.channel === this.pickingFor)) this.setPicking(null);
+    }
+    for (const o of outputs) {
+      const row = box.querySelector<HTMLElement>(`[data-channel="${CSS.escape(o.channel)}"]`);
+      if (!row) continue;
+      const text = this.signalText(o.signal);
+      const label = row.querySelector<HTMLElement>(".sim-output-text")!;
+      label.textContent = text;
+      label.title = `${o.channel} plays ${text}`;
+      row.querySelector<HTMLButtonElement>("button[data-pick]")!.classList.toggle("active", this.pickingFor === o.channel);
+    }
+  }
+
+  /** "Speakers", or "V(R1) + V(C2)" by the elements' names. */
+  private signalText(signal: OutputSignal): string {
+    if (!signal.voltageOf) return "Speakers";
+    const doc = this.state?.doc;
+    return signal.voltageOf
+      .map((id) => {
+        const e = doc?.elements.find((x) => x.id === id);
+        return `V(${(e?.kind === "symbol" && e.component.properties["Name"]) || id})`;
+      })
+      .join(" + ");
   }
 
   /** Shows the Input's source: a device input, a test signal, or an expression of the user's. */
@@ -833,6 +934,8 @@ export class SimulationPanel {
   private setLevels(l: { inputs: number[]; outputs: number[] }) {
     meter(this.el.inputMeter, l.inputs[0] ?? 0);
     meter(this.el.outputMeter, l.outputs[0] ?? 0);
+    const rows = this.el.outputs.querySelectorAll<HTMLElement>(".meter-bar");
+    rows.forEach((bar, i) => meter(bar, l.outputs[i] ?? 0));
   }
 
   private setStats(s: { load: number; dropouts: number; rejectedSettings: number; cappedSteps: number | null }) {
@@ -848,6 +951,7 @@ export class SimulationPanel {
   // ---- Probes on the schematic ----
 
   private probeAt(e: PointerEvent) {
+    if (this.pickingFor !== null && e.button === 0) return this.pickAt(e, this.pickingFor);
     if (!this.probingNow || e.button !== 0 || !this.info || !this.state) return;
     if ((e.target as Element | null)?.closest?.(".sim-knob, .sim-switch")) return;
     e.stopPropagation();
@@ -870,6 +974,31 @@ export class SimulationPanel {
         this.remember();
       })
       .catch((err) => this.host.status((err as Error).message.replace(/^sim\.probe: /, ""), "error"));
+  }
+
+  /** The pick tool's click: the component under the pointer becomes what the channel plays, or with Ctrl is added to
+   * it. The tool stops after a plain click, and carries on while Ctrl is held. */
+  private pickAt(e: PointerEvent, channel: string) {
+    const info = this.info, state = this.state;
+    if (!info || !state) return;
+    if ((e.target as Element | null)?.closest?.(".sim-knob, .sim-switch")) return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (this.host.shown() !== state) {
+      this.host.status("The pick tool works on the schematic being simulated: switch to its tab.", "error");
+      return;
+    }
+    const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest<SVGElement>("#drawing [data-id]");
+    const element = hit && state.doc.elements.find((x) => x.id === hit.dataset["id"]);
+    if (!element || element.kind !== "symbol") {
+      this.host.status("Click a two-terminal component (a resistor, capacitor, diode…) to play the voltage across it.");
+      return;
+    }
+    const adding = e.ctrlKey || e.metaKey;
+    const current = info.outputs.find((o) => o.channel === channel)?.signal.voltageOf ?? [];
+    const voltageOf = adding ? [...current.filter((id) => id !== element.id), element.id] : [element.id];
+    if (!adding) this.setPicking(null);
+    void this.call("sim.setOutput", { sim: info.sim, channel, signal: { voltageOf } });
   }
 
   /** The wire or terminal under a point of the window, with where on it to put the flag. */
@@ -1114,6 +1243,19 @@ function formatFrequency(f: number) {
 }
 
 /** A level meter: linear peak against full scale, coloured as LiveSPICE's lamps (WebSocketApi.md, Monitoring). */
+/** Channel names without the words they all start with ("HD Audio output 1", "HD Audio output 2" → "1", "2"); a single
+ * name keeps its last word. */
+function distinctParts(names: string[]): string[] {
+  // No names (no device: the internal clock) needs no work, and would never end the loop: every() of nothing is true.
+  if (names.length === 0) return [];
+  const words = names.map((n) => n.split(" "));
+  if (names.length === 1) return [words[0]!.at(-1)!];
+  const shortest = Math.min(...words.map((w) => w.length));
+  let common = 0;
+  while (common < shortest - 1 && words.every((w) => w[common] === words[0]![common])) common++;
+  return words.map((w) => w.slice(common).join(" "));
+}
+
 /** The simulation panel's height, kept in this browser. */
 const PanelHeightKey = "spiceforge.simPanelHeight";
 const MinPanelHeight = 140;

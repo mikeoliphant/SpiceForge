@@ -1110,6 +1110,8 @@ button:disabled {
 
 /* ---- Probes on the schematic ---- */
 
+#schematic.picking,
+#schematic.picking *,
 #schematic.probing,
 #schematic.probing * {
   cursor: copy;
@@ -1259,4 +1261,44 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
+}
+
+/* ---- The simulation panel's output channels ---- */
+
+.sim-outputs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sim-outputs:empty {
+  display: none;
+}
+
+.sim-output {
+  display: grid;
+  grid-template-columns: auto 1fr 50px auto auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sim-output-channel {
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.sim-output-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sim-output button.active {
+  background: var(--active);
+  border-color: var(--accent);
 }

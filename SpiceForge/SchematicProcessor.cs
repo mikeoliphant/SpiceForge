@@ -67,6 +67,13 @@ public sealed class SchematicProcessorOptions
     /// <see cref="SchematicProcessor.ProbeSamples"/>), for a scope. The probes read each sample's last step, unfiltered;
     /// the audio output is exactly as without them.</summary>
     public bool Probes { get; init; }
+
+    /// <summary>Output signals besides the Speakers', each a weighted sum of node voltages, by node name (as
+    /// <see cref="SchematicProcessor.ProbeNodes"/> names them), in volts times the weight: a host's choice of what to
+    /// play, such as the voltage across a component. They're resampled exactly as the Speakers are, and read after each
+    /// block from <see cref="SchematicProcessor.SignalSamples"/>. A node the circuit doesn't solve for (ground) reads
+    /// 0 V. The audio output is exactly as without them.</summary>
+    public IReadOnlyList<IReadOnlyList<(string Node, double Weight)>>? Signals { get; init; }
 }
 
 /// <summary>
@@ -99,6 +106,10 @@ public sealed class SchematicProcessor
     private readonly bool probes;
     private double[] stepIn = Array.Empty<double>();
     private double[][] stepOut = Array.Empty<double[]>();
+    // The engine's outputs resampled to the sample rate: the speakers' two nodes each, then the signals' nodes.
+    private readonly int resampled;
+    // Each signal's terms: an index into the signal nodes (after the speakers' outputs), and a weight.
+    private readonly (int Node, double Weight)[][] signalTerms;
 
     /// <summary>The schematic's name (its file name).</summary>
     public string Name { get; }
@@ -125,6 +136,11 @@ public sealed class SchematicProcessor
     /// of the last block that <see cref="Process(double[][], double[][], int)"/> ran, on channel 0. Only the first
     /// <c>count</c> values of each are that block's; the arrays grow, and are reused.</summary>
     public double[][] ProbeSamples { get; }
+
+    /// <summary>With <see cref="SchematicProcessorOptions.Signals"/>, each signal's value at every sample of the last
+    /// block that <see cref="Process(double[][], double[][], int)"/> ran, on channel 0. Only the first <c>count</c>
+    /// values of each are that block's; the arrays grow, and are reused.</summary>
+    public double[][] SignalSamples { get; }
 
     /// <summary>How many times a pot or switch setting couldn't be solved, so the circuit stayed at its last good one,
     /// summed over the channels. It has never happened on the test circuits; a host can watch it to say so.</summary>
@@ -200,7 +216,31 @@ public sealed class SchematicProcessor
         ProbeNodes = probed.Select(n => n.Name).ToArray();
         ProbeSamples = probed.Select(_ => Array.Empty<double>()).ToArray();
         probes = options.Probes;
-        Expression[] outputs = nodes.Concat(probed.Select(n => n.V)).ToArray();
+
+        // Signals: their nodes, as outputs after the speakers' and before the probes', resampled as the speakers' are.
+        var signalNodes = new List<Expression>();
+        signalTerms = (options.Signals ?? Array.Empty<IReadOnlyList<(string, double)>>())
+            .Select(signal => signal
+                .Select(term =>
+                {
+                    Node node = circuit.Nodes.FirstOrDefault(n => n.Name == term.Node)
+                        ?? throw new ArgumentException($"The circuit has no node '{term.Node}' for an output signal.");
+                    if (!loaded.System.Unknowns.Contains(node.V))
+                        return (Node: -1, term.Weight);   // Ground, or a node it doesn't solve for: 0 V.
+                    int index = signalNodes.IndexOf(node.V);
+                    if (index < 0)
+                    {
+                        index = signalNodes.Count;
+                        signalNodes.Add(node.V);
+                    }
+                    return (Node: index, term.Weight);
+                })
+                .Where(term => term.Node >= 0)
+                .ToArray())
+            .ToArray();
+        SignalSamples = signalTerms.Select(_ => Array.Empty<double>()).ToArray();
+        resampled = nodes.Length + signalNodes.Count;
+        Expression[] outputs = nodes.Concat(signalNodes).Concat(probed.Select(n => n.V)).ToArray();
 
         engines = Enumerable.Range(0, options.Channels)
             .Select(_ => new CompiledCircuit(loaded.System, input, outputs, h, options.Oversample, options.IterationCap, loaded.Solution) { RecordIterations = false })
@@ -280,7 +320,7 @@ public sealed class SchematicProcessor
                     pots[k].Apply(values);
                 for (int k = 0; k < switches.Length; k++)
                     switches[k].Apply(values);
-                Run(engines[c], inputs[c], start, length, outputs[c], c == 0 && probes);
+                Run(engines[c], inputs[c], start, length, outputs[c], c == 0 && probes, c == 0);
             }
             start += length;
         }
@@ -308,7 +348,7 @@ public sealed class SchematicProcessor
     private void Grow(int length)
     {
         int size = Math.Max(length, 4096);
-        buffers = Enumerable.Range(0, 2 * speakerCount).Select(_ => new double[size]).ToArray();
+        buffers = Enumerable.Range(0, resampled).Select(_ => new double[size]).ToArray();
         chunkIn = new double[size];
     }
 
@@ -319,7 +359,7 @@ public sealed class SchematicProcessor
     {
         int factor = engine.Oversampler.Factor;
         int steps = length * factor;
-        int count = 2 * speakerCount + ProbeSamples.Length;
+        int count = resampled + ProbeSamples.Length;
         if (stepIn.Length < steps || stepOut.Length != count)
         {
             int size = Math.Max(steps, 4096 * factor);
@@ -333,19 +373,19 @@ public sealed class SchematicProcessor
         engine.Oversampler.Upsample(chunkIn.AsSpan(0, length), stepIn.AsSpan(0, steps));
         engine.RunSteps(stepIn, stepOut, steps);
         // A speaker terminal that isn't an unknown reads 0 at every step, which resamples to 0, as Run's shortcut gives.
-        for (int o = 0; o < 2 * speakerCount; o++)
+        for (int o = 0; o < resampled; o++)
             engine.Oversampler.Downsample(o, stepOut[o].AsSpan(0, steps), buffers[o].AsSpan(0, length));
         for (int p = 0; p < ProbeSamples.Length; p++)
         {
-            double[] from = stepOut[2 * speakerCount + p], to = ProbeSamples[p];
+            double[] from = stepOut[resampled + p], to = ProbeSamples[p];
             for (int n = 0; n < length; n++)
                 to[start + n] = from[(n + 1) * factor - 1];
         }
     }
 
-    private void Run(CompiledCircuit engine, double[] input, int start, int length, double[] output, bool probing)
+    private void Run(CompiledCircuit engine, double[] input, int start, int length, double[] output, bool probing, bool first)
     {
-        if (buffers.Length != 2 * speakerCount || chunkIn.Length < length || (buffers.Length > 0 && buffers[0].Length < length))
+        if (buffers.Length != resampled || chunkIn.Length < length || (buffers.Length > 0 && buffers[0].Length < length))
             Grow(length);
         Array.Copy(input, start, chunkIn, 0, length);
         if (probing)
@@ -359,6 +399,21 @@ public sealed class SchematicProcessor
                 sum += (buffers[2 * s][n] - buffers[2 * s + 1][n]) * scales[s];
             output[start + n] = sum;
         }
+        if (first)
+            for (int k = 0; k < signalTerms.Length; k++)
+            {
+                if (SignalSamples[k].Length < start + length)
+                    Array.Resize(ref SignalSamples[k], Math.Max(start + length, 4096));
+                (int Node, double Weight)[] terms = signalTerms[k];
+                double[] to = SignalSamples[k];
+                for (int n = 0; n < length; n++)
+                {
+                    double sum = 0;
+                    for (int t = 0; t < terms.Length; t++)
+                        sum += buffers[2 * speakerCount + terms[t].Node][n] * terms[t].Weight;
+                    to[start + n] = sum;
+                }
+            }
     }
 }
 

@@ -153,6 +153,47 @@ internal static class ProcessorCheck
         }
         Report("two channels, each the same as a single-channel processor", outputs[0].SequenceEqual(Mono(signal)) && outputs[1].SequenceEqual(Mono(quiet)));
 
+        // Output signals: the first Speaker's own voltage, as a signal on its two nodes, against the Speaker output (to
+        // rounding: a·s − c·s against (a − c)·s), with probes off and on; and the audio output unchanged by them.
+        {
+            LoadedCircuit loaded = CircuitLoader.Load(file, (Real)1 / (SampleRate * Oversample));
+            Speaker speaker = loaded.Circuit.Components.OfType<Speaker>().First();
+            int speakers = loaded.Circuit.Components.OfType<Speaker>().Count();
+            double scale = 1 / (double)speaker.V0dBFS;
+            var terms = new List<(string, double)>();
+            if (speaker.Anode.ConnectedTo is Node anode)
+                terms.Add((anode.Name, scale));
+            if (speaker.Cathode.ConnectedTo is Node cathode)
+                terms.Add((cathode.Name, -scale));
+            foreach (bool probes in new[] { false, true })
+            {
+                var withSignal = new SchematicProcessor(file, SampleRate, new SchematicProcessorOptions
+                {
+                    PotSmoothingMilliseconds = 0,
+                    Probes = probes,
+                    Signals = new[] { terms },
+                });
+                var audio = new double[Samples];
+                var across = new double[Samples];
+                for (int start = 0; start < Samples; start += 480)
+                {
+                    var o = new double[480];
+                    withSignal.Process(new[] { signal.AsSpan(start, 480).ToArray() }, new[] { o }, 480);
+                    o.CopyTo(audio, start);
+                    withSignal.SignalSamples[0].AsSpan(0, 480).CopyTo(across.AsSpan(start));
+                }
+                double worst = 0, peak = 0;
+                for (int n = 0; n < Samples; n++)
+                {
+                    worst = Math.Max(worst, Math.Abs(across[n] - audio[n]));
+                    peak = Math.Max(peak, Math.Abs(audio[n]));
+                }
+                bool matches = speakers > 1 || worst <= 1e-12 * Math.Max(peak, 1e-3);
+                Report($"signal across the Speaker{(probes ? ", probes on" : "")}: matches ({worst:E0}), audio same",
+                    matches && audio.SequenceEqual(expected));
+            }
+        }
+
         // Moving pots and switches allocates nothing once warmed up: blocks with pots ramping and switches flipping.
         var live = new SchematicProcessor(file, SampleRate, new SchematicProcessorOptions { Channels = 2 });
         double[][] ins = { signal.Take(512).ToArray(), quiet.Take(512).ToArray() };

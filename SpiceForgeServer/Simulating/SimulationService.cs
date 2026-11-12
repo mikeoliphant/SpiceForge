@@ -123,6 +123,12 @@ public sealed class SimulationService : IDisposable
         return Task.FromResult<JsonNode?>(null);
     }
 
+    public Task<JsonNode?> SetOutput(Session session, Args args)
+    {
+        Get(args).SetOutput(args.String("channel"), args.Object("signal"));
+        return Task.FromResult<JsonNode?>(null);
+    }
+
     public Task<JsonNode?> Probe(Session session, Args args) =>
         Task.FromResult<JsonNode?>(Get(args).AddProbe(args.Object("target"), args.OptionalString("color")));
 
