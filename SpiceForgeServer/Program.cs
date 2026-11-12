@@ -86,6 +86,9 @@ app.Lifetime.ApplicationStarted.Register(() =>
     AudioConfig audio = context.Audio.Config;
     Console.WriteLine(audio.Driver == ClockDriver.Name ? "Audio: none (the internal clock)"
         : $"Audio: {audio.Driver}, {(audio.Device != null ? $"'{audio.Device}'" : "the first device")}, opened when a simulation starts");
+    // To the console and the editor's log alike.
+    if (UnoptimizedBuild() is string slow)
+        context.Log.Write(Util.MessageType.Warning, "server", slow);
     if (options.OpenBrowser && options.WebRoot != null)
     {
         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(page) { UseShellExecute = true }); }
@@ -102,6 +105,21 @@ catch (IOException ex)
     return 1;
 }
 return 0;
+
+// A Debug build of SpiceForge runs without JIT optimizations: simulations run four to five times slower than Release
+// (the SD-1 at 25 to 27% of real time, against 6%). Null for an optimized build.
+static string? UnoptimizedBuild()
+{
+    static bool Unoptimized(System.Reflection.Assembly assembly) =>
+        assembly.GetCustomAttributes(typeof(System.Diagnostics.DebuggableAttribute), false)
+            .OfType<System.Diagnostics.DebuggableAttribute>().Any(d => d.IsJITOptimizerDisabled);
+    bool engine = Unoptimized(typeof(SpiceForge.SchematicProcessor).Assembly);
+    bool server = Unoptimized(typeof(ServerContext).Assembly);
+    if (!engine && !server)
+        return null;
+    return "this is a Debug build, without JIT optimizations, so simulations run several times slower than in Release. " +
+        "Build with -c Release (dotnet run -c Release --project SpiceForgeServer).";
+}
 
 // --listAudio: every driver's devices, with their channels, rates and buffer sizes.
 static async Task<int> ListAudio(ServerOptions options)

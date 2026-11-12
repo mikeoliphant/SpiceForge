@@ -33,9 +33,12 @@ Start the server, which finds `dist/` in the repository while developing (or `ww
 `--webRoot <folder>`), and open the address it prints:
 
 ```
-dotnet run --project SpiceForgeServer
+dotnet run -c Release --project SpiceForgeServer
 # Front end: http://127.0.0.1:8370/?token=...
 ```
+
+Build it in Release: a Debug build runs SpiceForge's audio code without JIT optimizations, and simulates four to five
+times slower (the SD-1 at 25 to 27% of real time, against 6% in Release). It says so when it starts.
 
 `--open true` opens it in the default browser. The page takes the token from its address and keeps it for reloads.
 `?file=<path>` opens a schematic straight away; otherwise the last one opened is reopened.

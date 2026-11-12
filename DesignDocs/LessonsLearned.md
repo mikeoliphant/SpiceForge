@@ -1014,6 +1014,14 @@ interface: a driver opens a stream for one client, prepares it while stopped, an
   simulation's don't mix. Checked in headless Chrome against ASIO4ALL with its outputs unticked: the dialog read the
   device, applied 128-sample buffers, the Rat played the mic input at 21% of real time, and the test was refused
   while it ran.
+- **Run the server in Release: a Debug build simulates four to five times slower.** The SD-1 read 33% of real time
+  in the server against far less in the VST. `SchematicProcessor` alone, at 48 kHz, 4×, cap 32, sinc, probes on:
+  6% of real time in Release and 25 to 27% in Debug; the Rat 20% against 42 to 44%. The compiled step is a dynamic
+  method, always optimized, but the oversampler and the processor's loops run unoptimized in a Debug build, and
+  `dotnet run` builds Debug unless told otherwise. Probes (on in the server, off in the VST) add about a third
+  (0.66 to 0.88 µs a sample on the SD-1), and pacing blocks in real time rather than running flat out changes little
+  (5.6 against 6.3%). The server now warns at startup when it's a Debug build, and the README runs it with
+  `-c Release`.
 - **Close the device when nothing runs.** The device opens when a simulation or the test starts, and closes when it
   stops, so an idle server doesn't hold an ASIO driver another program (a DAW) wants. A configuration that doesn't
   check is refused before the running device is touched, unless a different ASIO driver has to be loaded to check
