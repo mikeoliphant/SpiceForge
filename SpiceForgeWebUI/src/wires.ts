@@ -1,46 +1,25 @@
-// The wire tool's routing and joining, ported from LiveSPICE's SchematicEditor (FindWirePath and AddWire) so a wire
-// drawn here ends up exactly as one drawn in LiveSPICE (WebSocketApi.md, Editing rules the client reproduces).
+// The wire tool's routing, and its joining, which keeps LiveSPICE's SchematicEditor.AddWire: overlapping wires merge
+// into one, and a new wire is split wherever it meets a terminal or ends on another wire, so the schematic stays tidy.
+// (Connectivity doesn't depend on the splitting: LiveSPICE connects a wire ending anywhere on another.)
 
 import { ChangeEdit, CompositeEdit, type Edit } from "./edits";
 import { boxIntersects, mapBox, mapPoint, mappingOf, pointOnSegment, wireIntersects, type Box } from "./geometry";
 import type { LayoutCache } from "./layouts";
 import type { Element, Point, SchematicDocument, WireElement } from "./protocol";
 
-/** Point-to-point distance. */
-function distance(a: Point, b: Point): number {
-  return Math.hypot(b[0] - a[0], b[1] - a[1]);
-}
-
-/** SchematicEditor.Distance from a point to a horizontal or vertical segment. LiveSPICE's own comment says it's
- * wrong (it measures to the segment's infinite line); it's kept, so a drag routes the same way in both editors. */
-function distanceToSegment(x1: Point, x2: Point, p: Point): number {
-  return Math.min(Math.min(distance(p, x1), distance(p, x2)), x1[1] === x2[1] ? Math.abs(p[1] - x1[1]) : Math.abs(p[0] - x1[0]));
-}
-
-/** SchematicEditor.FindWirePath: of the two L-shaped routes from the drag's first point to its last, the one closer to
- * all the points the pointer passed through. On a tie, the horizontal-last route, as LINQ's ArgMin keeps the first. */
+/**
+ * The wire tool's route: from the drag's first point to its last, straight if they line up, else an L whose first
+ * leg follows the direction the drag started in (sideways first, horizontal first). LiveSPICE instead picks whichever
+ * corner lies closer to every point the pointer passed through, by a distance its own comment calls wrong; following
+ * the start is simpler to predict.
+ */
 export function findWirePath(mouse: Point[]): Point[] {
   const a = mouse[0]!;
   const b = mouse[mouse.length - 1]!;
-  const candidates: Point[][] = [
-    [a, [a[0], b[1]], b],
-    [a, [b[0], a[1]], b],
-  ];
-  let best = candidates[0]!;
-  let bestCost = Infinity;
-  for (const path of candidates) {
-    let cost = 0;
-    for (const p of mouse) {
-      let d = Infinity;
-      for (let k = 0; k + 1 < path.length; k++) d = Math.min(d, distanceToSegment(path[k]!, path[k + 1]!, p));
-      cost += d;
-    }
-    if (cost < bestCost) {
-      bestCost = cost;
-      best = path;
-    }
-  }
-  return best;
+  if (a[0] === b[0] || a[1] === b[1]) return [a, b];
+  const first = mouse.find((p) => p[0] !== a[0] || p[1] !== a[1]) ?? b;
+  const horizontalFirst = Math.abs(first[0] - a[0]) >= Math.abs(first[1] - a[1]);
+  return horizontalFirst ? [a, [b[0], a[1]], b] : [a, [a[0], b[1]], b];
 }
 
 /** Wire.PointOnLine: on the infinite line through x1 and x2. */

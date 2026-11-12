@@ -44,16 +44,22 @@ public static class CircuitChecker
         schematic.Circuit.Name = root.Attribute("Name")?.Value ?? "";
         string IdOf(Component component) => component.Tag is Element element && ids.TryGetValue(element, out string? id) ? id : "";
 
-        // The nodes as the schematic connected them, before Build adds stand-ins for unconnected terminals.
+        // The nodes as the schematic connected them, before Build adds stand-ins for unconnected terminals. Terminals are
+        // reported by the symbol that exposes them: a subcircuit's belong to the Ports inside it. A wire is a conductor
+        // component with its own two terminals; those are left out, as the wire is listed itself.
+        var symbolOf = new Dictionary<Terminal, Symbol>();
+        foreach (Symbol symbol in schematic.Symbols)
+            foreach (Terminal terminal in symbol.Component.Terminals)
+                symbolOf[terminal] = symbol;
         var nodes = new JsonArray();
         foreach (Node node in schematic.Circuit.Nodes)
         {
             nodes.Add(new JsonObject
             {
                 ["name"] = node.Name,
-                ["terminals"] = Json.Array(node.Connected.Select(t => (JsonNode?)new JsonObject
+                ["terminals"] = Json.Array(node.Connected.Where(symbolOf.ContainsKey).Select(t => (JsonNode?)new JsonObject
                 {
-                    ["element"] = IdOf(t.Owner),
+                    ["element"] = ids[symbolOf[t]],
                     ["terminal"] = t.Name,
                 })),
                 ["wires"] = Json.Strings(schematic.Wires.Where(w => w.Node == node).Select(w => ids[w])),

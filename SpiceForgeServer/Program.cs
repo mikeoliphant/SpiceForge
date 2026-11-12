@@ -73,16 +73,27 @@ app.Map("/api", async (HttpContext http) =>
 });
 
 string page = $"http://127.0.0.1:{options.Port}/?token={options.Token}";
-Console.WriteLine($"SpiceForgeServer listening on ws://127.0.0.1:{options.Port}/api?token={options.Token}");
-Console.WriteLine(options.WebRoot != null ? $"Front end: {page} (from {options.WebRoot})" : "Front end: none found");
-Console.WriteLine($"Settings: {options.SettingsPath}");
-if (options.OpenBrowser && options.WebRoot != null)
-    app.Lifetime.ApplicationStarted.Register(() =>
+// Announced only once the port is bound: if another server holds it, this one must fail, not claim to be listening.
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    Console.WriteLine($"SpiceForgeServer listening on ws://127.0.0.1:{options.Port}/api?token={options.Token}");
+    Console.WriteLine(options.WebRoot != null ? $"Front end: {page} (from {options.WebRoot})" : "Front end: none found");
+    Console.WriteLine($"Settings: {options.SettingsPath}");
+    if (options.OpenBrowser && options.WebRoot != null)
     {
         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(page) { UseShellExecute = true }); }
         catch (Exception ex) { Console.Error.WriteLine($"Couldn't open a browser: {ex.Message}"); }
-    });
-await app.RunAsync();
+    }
+});
+try
+{
+    await app.RunAsync();
+}
+catch (IOException ex)
+{
+    Console.Error.WriteLine($"Couldn't listen on 127.0.0.1:{options.Port}: {ex.Message} (Is another server running? Use --port.)");
+    return 1;
+}
 return 0;
 
 static bool CryptographicEquals(string a, string b) =>

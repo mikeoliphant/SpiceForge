@@ -112,13 +112,21 @@ export function rotateElements(doc: SchematicDocument, ids: ReadonlySet<string>,
   }
 }
 
-/** Element.FlipOver: mirrors over the horizontal line y = `y`. A symbol's own flip toggles with it. */
+/**
+ * Mirrors elements over the horizontal line y = `y`, symbols included, whatever their rotation.
+ *
+ * A symbol maps its local points by R(r)·S(s): a flip S (s = ±1 on the local y axis), then a quarter-turn rotation R.
+ * Mirroring that over a horizontal line, F = diag(1, −1), gives F·R(r)·S(s) = R(−r)·F·S(s) = R(−r)·S(−s): the
+ * rotation negates and the flip toggles. LiveSPICE's Symbol.FlipOver only toggles the flip, which is the same at even
+ * rotations but mirrors a part at 90° left-right instead, off its wires; this doesn't.
+ */
 export function flipElements(doc: SchematicDocument, ids: ReadonlySet<string>, y: number) {
   const mirror = (py: number) => py + roundHalfEven(2 * (y - py));
   for (const e of doc.elements) {
     if (!ids.has(e.id)) continue;
     if (e.kind === "symbol") {
       e.position = [e.position[0], mirror(e.position[1])];
+      e.rotation = -e.rotation || 0; // not −0
       e.flip = !e.flip;
     } else if (e.kind === "wire") {
       e.a = [e.a[0], mirror(e.a[1])];

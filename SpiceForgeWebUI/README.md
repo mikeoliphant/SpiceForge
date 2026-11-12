@@ -21,6 +21,7 @@ result is static files in `dist/`.
 npm install
 npm run build      # type-check, then bundle into dist/
 npm run watch      # rebuild on every change (no type check; run `npm run check` for that)
+npm test           # the conformance test, against a running server (see below)
 ```
 
 ## Running
@@ -48,36 +49,38 @@ The window has the component library on the left, the schematic in the middle, a
 | Click a component in the library | Places it: a gray ghost follows the pointer, and a click places a copy and selects it |
 | Ctrl+click while placing | Places a copy and keeps placing |
 | Left, Right, Up, Down while placing | Rotate or flip the ghost |
-| Wire button, W, or the library's wire | Wire tool: drag to draw an L-shaped wire along the pointer's path |
+| Wire button, W, or the library's wire | Wire tool: drag to draw an L-shaped wire, its first leg in the direction the drag starts |
 | Ctrl while releasing a wire | Keeps the wire tool for another |
 | Escape | Leaves the tool |
 | G, P, R, C, L, T | Place a ground, rail, resistor, capacitor, inductor or label |
 
-A component whose name is taken is renamed, as LiveSPICE renames it (R1 becomes the first free R number). A wire
-joins what it meets as in LiveSPICE: overlapping wires merge, and it connects wherever it ends on a wire or passes
-through a terminal, but not where it merely crosses another wire.
+A component whose name is taken is renamed (R1 becomes the first free R number). A wire joins what it meets:
+overlapping wires merge, and it connects wherever it ends on a wire or passes through a terminal, but not where it
+merely crosses another wire.
 
 LiveSPICE's own Ctrl shortcuts (Ctrl+G, Ctrl+P, Ctrl+R, Ctrl+F, Ctrl+L, Ctrl+H) work too. Browsers keep Ctrl+W and
 Ctrl+T for themselves, so the plain letters are the dependable ones.
 
 ### Selecting and editing
 
-Selecting and moving follow LiveSPICE's selection tool:
+Editing started from LiveSPICE's editor and keeps what works there (the arrow keys, Escape, double-click). Where its
+behaviour didn't make good sense, this differs. The file format is the one thing it never departs from: see
+`DesignDocs/WebSocketApi.md`, Editing.
 
 | Action | Does |
 |---|---|
-| Click an element | Selects it alone |
+| Click an element | Selects it alone (in a larger selection, narrows the selection to it) |
 | Ctrl+click | Toggles it, keeping the rest |
 | Click empty space | Clears the selection (with Ctrl, keeps it) |
-| Drag from empty space, or from an unselected element | Rubber band: selects everything it touches (with Ctrl, adds to the selection) |
+| Drag an element | Selects it, if it wasn't, and moves the selection with it, in 5-unit grid steps, as one undo step |
+| Drag from empty space, or with Ctrl | Rubber band: selects everything it touches (with Ctrl, adds to the selection) |
 | Double-click a symbol | Adds every symbol of its type |
-| Drag a selected element | Moves the selection in 5-unit grid steps, as one undo step |
 | Right-click or Escape during a drag | Cancels it |
 | Left, Right arrows | Rotate the selection 90° counter-clockwise, clockwise, about its centre |
-| Up, Down arrows | Flip the selection over its centre line |
+| Up, Down arrows | Flip the selection over its centre line; rotated parts flip properly and stay connected |
 | Escape | Clears the selection |
 | Delete | Deletes the selection |
-| Ctrl+X, Ctrl+C, Ctrl+V | Cut, copy, paste, in LiveSPICE's clipboard format, so copies go to and from the desktop app. Pasted elements keep their positions, and clashing names are renumbered |
+| Ctrl+X, Ctrl+C, Ctrl+V | Cut, copy, paste, in LiveSPICE's clipboard format, so copies go to and from the desktop app. A paste lands under the pointer (from the toolbar, just below and right of the original), and clashing names are renumbered |
 | Ctrl+A | Selects everything |
 | Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) | Undo, redo |
 | Ctrl+S | Saves, asking before overwriting a file that changed on disk |
@@ -96,9 +99,14 @@ when you press Enter or leave the field, and stored as the component would hold 
 that doesn't parse is outlined in red, with the reason in the status bar, and so is a name another component already
 has. Each change is one undo step.
 
-Flipping works as in LiveSPICE, including a quirk: a symbol turned 90° flips about its own axis, which is then
-vertical, so after a flip its terminals can come off their wires. Rotating by 180° first, or flipping before
-rotating, avoids it.
+
+## The conformance test
+
+`npm test` checks the editor's contract with the file format: on every schematic in LiveSPICE's `Tests` folder, the
+client's connectivity must equal the server's `circuit.check`, as loaded and after random rotations, flips, moves,
+wires and deletions made with the editor's own functions. It needs a running server, given by `SPICEFORGE_HOST`
+(`ws://127.0.0.1:port`), `SPICEFORGE_TOKEN` and `SPICEFORGE_TESTS` (the folder). `SpiceForge.Validate server` starts a
+server and runs it.
 
 ## Layout
 
@@ -112,7 +120,9 @@ rotating, avoids it.
 | `src/view.ts` | Zoom and pan |
 | `src/editor.ts` | The document, its selection, and the selection, symbol and wire tools |
 | `src/edits.ts` | Edits (move, rotate, flip, add and remove, properties), naming, and the undo history |
-| `src/wires.ts` | The wire tool's routing and joining, ported from LiveSPICE's SchematicEditor |
+| `src/wires.ts` | The wire tool's routing, and joining (LiveSPICE's AddWire) |
+| `src/connectivity.ts` | Which terminals and wires form each node: LiveSPICE's rules, part of the contract |
+| `test/conformance.ts` | The conformance test |
 | `src/library.ts` | The component library panel |
 | `src/properties.ts` | The properties panel |
 | `src/fileDialog.ts` | The Open dialog, on `fs.list` and `fs.recent` |

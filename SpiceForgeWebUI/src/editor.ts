@@ -1,20 +1,21 @@
-// The document being edited, its selection and history, and LiveSPICE's editing tools (UISpec.md, Tools;
-// LiveSPICE/Controls/Editor):
+// The document being edited, its selection and history, and the editing tools. They started as ports of LiveSPICE's
+// (UISpec.md, Tools); where LiveSPICE's behaviour didn't make good sense, they now differ (WebSocketApi.md, Editing).
 //
-// Selection tool (SelectionTool.cs, MoveTool.cs):
-// - pressing on a selected element, without Ctrl, starts a move: the selection follows the pointer in grid steps,
-//   live, and the whole drag is one undo step (right button or Escape cancels it);
-// - otherwise a press starts a rubber band. Releasing without moving is a click: it selects the element under the
-//   pointer and nothing else (Ctrl toggles it instead), or, on empty space, clears the selection (Ctrl keeps it).
-//   Releasing after a drag selects everything the band touches (Ctrl adds to the selection);
+// Selection tool:
+// - pressing on an element, without Ctrl, selects it (if it wasn't) and starts a move: the selection follows the
+//   pointer in grid steps, live, and the whole drag is one undo step (right button or Escape cancels it). Releasing
+//   without moving selects just that element;
+// - pressing on empty space, or with Ctrl, starts a rubber band. Releasing without moving is a click: Ctrl toggles the
+//   element under the pointer; on empty space, a click clears the selection (Ctrl keeps it). Releasing after a drag
+//   selects everything the band touches (Ctrl adds to the selection);
 // - a double-click adds every symbol of the same type to the selection;
 // - the arrow keys rotate (Left counter-clockwise, Right clockwise) and flip (Up, Down) the selection about its centre.
 //
-// Symbol tool (SymbolTool.cs): a gray ghost of the component follows the pointer; the arrow keys rotate and flip it;
-// a click places a copy and selects it, then returns to the selection tool unless Ctrl is held.
+// Symbol tool: a gray ghost of the component follows the pointer; the arrow keys rotate and flip it; a click places a
+// copy and selects it, then returns to the selection tool unless Ctrl is held.
 //
-// Wire tool (WireTool.cs): a drag draws an L-shaped wire along the pointer's path, joined to what it meets on
-// release; then back to the selection tool unless Ctrl is held.
+// Wire tool: a drag draws an L-shaped wire, its first leg in the direction the drag starts, joined to what it meets
+// on release; then back to the selection tool unless Ctrl is held.
 //
 // Escape returns to the selection tool from the others.
 
@@ -35,7 +36,7 @@ export type Tool =
 
 type Gesture =
   | { kind: "band"; pointer: number; from: Point; to: Point; hit: string | null; additive: boolean }
-  | { kind: "move"; pointer: number; ids: Set<string>; last: Point; total: Point }
+  | { kind: "move"; pointer: number; ids: Set<string>; last: Point; total: Point; pressed: string }
   | { kind: "wire"; pointer: number; mouse: Point[] };
 
 export class Editor {
@@ -170,6 +171,19 @@ export class Editor {
     );
   }
 
+  /** The bounds of some elements, from their layouts (symbols) and ends (wires); null if none has any. */
+  boundsOf(elements: Element[]): Box | null {
+    const boxes: Box[] = [];
+    for (const e of elements) {
+      if (e.kind === "wire") boxes.push(normalize(e.a, e.b));
+      else if (e.kind === "symbol") {
+        const layout = this.layouts.get(e.component);
+        if (layout) boxes.push(mapBox(mappingOf(e), layout.bounds));
+      }
+    }
+    return unionBoxes(boxes);
+  }
+
   /** The selected elements, in document order. */
   selectedElements(): Element[] {
     return this.doc?.elements.filter((e) => this.selection.has(e.id)) ?? [];
@@ -277,17 +291,7 @@ export class Editor {
   /** SelectionTool.GetSelectionCenter: the middle of the selection's bounds, in integers (C#'s division truncates
    * toward zero), snapped to the grid. Null with nothing selected. */
   private selectionCenter(): Point | null {
-    if (!this.doc) return null;
-    const boxes: Box[] = [];
-    for (const e of this.doc.elements) {
-      if (!this.selection.has(e.id)) continue;
-      if (e.kind === "wire") boxes.push(normalize(e.a, e.b));
-      else if (e.kind === "symbol") {
-        const layout = this.layouts.get(e.component);
-        if (layout) boxes.push(mapBox(mappingOf(e), layout.bounds));
-      }
-    }
-    const bounds = unionBoxes(boxes);
+    const bounds = this.boundsOf(this.selectedElements());
     if (!bounds) return null;
     return snap([Math.trunc((bounds.min[0] + bounds.max[0]) / 2), Math.trunc((bounds.min[1] + bounds.max[1]) / 2)]);
   }
@@ -376,8 +380,10 @@ export class Editor {
       return;
     }
     const hit = this.hitAt(e);
-    if (hit && this.selection.has(hit) && !ctrl) {
-      this.gesture = { kind: "move", pointer: e.pointerId, ids: new Set(this.selection), last: at, total: [0, 0] };
+    if (hit && !ctrl) {
+      // Select-and-drag in one gesture: an unselected element becomes the selection first.
+      if (!this.selection.has(hit)) this.select([hit], true);
+      this.gesture = { kind: "move", pointer: e.pointerId, ids: new Set(this.selection), last: at, total: [0, 0], pressed: hit };
       this.svg.classList.add("moving");
     } else {
       this.gesture = { kind: "band", pointer: e.pointerId, from: at, to: at, hit, additive: ctrl };
@@ -448,6 +454,8 @@ export class Editor {
     if (!this.doc) return;
     if (g.kind === "move") {
       if (g.total[0] !== 0 || g.total[1] !== 0) this.history.push(new MoveEdit(this.doc, g.ids, g.total));
+      // A click (no drag) on an element of a larger selection narrows the selection to it.
+      else this.select([g.pressed], true);
     } else if (g.kind === "wire") {
       // WireTool.MouseUp: the routed path, joined to what it meets.
       this.drawWire(findWirePath(g.mouse));

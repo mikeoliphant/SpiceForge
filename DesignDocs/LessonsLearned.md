@@ -835,6 +835,29 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   - Undo: four undos brought the document back to its original 105 elements.
   - Multiple selection: R1 and R4 together showed their different resistances blank, and "22k" set both in one
     undo step.
+- **The editor no longer copies LiveSPICE's editor; it keeps its file format.** Matching LiveSPICE's behaviour
+  exactly had done its job: it gave a full editor quickly, and the checks against LiveSPICE's own code showed the
+  geometry right. From there it mostly preserved rough edges, so the guideline became "does the operation make good
+  sense", with a fixed contract: the file format, symbol geometry, and connectivity. First departures:
+  - flipping a rotated part also negates its rotation (F·R(r)·S(s) = R(−r)·S(−s)). On the Pro Co Rat rotated and
+    flipped, that leaves 0 unconnected terminals, against LiveSPICE's 9;
+  - pressing on an unselected part selects and drags it in one gesture;
+  - a paste lands under the pointer, not on top of the original;
+  - a wire's first leg follows the direction the drag starts in, instead of a distance heuristic whose own comment
+    says it's wrong.
+- **The contract is checked against the server, not against LiveSPICE's editor.** `SpiceForgeWebUI`'s conformance
+  test compares the client's nodes with `circuit.check` (LiveSPICE's `Circuit.Schematic`) on all 53 test schematics,
+  as loaded and after 8 random edits each: 477 comparisons, none differing. The scratch copies of LiveSPICE's editor
+  code used before are no longer needed. Getting there found three real discrepancies:
+  - `circuit.check` listed a wire's own conductor terminals as node members;
+  - it dropped subcircuit terminals, which belong to the Ports inside the subcircuit; it now reports each terminal by
+    the symbol that exposes it;
+  - the client counted a zero-length wire as connecting, where LiveSPICE loads one as a warning symbol.
+  Also, older files don't store a ground's `WireName`, so a named wire's name falls back to its type's default
+  ("GND").
+- **The server announced it was listening before it had bound the port.** With another server already on 8370, a
+  second one printed success and served nothing. It now announces itself once the port is bound, and reports a failed
+  bind.
 - **Browsers keep some of LiveSPICE's shortcuts.** Ctrl+W and Ctrl+T can't be taken by a page, so the tools also
   have plain letters (W, G, P, R, C, L, T). LiveSPICE's other Ctrl shortcuts work too.
 

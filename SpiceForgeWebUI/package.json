@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc --noEmit && node build.mjs",
     "watch": "node build.mjs --watch",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "tsc --noEmit && node build.mjs --test && node dist-test/conformance.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

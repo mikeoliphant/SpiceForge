@@ -129,9 +129,22 @@ The client works out the nodes itself, for drawing and for its own use. The rule
 
 `circuit.check` reports the server's node assignment, for testing the client's against it.
 
-### Editing rules the client reproduces
+### Editing
 
-What the desktop editor does, which the client needs to match:
+**The contract and the editor are separate.** The client must keep compatibility with the schematic file format,
+but its editing behaviour is its own, chosen for making good sense rather than to match LiveSPICE's desktop editor.
+The contract is:
+
+- **The file format:** documents go to and from `.schx` losslessly (the server does the conversion).
+- **Symbol geometry:** each terminal lies where `catalog.layout` and the mapping above put it.
+- **Connectivity:** the client's nodes are the server's (`circuit.check`, which runs LiveSPICE's own
+  `Circuit.Schematic`).
+
+`SpiceForge.Validate server` checks the contract. It runs `SpiceForgeWebUI`'s conformance test, which compares the
+client's connectivity with `circuit.check`'s on every test schematic, as loaded and after random rotations, flips,
+moves, wires and deletions.
+
+**The editor's own rules**, as `SpiceForgeWebUI` implements them:
 
 - **Rotating** a set of elements by `dt` quarter turns about the point `c`. For every symbol position and wire end,
   with `cos` and `sin` of dt·90° (each 0 or ±1) and `d = p − c`:
@@ -142,22 +155,26 @@ What the desktop editor does, which the client needs to match:
 
   A symbol's `rotation` also increases by `dt`.
   - **The centre `c`** is the midpoint of the elements' bounds, in integers (truncating), snapped to the grid.
-  - **Rounding** here and in snapping is to the nearest integer, halves to even (.NET's `Math.Round`).
-- **Flipping** over the line y = `c.y`: every symbol position and wire end gets `y += round(2·(c.y − y))`, and each
-  symbol's `flip` toggles.
-- **Wire joining:** the wire tool's path is added segment by segment. For each segment from A to B:
+  - **Rounding** here and in snapping is to the nearest integer, halves to even.
+- **Flipping** over the line y = `c.y`: every symbol position and wire end gets `y += round(2·(c.y − y))`. Each symbol's
+  `rotation` negates and its `flip` toggles. A symbol maps by R(r)·S(s), so its mirror image is
+  F·R(r)·S(s) = R(−r)·S(−s). LiveSPICE only toggles `flip`. That's the same at even rotations, but at odd ones it
+  mirrors the part the wrong way, off its wires.
+- **Wire joining** keeps LiveSPICE's `SchematicEditor.AddWire`, because it keeps the drawing tidy. The path is added
+  segment by segment. For each segment from A to B:
   1. Find the existing wires collinear with it and overlapping it, and replace them and the new segment with their
      union, from a to b.
   2. Split the union at every point between a and b where an element has a terminal: a symbol terminal, or the end
      of a wire that isn't collinear with it. Also split at A or B where either lies on a crossing wire that the other
      doesn't.
   3. Add one wire per piece.
-  The whole path is one undo step. This is `SchematicEditor.AddWire` in LiveSPICE.
-- **Routing a drag** into an L-shaped path is a choice of the client's; LiveSPICE picks whichever of the two corners
-  follows the pointer more closely.
+
+  The whole path is one undo step. The splitting is tidying, not meaning: a wire ending anywhere on another connects
+  either way.
+- **Routing a drag** into an L-shaped path: the first leg follows the direction the drag started in.
 - **Names:** when a component is added whose `Name` is already used, it's renamed with the letters of its name plus
-  the first free number (`R1` becomes `R4`), as LiveSPICE's component collection does. Building fails on duplicate
-  names, so the client should also stop a rename that would clash.
+  the first free number (`R1` becomes `R4`), as LiveSPICE's component collection would rename it anyway. Building
+  fails on duplicate names, so the client also refuses a rename that would clash.
 
 ## Symbols
 
@@ -644,9 +661,9 @@ Each area of `UISpec.md`, and what serves it:
 | Canvas, zoom, pan, auto-scroll, selection, rubber band | Client |
 | Drawing symbols, terminals, wires | Client, from catalogue layouts (terminals binding, artwork optional) |
 | Tooltips | Client, from the document and type descriptors |
-| Move, rotate, flip, delete, undo, redo | Client, by the editing rules above |
+| Move, rotate, flip, delete, undo, redo | Client, by its own editing rules (see Editing) |
 | Placing components | Catalogue `entries` and their layouts |
-| Wire tool, routing, joining | Client, by the editing rules above |
+| Wire tool, routing, joining | Client, by its own editing rules (see Editing) |
 | Cut, Copy, Paste | Client; `schx.toXml` and `schx.fromXml` for the desktop app's clipboard format |
 | Component library, categories, filter, refresh | `catalog.get`, `catalog.refresh`; filtering in the client |
 | Properties panel, multi-selection, schematic properties | Type descriptors; `values.check`; edits in the client |
@@ -680,13 +697,13 @@ The price of owning the document, in one list:
 
 - **The document model:** loading from and saving to the JSON format, element ids, dirty tracking, and undo and
   redo.
-- **Connectivity**, by LiveSPICE's rules.
-- **The editing rules:** rotate, flip, wire joining and names.
+- **Connectivity**, by LiveSPICE's rules: part of the contract.
+- **Its own editing rules** (see Editing): rotate, flip, wire joining and names.
 - **Symbols:** mapping and hit-testing, and caching layouts by type, properties and body.
 - **Property editing**, from the type descriptors.
-- **A conformance test.** For each catalogue type and a set of test schematics (LiveSPICE's `Tests` folder), the
-  client's terminal positions and nodes should match `catalog.layout` and `circuit.check`. Without this, files can
-  open with silently broken connections.
+- **A conformance test** of the contract. `SpiceForgeWebUI/test/conformance.ts` compares the client's nodes with
+  `circuit.check`'s on all of LiveSPICE's test schematics, as loaded and after random edits. It runs in
+  `SpiceForge.Validate server`. Without it, files could open with silently broken connections.
 
 ## Server notes
 

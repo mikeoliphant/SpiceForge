@@ -131,7 +131,8 @@ export function wireIntersects(w: WireElement, rect: Box): boolean {
   );
 }
 
-/** Whether a terminal at this schematic point is connected: some wire passes through it (Schematic.NodeAt). */
+/** Whether a terminal at this schematic point is connected: some wire passes through it (Schematic.NodeAt). A wire
+ * whose ends coincide isn't one: LiveSPICE loads it as a warning symbol. */
 export function onAnyWire(x: Point, wires: readonly WireElement[]): boolean {
-  return wires.some((w) => pointOnSegment(x, w.a, w.b));
+  return wires.some((w) => (w.a[0] !== w.b[0] || w.a[1] !== w.b[1]) && pointOnSegment(x, w.a, w.b));
 }

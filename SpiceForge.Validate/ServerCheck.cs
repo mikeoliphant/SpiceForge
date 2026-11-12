@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -85,6 +85,7 @@ internal static class ServerCheck
                 return;
             }
             await Exercise(port, testsDir, scratch);
+            Conformance(repo, port, testsDir);
         }
         finally
         {
@@ -236,6 +237,58 @@ internal static class ServerCheck
         // Settings.
         JsonObject settings = Result(await client.Request("settings.set", new JsonObject { ["client"] = new JsonObject { ["layout"] = "x" } }));
         Check(settings["client"]?["layout"]?.GetValue<string>() == "x", "the client's state is stored");
+    }
+
+    /// <summary>
+    /// The web editor's contract with the file format: SpiceForgeWebUI's conformance test (test/conformance.ts) compares
+    /// the client's connectivity with circuit.check's on every test schematic, as loaded and after random edits. It
+    /// needs Node and the front end's npm packages; without them it's reported as skipped, not passed.
+    /// </summary>
+    private static void Conformance(string repo, int port, string testsDir)
+    {
+        Console.WriteLine("=== The web editor against the server (SpiceForgeWebUI conformance)");
+        string webui = Path.Combine(repo, "SpiceForgeWebUI");
+        if (!Directory.Exists(Path.Combine(webui, "node_modules", "esbuild")))
+        {
+            Console.WriteLine("  skipped: run `npm install` in SpiceForgeWebUI first");
+            return;
+        }
+        (int exit, string output) Node(string arguments)
+        {
+            var start = new ProcessStartInfo("node", arguments)
+            {
+                WorkingDirectory = webui,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            start.Environment["SPICEFORGE_HOST"] = $"ws://127.0.0.1:{port}";
+            start.Environment["SPICEFORGE_TOKEN"] = Token;
+            start.Environment["SPICEFORGE_TESTS"] = testsDir;
+            using Process process = Process.Start(start)!;
+            Task<string> error = process.StandardError.ReadToEndAsync();
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            return (process.ExitCode, output + error.Result);
+        }
+        try
+        {
+            var build = Node("build.mjs --test");
+            if (build.exit != 0)
+            {
+                Check(false, $"building the conformance test: {build.output.Trim()}");
+                return;
+            }
+            var run = Node("dist-test/conformance.mjs");
+            string[] lines = run.output.Trim().Split('\n');
+            foreach (string line in lines.Take(lines.Length - 1).Take(12))
+                Console.WriteLine("    " + line.TrimEnd());
+            Check(run.exit == 0, lines.LastOrDefault()?.Trim() ?? "no output");
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            Console.WriteLine("  skipped: Node.js isn't on the PATH");
+        }
     }
 
     private static string? Code(JsonObject reply) => reply["error"]?["code"]?.GetValue<string>();

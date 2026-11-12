@@ -20,9 +20,10 @@ export class ApiClient {
   /** Called when the connection closes, with the reason if there was one. */
   onClose: (reason: string) => void = () => {};
 
-  /** Opens the socket to the server this page was served from. */
-  connect(token: string): Promise<void> {
-    const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api?token=${encodeURIComponent(token)}`;
+  /** Opens the socket to the server this page was served from, or (outside a page, as in the tests) to `host`. */
+  connect(token: string, host?: string): Promise<void> {
+    const where = host ?? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+    const url = `${where}/api?token=${encodeURIComponent(token)}`;
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(url);
       this.socket = socket;

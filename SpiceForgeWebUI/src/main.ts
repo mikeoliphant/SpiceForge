@@ -2,13 +2,14 @@
 // select, move, rotate, flip, delete, cut, copy and paste, edit properties, undo, and save.
 
 import { ApiClient, RequestError } from "./client";
-import { nameAdded } from "./edits";
+import { moveElements, nameAdded } from "./edits";
+import { snap } from "./geometry";
 import { Editor } from "./editor";
 import { chooseFile } from "./fileDialog";
 import { LayoutCache } from "./layouts";
 import { LibraryPanel, WireType } from "./library";
 import { PropertiesPanel } from "./properties";
-import type { CatalogEntry, Element, FileRead, Hello, SymbolElement } from "./protocol";
+import type { CatalogEntry, Element, FileRead, Hello, Point, SymbolElement } from "./protocol";
 import { SchematicView } from "./view";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -53,7 +54,13 @@ let clipboardFallback: string | null = null;
 Object.assign(window, { spiceforge: { editor, library, layouts } });
 
 view.onChange = (zoom) => (zoomLabel.textContent = `${Math.round(zoom * 100)}%`);
-view.onPointer = (x, y) => (pointer.textContent = `${Math.round(x)}, ${Math.round(y)}`);
+/** Where the pointer is over the schematic, in its coordinates; null when it's elsewhere. */
+let pointerAt: Point | null = null;
+view.onPointer = (x, y) => {
+  pointer.textContent = `${Math.round(x)}, ${Math.round(y)}`;
+  pointerAt = [x, y];
+};
+svg.addEventListener("pointerleave", () => (pointerAt = null));
 editor.onChange = () => {
   updateChrome();
   properties.render();
@@ -222,6 +229,15 @@ async function paste(text: string | null) {
     // Rename clashing components first: a renamed component's layout differs (its name is drawn).
     nameAdded(editor.document, elements);
     await layouts.fetch(elements.filter((e): e is SymbolElement => e.kind === "symbol").map((s) => s.component));
+    // Centre the paste on the pointer when it's over the schematic (Ctrl+V); otherwise (the toolbar button) put it a
+    // little down and right of where it was copied from, so it's never hidden under the original. Either way by whole
+    // grid steps, so the elements stay on the grid.
+    const bounds = editor.boundsOf(elements);
+    if (bounds) {
+      const center: Point = [Math.trunc((bounds.min[0] + bounds.max[0]) / 2), Math.trunc((bounds.min[1] + bounds.max[1]) / 2)];
+      const by = pointerAt ? snap([pointerAt[0] - center[0], pointerAt[1] - center[1]]) : ([20, 20] as Point);
+      moveElements({ circuit: {}, elements }, new Set(elements.map((e) => e.id)), by);
+    }
     editor.addElements(elements, "Paste");
   } catch (e) {
     setStatus(`Couldn't paste: ${errorText(e)}`, "error");
