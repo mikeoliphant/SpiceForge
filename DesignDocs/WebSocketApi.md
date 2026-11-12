@@ -238,6 +238,9 @@ Y  = y1·cos − x·sin + py
   ```
 
   Normal text is 12 units, small 6 and large 18, in black, in a faint box (black at 1/8 opacity, 0.2 units).
+  SpiceForgeWebUI leaves the box out. A Label's layout bounds are a fixed 40 × 20 box at its upper left, marked by
+  two gray corner lines, since a layout can't measure text; SpiceForgeWebUI doesn't draw the lines on the schematic,
+  and outlines (and selects) a Label around its text instead.
 - **Terminals** are 2-unit squares, red when unconnected and wire-coloured when connected.
 - **Wires** are 1-unit dark blue lines, with 1.8-unit squares at their ends.
 - **Selection:** a selected symbol gets a dashed DodgerBlue box, and a highlighted one a dashed gray box.
@@ -387,8 +390,8 @@ A property descriptor:
 |---|---|---|
 | `audio.devices` | | `drivers: [{name, devices: [{name}]}]` |
 | `audio.deviceInfo` | `driver`, `device` (default: the driver's first) | `name`, `inputs: [name]`, `outputs: [name]`, `sampleRates: [Hz]`, `bufferSizes: [samples]`, `defaultSampleRate`, `defaultBufferSize`, `controlPanel` |
-| `audio.getConfig` | | `driver`, `device`, `inputs: [name]`, `outputs: [name]`, `sampleRate`, `bufferSize`, `state` |
-| `audio.setConfig` | any of the same fields | the configuration as applied, with `state` |
+| `audio.getConfig` | | `driver`, `device`, `inputs: [name]`, `outputs: [name]`, `sampleRate`, `bufferSize`, `state`, `byDriver` |
+| `audio.setConfig` | any of the same fields | the configuration as applied, with `state` and `byDriver` |
 | `audio.controlPanel` | `driver`, `device` (default: the configured ones) | |
 | `audio.test` | `enabled` | |
 
@@ -401,8 +404,10 @@ A property descriptor:
   first device, its first input, its first two outputs, its current rate, its preferred buffer size. An empty list
   of channels means none.
 - **`audio.setConfig`:**
-  - Fields left out keep their values, except that a new driver starts from its defaults. A field given as null goes
-    back to the default.
+  - Fields left out keep their values, except that another driver starts from the configuration last used with it
+    (its device, channels, rate and buffer size), else its defaults; a remembered device that's no longer installed
+    gives way to the driver's first. `byDriver` has each driver's last configuration, for a client to show when its
+    driver is chosen. A field given as null goes back to the default.
   - Checks the configuration against the device, and saves it to the settings.
   - Moves a running simulation or test to the new device, rebuilding first if the sample rate changed.
   - A channel the device doesn't have, or an unsupported `sampleRate` or `bufferSize`, fails with `invalid_value`,
@@ -782,7 +787,8 @@ from the command line, environment variables prefixed `SPICEFORGE_`, or `appsett
 | `--listAudio true` | Prints every driver's devices, with their channels, rates and buffer sizes, and exits |
 
 The audio settings on the command line apply to that run only, over the saved configuration; a different `--audio`
-starts from that driver's defaults. `audio.setConfig` from a client applies and saves.
+starts from the configuration last used with that driver, else its defaults. `audio.setConfig` from a client
+applies and saves.
 
 It prints the URL to connect to, with the token, and the audio device it will use. `SpiceForge.Validate server`
 checks it: every test schematic through the JSON document and back, every editing operation against a running

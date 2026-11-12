@@ -31,6 +31,8 @@ export interface AudioConfig {
   sampleRate: number | null;
   bufferSize: number | null;
   state: AudioState;
+  /** The configuration last used with each driver, by driver name. */
+  byDriver?: Record<string, Omit<AudioConfig, "state" | "byDriver">>;
 }
 
 interface DeviceInfo {
@@ -90,6 +92,7 @@ export function describeAudio(state: AudioState): string {
 /** Shows the audio dialog until it's closed. */
 export async function configureAudio(client: ApiClient): Promise<void> {
   const [config, drivers] = await Promise.all([client.request<AudioConfig>("audio.getConfig"), client.request<Drivers>("audio.devices")]);
+  let byDriver = config.byDriver ?? {};
 
   const driver = h("select", { title: "The kind of audio device. None runs simulations on the server's own clock, with no audio." });
   const device = h("select", { title: "The device (for ASIO, the driver)" });
@@ -245,6 +248,7 @@ export async function configureAudio(client: ApiClient): Promise<void> {
         bufferSize: buffer.value ? Number(buffer.value) : null,
       });
       showState(applied.state);
+      byDriver = applied.byDriver ?? byDriver;
       return true;
     } catch (e) {
       error.textContent = messageOf(e);
@@ -295,10 +299,15 @@ export async function configureAudio(client: ApiClient): Promise<void> {
     client.onFrame((frame, source) => source === 0 && testing && scope.receive(frame)),
   ];
 
+  // Another driver starts from what was last used with it (its device, channels, rate and buffer size), as the server
+  // does; a remembered device that's gone gives way to the first.
   driver.addEventListener("change", () => {
-    chosenInputs = chosenOutputs = null;
-    fillDevices(null);
-    void loadInfo(null, null);
+    const last = byDriver[driver.value];
+    chosenInputs = last?.inputs ?? null;
+    chosenOutputs = last?.outputs ?? null;
+    fillDevices(last?.device ?? null);
+    if (last?.device && device.value !== last.device) chosenInputs = chosenOutputs = null;
+    void loadInfo(last?.sampleRate ?? null, last?.bufferSize ?? null);
   });
   device.addEventListener("change", () => {
     chosenInputs = chosenOutputs = null;

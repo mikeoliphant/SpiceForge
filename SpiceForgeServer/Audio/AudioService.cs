@@ -50,12 +50,13 @@ public sealed class AudioService : IDisposable
     public AudioConfig Config => config;
 
     /// <summary>The configuration a run starts with: the saved one, with whatever the command line gives on top. A
-    /// different driver on the command line starts from that driver's defaults.</summary>
-    public static AudioConfig Startup(AudioConfig saved, ServerOptions options)
+    /// different driver on the command line starts from the configuration last used with it, else its defaults.</summary>
+    public static AudioConfig Startup(SettingsStore settings, ServerOptions options)
     {
+        AudioConfig saved = AudioConfig.FromJson(settings.Audio);
         AudioConfig c = saved;
         if (options.AudioDriver != null && !string.Equals(options.AudioDriver, saved.Driver, StringComparison.OrdinalIgnoreCase))
-            c = new AudioConfig { Driver = options.AudioDriver };
+            c = LastUsed(settings, options.AudioDriver);
         return c with
         {
             Device = options.AudioDevice ?? c.Device,
@@ -228,8 +229,13 @@ public sealed class AudioService : IDisposable
     {
         JsonObject json = config.ToJson();
         json["state"] = StateJson();
+        json["byDriver"] = settings.AudioByDriver;
         return Task.FromResult<JsonNode?>(json);
     }
+
+    /// <summary>The configuration last used with a driver, or that driver's defaults.</summary>
+    private static AudioConfig LastUsed(SettingsStore settings, string driver) =>
+        settings.AudioFor(driver) is JsonObject last ? AudioConfig.FromJson(last) with { Driver = driver } : new AudioConfig { Driver = driver };
 
     /// <summary><c>audio.setConfig</c>: checks the configuration against the device, saves it, and moves a running
     /// client to it. Fields left out keep their values, except that a new driver starts from its defaults.</summary>
@@ -240,6 +246,10 @@ public sealed class AudioService : IDisposable
         {
             AudioConfig next = Merge(config, args);
             AudioDriver driver = Driver(next.Driver);
+            // A remembered device that's gone (uninstalled) gives way to the driver's first, with its default channels.
+            if (!args.Has("device") && next.Device != null
+                && !(await driver.Devices()).Contains(next.Device, StringComparer.OrdinalIgnoreCase))
+                next = next with { Device = null, Inputs = null, Outputs = null };
             string device = next.Device ?? (await driver.Devices()).FirstOrDefault()
                 ?? throw new ApiException(ErrorCodes.NotFound, $"There are no {driver.DriverName} devices.");
             next = next with { Driver = driver.DriverName, Device = device };
@@ -287,14 +297,16 @@ public sealed class AudioService : IDisposable
         hub.Broadcast("settings.changed", settings.Snapshot());
         JsonObject result = config.ToJson();
         result["state"] = StateJson();
+        result["byDriver"] = settings.AudioByDriver;
         return result;
     }
 
-    private static AudioConfig Merge(AudioConfig current, Args args)
+    private AudioConfig Merge(AudioConfig current, Args args)
     {
         AudioConfig c = current;
+        // Another driver starts from what was last used with it: its device, channels, rate and buffer size.
         if (args.OptionalString("driver") is string driver && !string.Equals(driver, current.Driver, StringComparison.OrdinalIgnoreCase))
-            c = new AudioConfig { Driver = driver };
+            c = LastUsed(settings, driver);
         if (args.Has("device"))
             c = c with { Device = args.OptionalString("device") };
         if (args.Has("inputs"))

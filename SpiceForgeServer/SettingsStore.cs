@@ -86,13 +86,33 @@ public sealed class SettingsStore
         get { lock (sync) return data["audio"]?.DeepClone() as JsonObject; }
     }
 
+    /// <summary>Saves the audio configuration, and remembers it as the last used with its driver.</summary>
     public void SetAudio(JsonObject audio)
     {
         lock (sync)
         {
             data["audio"] = audio.DeepClone();
+            if (audio["driver"]?.GetValue<string>() is string driver)
+            {
+                if (data["audioByDriver"] is not JsonObject byDriver)
+                    data["audioByDriver"] = byDriver = new JsonObject();
+                byDriver[driver] = audio.DeepClone();
+            }
             Save();
         }
+    }
+
+    /// <summary>The configuration last saved with each driver, by driver name.</summary>
+    public JsonObject AudioByDriver
+    {
+        get { lock (sync) return data["audioByDriver"]?.DeepClone() as JsonObject ?? new JsonObject(); }
+    }
+
+    /// <summary>The configuration last saved with a driver, or null if it's never been used.</summary>
+    public JsonObject? AudioFor(string driver)
+    {
+        lock (sync)
+            return (data["audioByDriver"] as JsonObject)?.FirstOrDefault(d => string.Equals(d.Key, driver, StringComparison.OrdinalIgnoreCase)).Value?.DeepClone() as JsonObject;
     }
 
     /// <summary>Moves a file to the front of the recent files.</summary>

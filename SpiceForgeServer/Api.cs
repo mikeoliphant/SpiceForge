@@ -28,7 +28,7 @@ public sealed class ServerContext : IDisposable
         Log = new LogHub(Hub);
         Settings = new SettingsStore(options.SettingsPath);
         Files = new FileService(Settings, Log, Hub);
-        Audio = new AudioService(Hub, Log, Settings, AudioService.Startup(AudioConfig.FromJson(Settings.Audio), options));
+        Audio = new AudioService(Hub, Log, Settings, AudioService.Startup(Settings, options));
         Simulations = new SimulationService(this);
     }
 
