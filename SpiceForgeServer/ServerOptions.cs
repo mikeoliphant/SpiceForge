@@ -36,6 +36,27 @@ public sealed class ServerOptions
     /// <summary>Whether to open the front end in the default browser once the server starts (<c>--open true</c>).</summary>
     public bool OpenBrowser { get; init; }
 
+    // The audio configuration for this run, over the saved one (see AudioService.Startup). Null: the saved value.
+
+    /// <summary><c>--audio</c>: the driver, <c>None</c> or <c>ASIO</c>.</summary>
+    public string? AudioDriver { get; init; }
+
+    /// <summary><c>--audioDevice</c>: the device (for ASIO, the driver's name).</summary>
+    public string? AudioDevice { get; init; }
+
+    /// <summary><c>--audioInputs</c>, <c>--audioOutputs</c>: channel names, comma-separated; empty for none.</summary>
+    public IReadOnlyList<string>? AudioInputs { get; init; }
+
+    public IReadOnlyList<string>? AudioOutputs { get; init; }
+
+    /// <summary><c>--sampleRate</c>, <c>--bufferSize</c>.</summary>
+    public int? SampleRate { get; init; }
+
+    public int? BufferSize { get; init; }
+
+    /// <summary><c>--listAudio true</c>: print the audio drivers, devices and channels, and exit.</summary>
+    public bool ListAudio { get; init; }
+
     public static string NewToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 
     public static ServerOptions From(IConfiguration configuration)
@@ -56,12 +77,38 @@ public sealed class ServerOptions
             UserFolder = userFolder,
             WebRoot = FindWebRoot(configuration["webRoot"]),
             OpenBrowser = bool.TryParse(configuration["open"], out bool open) && open,
+            AudioDriver = AudioDriverName(configuration["audio"]),
+            AudioDevice = configuration["audioDevice"],
+            AudioInputs = Channels(configuration["audioInputs"]),
+            AudioOutputs = Channels(configuration["audioOutputs"]),
+            SampleRate = PositiveNumber(configuration["sampleRate"], "sample rate"),
+            BufferSize = PositiveNumber(configuration["bufferSize"], "buffer size"),
+            ListAudio = bool.TryParse(configuration["listAudio"], out bool list) && list,
             ComponentFolders = new[]
             {
                 Path.Combine(AppContext.BaseDirectory, "Components"),
                 Path.Combine(userFolder, "Components"),
             },
         };
+    }
+
+    private static string? AudioDriverName(string? configured)
+    {
+        if (configured == null)
+            return null;
+        return Audio.AudioService.DriverNames.FirstOrDefault(d => string.Equals(d, configured, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"There's no audio driver '{configured}' here. The drivers are: {string.Join(", ", Audio.AudioService.DriverNames)}.");
+    }
+
+    private static IReadOnlyList<string>? Channels(string? configured) =>
+        configured?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static int? PositiveNumber(string? configured, string what)
+    {
+        if (configured == null)
+            return null;
+        return int.TryParse(configured, out int value) && value > 0 ? value
+            : throw new ArgumentException($"The {what} must be a positive whole number, not '{configured}'.");
     }
 
     private static string? FindWebRoot(string? configured)

@@ -29,8 +29,11 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
     terms for the SDK parts. VST is a trademark of Steinberg Media Technologies GmbH.
 - [MonoGame](https://github.com/MonoGame/MonoGame) (`MonoGame.Framework.WindowsDX`, `MonoGame.Framework.DesktopGL`,
   `MonoGame.Content.Builder.Task`; Microsoft Public License): rendering the plugin's editor, and building its content.
-- [NAudio](https://github.com/naudio/NAudio) (MIT): reading and writing WAV files in the renderer, validation tools and
-  host.
+- [NAudio](https://github.com/naudio/NAudio) by Mark Heath (MIT): reading and writing WAV files in the renderer,
+  validation tools and host. `NAudio.Asio` (3.3.0) is SpiceForgeServer's ASIO support: its `AsioDevice` duplex mode
+  runs one callback per buffer with each channel as a float span, converting to and from the driver's native format,
+  and reports driver resets and resyncs. It calls ASIO drivers through its own COM vtable definitions
+  (`AsioDriver.AsioDriverVTable`).
 - [SVG.NET](https://github.com/svg-net/SVG) (`Svg`, through UILayout's image processor; Microsoft Public License):
   rendering the editor's SVG images.
 - [Roslyn](https://github.com/dotnet/roslyn) (`Microsoft.CodeAnalysis.CSharp`; MIT), referenced by the plugin.

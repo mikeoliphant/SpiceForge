@@ -15,6 +15,9 @@ public sealed class Args
 
     public bool Has(string name) => args[name] is not null;
 
+    /// <summary>Whether the argument is given at all, even as null.</summary>
+    public bool Contains(string name) => args.ContainsKey(name);
+
     public string String(string name) => OptionalString(name) ?? throw Missing(name);
 
     public string? OptionalString(string name) => args[name] switch

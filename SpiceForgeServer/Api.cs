@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
+using SpiceForgeServer.Audio;
 using SpiceForgeServer.Catalogue;
 using SpiceForgeServer.Documents;
 using SpiceForgeServer.Protocol;
@@ -8,7 +9,8 @@ using Util;
 
 namespace SpiceForgeServer;
 
-/// <summary>Everything the handlers share: the settings, the log, the catalogue, files, and the sessions.</summary>
+/// <summary>Everything the handlers share: the settings, the log, the catalogue, files, the audio device, and the
+/// sessions.</summary>
 public sealed class ServerContext : IDisposable
 {
     public ServerOptions Options { get; }
@@ -17,6 +19,7 @@ public sealed class ServerContext : IDisposable
     public SettingsStore Settings { get; }
     public FileService Files { get; }
     public SimulationService Simulations { get; }
+    public AudioService Audio { get; }
     private Catalog? catalog;
 
     public ServerContext(ServerOptions options)
@@ -25,6 +28,7 @@ public sealed class ServerContext : IDisposable
         Log = new LogHub(Hub);
         Settings = new SettingsStore(options.SettingsPath);
         Files = new FileService(Settings, Log, Hub);
+        Audio = new AudioService(Hub, Log, Settings, AudioService.Startup(AudioConfig.FromJson(Settings.Audio), options));
         Simulations = new SimulationService(this);
     }
 
@@ -43,6 +47,7 @@ public sealed class ServerContext : IDisposable
     public void Dispose()
     {
         Simulations.Dispose();
+        Audio.Dispose();
         Files.Dispose();
     }
 }
@@ -60,7 +65,7 @@ public sealed class Api
     // Operations the spec defines that this server doesn't do yet: they answer `unsupported` rather than `unknown_op`.
     private static readonly string[] NotYet =
     {
-        "audio.devices", "audio.getConfig", "audio.setConfig", "audio.test", "sim.setOutput",
+        "sim.setOutput",
     };
 
     public Api(ServerContext context)
@@ -99,6 +104,12 @@ public sealed class Api
             ["sim.probe"] = context.Simulations.Probe,
             ["sim.removeProbes"] = context.Simulations.RemoveProbes,
             ["sim.scope"] = context.Simulations.Scope,
+            ["audio.devices"] = context.Audio.Devices,
+            ["audio.deviceInfo"] = context.Audio.DeviceInfo,
+            ["audio.getConfig"] = context.Audio.GetConfig,
+            ["audio.setConfig"] = context.Audio.SetConfig,
+            ["audio.controlPanel"] = context.Audio.ControlPanel,
+            ["audio.test"] = context.Audio.Test,
         };
     }
 
@@ -111,7 +122,7 @@ public sealed class Api
         if (handlers.TryGetValue(op, out Handler? handler))
             return handler(session, args);
         if (NotYet.Contains(op))
-            throw new ApiException(ErrorCodes.Unsupported, $"'{op}' isn't implemented yet: this server has no audio device so far.");
+            throw new ApiException(ErrorCodes.Unsupported, $"'{op}' isn't implemented yet: every output plays the Speakers.");
         throw new ApiException(ErrorCodes.UnknownOp, $"There's no operation '{op}'.");
     }
 
@@ -133,7 +144,8 @@ public sealed class Api
             ["capabilities"] = new JsonObject
             {
                 ["simulation"] = true,
-                ["audio"] = false,
+                ["audio"] = true,
+                ["audioDrivers"] = Json.Strings(AudioService.DriverNames),
                 ["maxInputs"] = 1,
                 ["resampling"] = Json.Strings(new[] { "linear", "sinc" }),
                 ["oversample"] = new JsonObject { ["min"] = 1, ["max"] = 64 },

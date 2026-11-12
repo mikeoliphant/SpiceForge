@@ -890,7 +890,8 @@ the web front end shows it on a scope.
 
 - **A thread can stand in for the device.** The simulation thread processes 256-sample blocks whenever the wall
   clock says one is due (48 kHz), drives the Input from a compiled expression, and sends the output only to the
-  meters. When real audio comes, the device's callback replaces the clock; nothing else in `Simulation` changes.
+  meters. When real audio came, the clock became one audio driver among others (`ClockDriver`, see Audio I/O), and
+  everything that had run inline on that thread moved to a monitor thread.
   The Pro Co Rat runs at 18 to 30% of real time at 4× sinc, from build to running in 0.6 to 0.75 s.
 - **Probe every node, read at step rate.** Adding a probe mustn't rebuild. `SchematicProcessorOptions.Probes` makes
   every node voltage the engine solves for an output after the Speakers', and the processor runs the engine stage by
@@ -958,6 +959,57 @@ the web front end shows it on a scope.
   `livespice`: every circuit ok but `Unstable/Triode stage`, which LiveSPICE can't solve either (see Starting out);
   the interpreter and compiled engine still agree exactly.
 
+## Audio I/O
+
+`SpiceForgeServer` plays simulations on ASIO devices, through NAudio, and keeps the clock of Simulating without audio
+as its `None` driver and its fallback. JACK (through JackSharpCore) and maybe WASAPI are to follow behind the same
+interface: a driver opens a stream for one client, prepares it while stopped, and calls it once per block.
+
+- **The device is the clock; everything else moves off its thread.** `Simulation.Process` runs once per device
+  block and does only the audio work: the input, `SchematicProcessor.Process`, the outputs, the peaks, and the probe
+  samples into a preallocated single-producer ring (`ScopeRing`). A monitor thread, at 60 Hz, drains the ring into
+  scope frames, sends the levels and stats, and reports failures (divergence included), which used to happen inline
+  on the clock thread with locks, LINQ and JSON. The refactor kept the offline agreement exact: the server check
+  still compares 70,912 streamed samples with `SchematicProcessor` offline, worst difference 7.5 nV as before, and
+  the scope streams without gaps.
+- **NAudio 3's `AsioDevice` duplex mode is the right ASIO layer.** One callback per buffer gets each input as a
+  float span and writes each output as one (`AsioProcessBuffers`), with NAudio converting to and from the driver's
+  native format; it reports driver resets (`DriverResetRequest`, recovered by Stop, Reinitialize, Start), resyncs,
+  and unexpected stops. The older `AsioOut` would have meant converting samples ourselves. The NAudio metapackage
+  doesn't include ASIO for net9.0 and later: `NAudio.Asio` is a separate package. Every call into a driver goes
+  through one STA thread (`StaWorker`), since ASIO drivers are COM objects made for one thread.
+- **Drivers for absent hardware fail cleanly, and say why.** Of the eight ASIO drivers installed on the development
+  machine, four couldn't open with nothing plugged in, each with a readable message ("No device is connected to the
+  PC."), which `audio.deviceInfo` and the fallback pass on. Realtek's driver reports a current rate of 0 until it
+  runs, so 0 is dropped from the rates offered and 48 kHz becomes its default.
+- **Tiered compilation glitched ASIO buffers; the server runs without it.** On ASIO4ALL (onboard Realtek) at
+  44.1 kHz, the Rat at 4× sinc with a probe streaming to the scope and the outputs silent (`SpiceForge.Validate asio`),
+  with the runtime's defaults: at 64 samples (a 1.45 ms budget) each start overran 7 callbacks in its first 300 ms of
+  playing, 1.6 to 5.2 ms each, and a rebuild overran 1, over two runs; at 128 samples, 4 at start and 1 more during
+  the run. With `<TieredCompilation>false</TieredCompilation>`, both sizes overran only the first processed block
+  (7.5 to 8.8 ms, the engine's first run), with no overruns in 20 s of running, in two runs each; rebuilds were clean
+  in three of the four runs (see GC below for the fourth). Load fell from 0.187 to 0.180 at 64 samples, and from 0.196
+  to 0.190 at 128. The overruns weren't GC: no collection ran between them. Without tiering the server took 35 ms
+  longer to start listening (225 against 190 ms), and the whole server check no longer (8 against 9 s); those two
+  were timed in the shell described next.
+- **Check the environment before trusting a runtime measurement.** The first measurements ran in a shell that set
+  `DOTNET_gcConcurrent=0`, `DOTNET_GCHeapCount=2` and `DOTNET_TC_CallCountThreshold=1000`, none of them set for the
+  user. The raised call-count threshold put tier-up 6.9 s into every run (3 overruns, as late as that), and with
+  background GC off, the gen2 collections during a rebuild's build blocked the audio thread for 4.8 to 5 ms. With the
+  variables cleared, tier-up finishes in the first second and background GC is on; the conclusion about tiering
+  stood, and the late overruns and long gen2 pauses were artefacts. `SpiceForge.Validate asio` should be run from a
+  clean environment.
+- **GC during a rebuild is the remaining risk at the smallest buffers.** Building in LiveSPICE's algebra allocates
+  heavily, and its gen0 and gen1 collections pause the audio thread too. At 96 kHz with 64-sample buffers (a 0.67 ms
+  budget, load 0.37 to 0.39) a rebuild overran 1 to 3 callbacks by 1.1 to 2.3 ms, in the shell with background GC
+  forced on. At 44.1 kHz without tiering, in the clean environment, one rebuild of four overran a 128-sample callback
+  by 3.2 ms, as a gen2 collection ran; the other three were clean. In steady state nothing
+  collects: the audio path allocates nothing, and the monitor's allocations are small.
+- **Close the device when nothing runs.** The device opens when a simulation or the test starts, and closes when it
+  stops, so an idle server doesn't hold an ASIO driver another program (a DAW) wants. A configuration that doesn't
+  check is refused before the running device is touched, unless a different ASIO driver has to be loaded to check
+  it, in which case the old one is reopened.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was
@@ -997,7 +1049,16 @@ the web front end shows it on a scope.
 - Knobs and switch buttons go to the least crowded of eight spots beside their symbols; on a dense schematic every
   spot may overlap something, and the least bad one is used.
 - A simulation's remembered setup is per file and per browser; an untitled schematic's isn't remembered.
-- Simulation has no audio device yet: the server's clock drives it, from expressions only. `sim.setOutput`, channel
-  sources and `audio.*` answer `unsupported`.
+- Audio runs on ASIO (Windows) or the internal clock; JACK, through JackSharpCore, is next. JackSharpCore's process
+  callback allocates on every cycle (arrays, buffers, a copy of each port), so it needs a span-based path before it
+  can carry audio without the GC pauses above. `sim.setOutput` still answers `unsupported`: every output plays the
+  Speakers. The web front end has no audio configuration panel yet; the API (`audio.devices`, `audio.deviceInfo`,
+  `audio.setConfig`, `audio.controlPanel`, `audio.test`) is there for it.
+- A rebuild at the smallest buffers (96 kHz, 64 samples) can still glitch, from the build's own garbage collections
+  (see Audio I/O). Options not yet tried: `GCSettings.LatencyMode = SustainedLowLatency` while a device runs, a
+  `SchematicProcessor` method that sizes its buffers on the build thread so the first block allocates nothing, and
+  building in a lower-allocation way.
+- The first block a new simulation processes overruns its buffer (7.5 ms, the engine's first run). It comes straight
+  after silence, so it isn't heard, but it's counted as a dropout.
 - The plugin defaults to 4× with a cap of 32, which the study found nearly as accurate as 8× for about 40% less CPU.
   With sinc resampling, error falls about 12 dB per doubling of N, so a user choosing sinc may want 8× back.

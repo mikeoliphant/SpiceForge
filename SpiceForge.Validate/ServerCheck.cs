@@ -16,6 +16,8 @@ using SpiceForgeServer.Documents;
 /// errors, the token check, and watching files;</item>
 /// <item>it simulates: the Speaker voltage its scope streams matches SchematicProcessor's own, offline, on the same
 /// schematic and input; controls, updates, probes and stopping behave as the spec says.</item>
+/// <item>its audio operations work on the internal clock (no device needed): listing, configuring, checking a
+/// configuration, the audio test, and a simulation running at the configured rate.</item>
 /// </list>
 /// </summary>
 internal static class ServerCheck
@@ -30,6 +32,121 @@ internal static class ServerCheck
         Live(repo, testsDir).GetAwaiter().GetResult();
         Console.WriteLine($"{problems} problem(s).");
         return problems == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// <c>asio "driver" [bufferSize] [seconds] [sampleRate]</c>: runs the Rat on a real ASIO device, for a person with the hardware.
+    /// The outputs stay closed (silent), so it's safe with speakers on; the input is an expression, so the load doesn't
+    /// depend on what's plugged in. The scope streams a probe throughout, as the editor's would. Reports the device's
+    /// rate, buffer and latency, the load, and the dropouts: driver resyncs plus callbacks that overran their buffer.
+    /// </summary>
+    public static int RunAsio(string repo, string testsDir, string device, int? bufferSize, int seconds, int? sampleRate)
+    {
+        problems = 0;
+        RunAsioAsync(repo, testsDir, device, bufferSize, seconds, sampleRate).GetAwaiter().GetResult();
+        Console.WriteLine($"{problems} problem(s).");
+        return problems == 0 ? 0 : 1;
+    }
+
+    private static async Task RunAsioAsync(string repo, string testsDir, string device, int? bufferSize, int seconds, int? sampleRate)
+    {
+        Console.WriteLine($"=== The Rat on the ASIO device '{device}'{(bufferSize != null ? $", {bufferSize}-sample buffers" : "")}, outputs silent");
+        string? server = FindServer(repo);
+        if (server == null)
+        {
+            Check(false, "SpiceForgeServer.dll not found: build SpiceForgeServer first");
+            return;
+        }
+        int port = FreePort();
+        string scratch = Path.Combine(Path.GetTempPath(), "SpiceForgeAsioCheck-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(scratch);
+        string buffer = (bufferSize != null ? $" --bufferSize {bufferSize}" : "") + (sampleRate != null ? $" --sampleRate {sampleRate}" : "");
+        var start = new ProcessStartInfo("dotnet", $"\"{server}\" --port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" " +
+            $"--userFolder \"{scratch}\" --audio ASIO --audioDevice \"{device}\" --audioOutputs={buffer}")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        using Process process = Process.Start(start)!;
+        try
+        {
+            if (!await WaitForListening(process))
+            {
+                Check(false, "server started");
+                return;
+            }
+            await using Client client = await Client.Connect(port);
+            Result(await client.Request("hello", new JsonObject { ["protocol"] = 1, ["client"] = "AsioCheck" }));
+            JsonObject read = Result(await client.Request("file.read", new JsonObject { ["path"] = Path.Combine(testsDir, "Examples", "Pro Co Rat.schx") }));
+            JsonObject document = read["document"]!.AsObject();
+            JsonObject sim = Result(await client.Request("sim.start", new JsonObject { ["document"] = document.DeepClone(), ["title"] = "Rat" }));
+            string id = sim["sim"]!.GetValue<string>();
+            JsonObject? state = await WaitFor(client, "audio.state", e => e["open"]?.GetValue<bool>() == true, TimeSpan.FromSeconds(20));
+            Check(state != null && state["driver"]?.GetValue<string>() == "ASIO" && state["fallback"]?.GetValue<bool>() == false,
+                $"the device opens: {state?.ToJsonString()}");
+            string? running = await WaitForState(client, id, "running");
+            Check(running == "running", $"the simulation runs ({running})");
+            JsonObject got = Result(await client.Request("sim.get", new JsonObject { ["sim"] = id }));
+            Check(got["sampleRate"]?.GetValue<double>() == state?["sampleRate"]?.GetValue<double>(), $"at the device's rate, {got["sampleRate"]} Hz");
+
+            JsonArray elements = document["elements"]!.AsArray();
+            string IdOfType(string type) => elements.First(e => e!["component"]?["type"]?.GetValue<string>().StartsWith(type) == true)!["id"]!.GetValue<string>();
+            string input = IdOfType("Circuit.Input"), speaker = IdOfType("Circuit.Speaker");
+            JsonArray inputs = state?["inputs"]?.AsArray() ?? new JsonArray();
+            if (inputs.Count > 0)
+            {
+                string first = inputs[0]!.GetValue<string>();
+                Check(got["inputs"]?[0]?["source"]?["channel"]?.GetValue<string>() == first, $"the Input plays the device's first input, '{first}'");
+            }
+            Result(await client.Request("sim.setInput", new JsonObject { ["sim"] = id, ["element"] = input, ["source"] = new JsonObject { ["expression"] = "0.5*Sin(2*Pi*220*t)" } }));
+            JsonObject probe = Result(await client.Request("sim.probe", new JsonObject { ["sim"] = id, ["target"] = new JsonObject { ["element"] = speaker, ["terminal"] = "Anode" } }));
+            int stream = probe["stream"]!.GetValue<int>();
+            await client.Request("sim.scope", new JsonObject { ["sim"] = id, ["enabled"] = true });
+            // The first second includes the build's own warm-up: measure after it.
+            await Task.Delay(1500);
+            while (await client.WaitForEvent("sim.stats", TimeSpan.Zero) != null) { }
+            client.Frames.Clear();
+            var loads = new List<double>();
+            long firstDropouts = -1, lastDropouts = 0;
+            for (int s = 0; s < seconds; s++)
+            {
+                JsonObject? stats = await client.WaitForEvent("sim.stats", TimeSpan.FromSeconds(3));
+                if (stats == null)
+                    break;
+                loads.Add(stats["load"]!.GetValue<double>());
+                lastDropouts = stats["dropouts"]!.GetValue<long>();
+                if (firstDropouts < 0)
+                    firstDropouts = lastDropouts;
+                Console.WriteLine($"       load {stats["load"]}, dropouts {lastDropouts}");
+            }
+            var frames = client.Frames.ToArray().Select(ParseFrame).Where(f => f.Signals.ContainsKey(stream)).ToList();
+            long gaps = frames.Zip(frames.Skip(1)).Count(p => p.Second.First != p.First.First + (ulong)p.First.Signals[stream].Length);
+            Check(loads.Count == seconds, $"{loads.Count} seconds of stats; load {(loads.Count > 0 ? $"{loads.Average():F3} on average, {loads.Max():F3} at most" : "-")}");
+            Check(gaps == 0 && frames.Count > 30 * seconds, $"the scope streams {frames.Count} frames with {gaps} gap(s)");
+            Check(lastDropouts - Math.Max(0, firstDropouts) == 0,
+                $"no dropouts while it runs: {lastDropouts - Math.Max(0, firstDropouts)} in {loads.Count} s ({firstDropouts} while it started, before it played)");
+
+            // A rebuild while it plays (an edit): the new build takes over at a block boundary.
+            await client.Request("sim.update", new JsonObject { ["sim"] = id, ["document"] = document.DeepClone() });
+            string? rebuilt = await WaitForState(client, id, "running");
+            await Task.Delay(2500);
+            JsonObject? after = null;
+            for (JsonObject? e; (e = await client.WaitForEvent("sim.stats", TimeSpan.FromMilliseconds(200))) != null;)
+                after = e;
+            after ??= await client.WaitForEvent("sim.stats", TimeSpan.FromSeconds(2));
+            long rebuildDropouts = (after?["dropouts"]?.GetValue<long>() ?? -1) - lastDropouts;
+            Check(rebuilt == "running" && rebuildDropouts == 0, $"a rebuild takes over without a dropout ({rebuildDropouts})");
+
+            await client.Request("sim.stop", new JsonObject { ["sim"] = id });
+            JsonObject? closed = await WaitFor(client, "audio.state", e => e["open"]?.GetValue<bool>() == false, TimeSpan.FromSeconds(10));
+            Check(closed != null, "stopping the simulation closes the device");
+        }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            try { Directory.Delete(scratch, recursive: true); } catch (IOException) { }
+        }
     }
 
     private static void Check(bool ok, string what)
@@ -118,10 +235,11 @@ internal static class ServerCheck
         await using Client client = await Client.Connect(port);
         JsonObject hello = Result(await client.Request("hello", new JsonObject { ["protocol"] = 1, ["client"] = "ServerCheck" }));
         Check(hello["protocol"]?.GetValue<int>() == 1 && hello["capabilities"]?["simulation"]?.GetValue<bool>() == true
-                && hello["capabilities"]?["audio"]?.GetValue<bool>() == false,
-            "hello: protocol 1, simulation but no audio yet");
+                && hello["capabilities"]?["audio"]?.GetValue<bool>() == true
+                && hello["capabilities"]?["audioDrivers"]?.AsArray().Any(d => d?.GetValue<string>() == "None") == true,
+            "hello: protocol 1, simulation and audio, with the None driver");
         Check(Code(await client.Request("no.such", null)) == "unknown_op", "an unknown operation is unknown_op");
-        Check(Code(await client.Request("audio.devices", new JsonObject())) == "unsupported", "audio answers unsupported");
+        await Audio(client);
 
         // The catalogue.
         JsonObject catalog = Result(await client.Request("catalog.get", null));
@@ -344,6 +462,10 @@ internal static class ServerCheck
             "a pot position outside 0 to 1 is refused");
         Check(Code(await client.Request("sim.setInput", new JsonObject { ["sim"] = id, ["element"] = input, ["source"] = new JsonObject { ["expression"] = "Sin(2*Pi*f*t)" } })) == "invalid_value",
             "an expression in anything but t is refused");
+        Check(Code(await client.Request("sim.setInput", new JsonObject { ["sim"] = id, ["element"] = input, ["source"] = new JsonObject { ["channel"] = "In 1" } })) == "invalid_value",
+            "a channel the device hasn't opened is refused");
+        Check(running["sampleRate"]?.GetValue<double>() == 48000, "it runs at the device's rate");
+        Check(Code(await client.Request("audio.test", new JsonObject { ["enabled"] = true })) == "audio_busy", "the audio test is audio_busy while a simulation runs");
         Check(Code(await client.Request("sim.start", new JsonObject { ["document"] = document.DeepClone() })) == "audio_busy",
             "a second sim.start without replace is audio_busy");
 
@@ -363,6 +485,58 @@ internal static class ServerCheck
         await client.Request("sim.stop", new JsonObject { ["sim"] = id });
         state = await WaitForState(client, id, "stopped");
         Check(state == "stopped" && Code(await client.Request("sim.get", new JsonObject { ["sim"] = id })) == "not_found", "sim.stop stops it");
+    }
+
+    /// <summary>
+    /// The audio operations on the internal clock, which every machine has. ASIO devices are only listed (that reads the
+    /// registry): opening one is left to a person with the hardware, so this check never takes over a sound card.
+    /// </summary>
+    private static async Task Audio(Client client)
+    {
+        Console.WriteLine("=== Audio, on the internal clock");
+        JsonObject devices = Result(await client.Request("audio.devices", new JsonObject()));
+        JsonObject? none = devices["drivers"]?.AsArray().OfType<JsonObject>().FirstOrDefault(d => d["name"]?.GetValue<string>() == "None");
+        Check(none?["devices"]?[0]?["name"]?.GetValue<string>() == "Internal clock",
+            $"audio.devices lists the internal clock ({string.Join(", ", devices["drivers"]!.AsArray().Select(d => $"{d!["name"]}: {d["devices"]!.AsArray().Count}"))})");
+        JsonObject info = Result(await client.Request("audio.deviceInfo", new JsonObject { ["driver"] = "None" }));
+        Check(info["sampleRates"]?.AsArray().Any(r => r?.GetValue<int>() == 48000) == true && info["inputs"]?.AsArray().Count == 0,
+            "audio.deviceInfo: the clock's rates, and no channels");
+        JsonObject config = Result(await client.Request("audio.getConfig", new JsonObject()));
+        Check(config["driver"]?.GetValue<string>() == "None" && config["state"]?["open"]?.GetValue<bool>() == false,
+            "audio.getConfig: the internal clock by default, closed while nothing runs");
+        JsonObject bad = await client.Request("audio.setConfig", new JsonObject { ["driver"] = "None", ["sampleRate"] = 12345 });
+        Check(Code(bad) == "invalid_value" && bad["error"]?["details"]?.AsArray().Count > 0, "a rate the device doesn't offer is invalid_value, listing those it does");
+        Check(Code(await client.Request("audio.setConfig", new JsonObject { ["driver"] = "Nonesuch" })) == "invalid_value", "an unknown driver is invalid_value");
+        JsonObject set = Result(await client.Request("audio.setConfig", new JsonObject { ["driver"] = "None", ["sampleRate"] = 44100, ["bufferSize"] = 128 }));
+        Check(set["sampleRate"]?.GetValue<int>() == 44100 && set["bufferSize"]?.GetValue<int>() == 128, "audio.setConfig applies a rate and buffer size");
+        JsonObject saved = Result(await client.Request("settings.get", new JsonObject()));
+        Check(saved["audio"]?["sampleRate"]?.GetValue<int>() == 44100, "and saves them in the settings");
+
+        Result(await client.Request("audio.test", new JsonObject { ["enabled"] = true }));
+        JsonObject? opened = await WaitFor(client, "audio.state", e => e["open"]?.GetValue<bool>() == true, TimeSpan.FromSeconds(3));
+        Check(opened?["open"]?.GetValue<bool>() == true && opened["sampleRate"]?.GetValue<double>() == 44100 && opened["bufferSize"]?.GetValue<int>() == 128,
+            $"audio.test opens the device at the configured rate: {opened?.ToJsonString()}");
+        Check(await client.WaitForEvent("audio.levels", TimeSpan.FromSeconds(2)) != null, "audio.levels arrive during the test");
+        Result(await client.Request("audio.test", new JsonObject { ["enabled"] = false }));
+        JsonObject? closed = await WaitFor(client, "audio.state", e => e["open"]?.GetValue<bool>() == false, TimeSpan.FromSeconds(3));
+        Check(closed?["open"]?.GetValue<bool>() == false, "stopping the test closes the device");
+
+        // Back to the defaults, which the simulation check below compares against offline.
+        JsonObject reset = Result(await client.Request("audio.setConfig", new JsonObject { ["driver"] = "None", ["sampleRate"] = null, ["bufferSize"] = null }));
+        Check(reset["sampleRate"] == null && reset["bufferSize"] == null, "a null puts a setting back to the device's default");
+    }
+
+    /// <summary>The first event of that name that matches, skipping earlier ones; null if none comes in time.</summary>
+    private static async Task<JsonObject?> WaitFor(Client client, string name, Func<JsonObject, bool> match, TimeSpan timeout)
+    {
+        var until = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < until)
+        {
+            JsonObject? e = await client.WaitForEvent(name, until - DateTime.UtcNow);
+            if (e == null || match(e))
+                return e;
+        }
+        return null;
     }
 
     /// <summary>Waits for a simulation to reach a state, or an error; returns the state it got to.</summary>

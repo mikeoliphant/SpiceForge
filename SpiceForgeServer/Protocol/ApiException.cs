@@ -16,6 +16,7 @@ public static class ErrorCodes
     public const string BuildFailed = "build_failed";
     public const string Unsupported = "unsupported";
     public const string AudioBusy = "audio_busy";
+    public const string AudioUnavailable = "audio_unavailable";
     public const string Diverged = "diverged";
     public const string Internal = "internal";
 }

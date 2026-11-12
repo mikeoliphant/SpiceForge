@@ -21,6 +21,12 @@ string testsDir = Path.Combine(repo, "Dependencies", "LiveSPICE", "Tests");
 if (args.Length > 0 && args[0] == "server")
     return ServerCheck.Run(repo, testsDir);
 
+// Opt-in, for a person with the hardware: asio "driver" [bufferSize] [seconds] [sampleRate].
+if (args.Length > 1 && args[0] == "asio")
+    return ServerCheck.RunAsio(repo, testsDir, args[1], args.Length > 2 && int.TryParse(args[2], out int buffer) ? buffer : null,
+        args.Length > 3 && int.TryParse(args[3], out int seconds) ? seconds : 10,
+        args.Length > 4 && int.TryParse(args[4], out int rate) ? rate : null);
+
 if (args.Length > 0 && args[0] == "segment")
     return SegmentCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 

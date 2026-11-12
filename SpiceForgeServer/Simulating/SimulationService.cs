@@ -1,16 +1,18 @@
 using System.Text.Json.Nodes;
+using SpiceForgeServer.Audio;
 using SpiceForgeServer.Protocol;
 
 namespace SpiceForgeServer.Simulating;
 
 /// <summary>
-/// The <c>sim.*</c> operations (WebSocketApi.md, Simulation). At most one simulation runs at a time, as on an audio
-/// device; there's no device yet, so it runs on its own real-time clock (see <see cref="Simulation"/>).
+/// The <c>sim.*</c> operations (WebSocketApi.md, Simulation). At most one simulation runs at a time, on the audio
+/// device (see <see cref="AudioService"/>): starting one attaches it to the device, and stopping it detaches it.
 /// </summary>
 public sealed class SimulationService : IDisposable
 {
     private readonly ServerContext context;
     private readonly object sync = new();
+    private readonly SemaphoreSlim starting = new(1, 1);
     private Simulation? current;
     private int next = 1;
 
@@ -25,18 +27,35 @@ public sealed class SimulationService : IDisposable
         JsonObject check = await Engine.Run(() => Simulation.Check(document));
 
         Simulation simulation;
-        lock (sync)
+        await starting.WaitAsync();
+        try
         {
-            if (current != null && !current.IsStopped && !replace)
-                throw new ApiException(ErrorCodes.AudioBusy, $"Simulation {current.Id} is running; stop it, or start with replace.");
-            current?.Stop();
-            simulation = new Simulation(context, next++, title, (JsonObject)document.DeepClone(), check, (JsonObject)settings.DeepClone());
-            current = simulation;
+            Simulation? old;
+            lock (sync)
+            {
+                if (current != null && !current.IsStopped && !replace)
+                    throw new ApiException(ErrorCodes.AudioBusy, $"Simulation {current.Id} is running; stop it, or start with replace.");
+                if (context.Audio.Client is AudioTest && !replace)
+                    throw new ApiException(ErrorCodes.AudioBusy, "The audio test is running; stop it, or start with replace.");
+                old = current;
+                old?.Stop();
+                simulation = new Simulation(context, next++, title, (JsonObject)document.DeepClone(), check, (JsonObject)settings.DeepClone());
+                current = simulation;
+            }
+            if (old != null)
+                await context.Audio.Detach(old);
+            await context.Audio.StopTest();
+            // Scope streams belonged to the old simulation.
+            foreach (Session s in context.Hub.Sessions)
+                s.ScopeSimulation = null;
+            // Attached first, so it builds for the device's rate.
+            await context.Audio.Attach(simulation);
+            simulation.Start();
         }
-        // Scope streams belonged to the old simulation.
-        foreach (Session s in context.Hub.Sessions)
-            s.ScopeSimulation = null;
-        simulation.Start();
+        finally
+        {
+            starting.Release();
+        }
         return simulation.ToJson();
     }
 
@@ -71,14 +90,15 @@ public sealed class SimulationService : IDisposable
 
     public Task<JsonNode?> GetJson(Session session, Args args) => Task.FromResult<JsonNode?>(Get(args).ToJson());
 
-    public Task<JsonNode?> Stop(Session session, Args args)
+    public async Task<JsonNode?> Stop(Session session, Args args)
     {
         Simulation simulation = Get(args);
         simulation.Stop();
         foreach (Session s in context.Hub.Sessions)
             if (s.ScopeSimulation == simulation.Id)
                 s.ScopeSimulation = null;
-        return Task.FromResult<JsonNode?>(null);
+        await context.Audio.Detach(simulation);
+        return null;
     }
 
     public Task<JsonNode?> Set(Session session, Args args)
@@ -121,7 +141,11 @@ public sealed class SimulationService : IDisposable
 
     public void Dispose()
     {
+        Simulation? simulation;
         lock (sync)
-            current?.Stop();
+            simulation = current;
+        simulation?.Stop();
+        if (simulation != null)
+            context.Audio.Detach(simulation).Wait(TimeSpan.FromSeconds(5));
     }
 }

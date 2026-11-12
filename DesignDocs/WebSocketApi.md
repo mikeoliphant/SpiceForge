@@ -255,6 +255,7 @@ Y  = y1·cos − x·sin + py
 - **`capabilities`** says what this server supports:
   - `simulation` and `audio`: whether those operations are implemented. While they're false, `sim.*` and `audio.*`
     answer `unsupported`;
+  - `audioDrivers`: the drivers this server has, such as `["None", "ASIO"]` (see Audio);
   - `maxInputs`: how many Input components a simulation can drive (see Server notes);
   - `resampling`: the choices (`["linear", "sinc"]`);
   - `oversample` and `iterationCap`: their ranges;
@@ -384,35 +385,59 @@ A property descriptor:
 
 | Op | Args | Result |
 |---|---|---|
-| `audio.devices` | | `drivers: [{name, devices: [{name, inputs: [name], outputs: [name], sampleRates: [Hz], bufferSizes: [samples]}]}]` |
-| `audio.getConfig` | | `driver`, `device`, `inputs: [name]`, `outputs: [name]`, `sampleRate`, `bufferSize` |
-| `audio.setConfig` | the same fields | the configuration as applied |
+| `audio.devices` | | `drivers: [{name, devices: [{name}]}]` |
+| `audio.deviceInfo` | `driver`, `device` (default: the driver's first) | `name`, `inputs: [name]`, `outputs: [name]`, `sampleRates: [Hz]`, `bufferSizes: [samples]`, `defaultSampleRate`, `defaultBufferSize`, `controlPanel` |
+| `audio.getConfig` | | `driver`, `device`, `inputs: [name]`, `outputs: [name]`, `sampleRate`, `bufferSize`, `state` |
+| `audio.setConfig` | any of the same fields | the configuration as applied, with `state` |
+| `audio.controlPanel` | `driver`, `device` (default: the configured ones) | |
 | `audio.test` | `enabled` | |
 
+- **Drivers:** `None` is the internal clock (see Simulation): one device, `Internal clock`, with no channels. `ASIO`
+  (Windows) lists the installed ASIO drivers as its devices, through NAudio. JACK is planned.
+- **Listing and probing are separate.** `audio.devices` only names the devices, which is quick. `audio.deviceInfo`
+  loads an ASIO driver to read its channels, rates and buffer sizes, which can take a moment. While an ASIO device
+  is open, looking at a different one fails with `audio_busy`: ASIO drivers don't take kindly to two being loaded.
+- **The configuration** names its channels, as LiveSPICE stores them. A null field means the device's default: its
+  first device, its first input, its first two outputs, its current rate, its preferred buffer size. An empty list
+  of channels means none.
 - **`audio.setConfig`:**
-  - Saves the choice to the settings.
-  - Moves a running simulation to the new device, rebuilding first if the sample rate changed.
-  - Channels are named, as LiveSPICE stores them.
-  - An unsupported `sampleRate` or `bufferSize` fails with `invalid_value`, listing what the device supports.
+  - Fields left out keep their values, except that a new driver starts from its defaults. A field given as null goes
+    back to the default.
+  - Checks the configuration against the device, and saves it to the settings.
+  - Moves a running simulation or test to the new device, rebuilding first if the sample rate changed.
+  - A channel the device doesn't have, or an unsupported `sampleRate` or `bufferSize`, fails with `invalid_value`,
+    listing what the device has in `details`. A running device is left as it was.
+- **`audio.controlPanel`** opens the driver's own settings window, on the server's machine. For many ASIO drivers
+  it's the only way to change the buffer size. If the driver then changes its rate or buffer size, the server
+  restarts the device and rebuilds the simulation for the new rate.
 - **`audio.test`** opens the device and loops the sum of its inputs to every output, as LiveSPICE's Test button does.
-  While it runs, the summed signal streams as stream 0 and `audio.levels` events carry its level. It fails with
-  `audio_busy` while a simulation is running.
+  While it runs, the summed signal streams to every connection as stream 0 (source 0), and `audio.levels` events
+  carry each channel's level. It fails with `audio_busy` while a simulation is running.
+- **When the device opens.** It opens when a simulation or the test starts, and closes when it stops, so an idle
+  server doesn't hold an ASIO driver another program wants.
+- **Falling back.** If the configured device can't be opened (a USB interface that isn't plugged in), or stops while
+  running, the simulation carries on on the internal clock, and `audio.state` has `fallback` and the `error`.
+  `audio.setConfig` tries the device again.
 
 Events:
 
-- `audio.state`: `open`, `driver`, `device`, `sampleRate`, `bufferSize`, `error`. Sent when the device opens,
-  closes, changes rate, or fails.
-- `audio.levels`: `inputs: [peak]`, `outputs: [peak]`, at about 10 Hz, during a test.
+- `audio.state`: `open`, `driver`, `device`, and while it's open `sampleRate`, `bufferSize`, `inputs`, `outputs`,
+  `inputLatency` and `outputLatency` (in samples, as the driver reports them), `fallback`, and `error` if the
+  configured device couldn't be used. Sent when the device opens, closes, changes, or fails.
+- `audio.levels`: `inputs: [peak]`, `outputs: [peak]`, one per channel, at about 10 Hz, during a test.
 
 ## Simulation
 
 At most one simulation runs on the audio device at a time.
 
-**Without an audio device** (SpiceForgeServer so far: `capabilities.audio` is false), a simulation runs on its own
-clock instead, in real time at 48 kHz, in blocks of 256 samples. The Input is driven by an expression (a 220 Hz sine
-at half its full scale until the client sets one), and the output only drives the meters; `outputs` is empty, and
-`sim.setOutput` and channel sources answer `unsupported`. If processing falls more than a quarter second behind, the
-clock skips ahead and `sim.stats` counts a dropout. Everything else is as below.
+**On a device**, the Input plays the device's first open input until the client sets a source, and every open
+output plays the Speakers. `sim.setOutput` isn't implemented yet, and answers `unsupported`.
+
+**Without an audio device** (the `None` driver, or a fallback), a simulation runs on the internal clock instead, in
+real time at the configured rate (48 kHz by default), in blocks of the configured size (256 samples by default). The
+Input is driven by an expression (a 220 Hz sine at half its full scale until the client sets one), and the output
+only drives the meters; `outputs` is empty, and channel sources fail with `invalid_value`. If processing falls more
+than a quarter second behind, the clock skips ahead and `sim.stats` counts a dropout. Everything else is as below.
 
 ### Lifecycle
 
@@ -556,6 +581,9 @@ A probe:
 | `sim.levels` | `sim`, `inputs: [peak]`, `outputs: [peak]` | about 10 Hz |
 | `sim.stats` | `sim`, `load` (fraction of real time), `cappedSteps`, `rejectedSettings`, `dropouts` | 1 Hz |
 
+- **Dropouts** count, since the simulation started: the internal clock skipping ahead, driver resyncs (ASIO's
+  `kAsioResyncRequest`), and callbacks whose processing took longer than their buffer lasts.
+
 - **Levels** are linear peaks after the gains, each decaying over about 0.25 s. The client colours its lamps
   directly: green below 0.5, yellow below 0.75, orange below 0.95, red above.
 - **`cappedSteps`** counts Newton steps that hit the iteration cap since the last report.
@@ -589,7 +617,7 @@ A `log` event carries one entry: `{ "time": "2026-11-11T14:03:22.512Z", "level":
 | `bad_document` | A document doesn't follow the format (a missing field, a type that isn't a component) |
 | `build_failed` | The circuit couldn't be built or solved; `details` has the problems, and the log has LiveSPICE's messages |
 | `unsupported` | The circuit needs something this server can't do, such as more Inputs than `maxInputs` |
-| `audio_unavailable` | The device can't be opened |
+| `audio_unavailable` | The device can't be opened (a simulation falls back to the internal clock instead) |
 | `audio_busy` | The device is in use by a simulation or a test |
 | `diverged` | The simulation diverged (as a `sim.state` code) |
 | `internal` | A server bug; the message has the exception |
@@ -721,14 +749,16 @@ The price of owning the document, in one list:
 
 ## Server notes
 
-**Status.** `SpiceForgeServer` implements the editing side:
+**Status.** `SpiceForgeServer` implements:
 - session and settings;
 - the catalogue, layouts and value checks;
 - files, watching and the clipboard format;
 - `circuit.check`;
-- the log.
+- the log;
+- simulation, with controls, probes and the scope;
+- audio, on ASIO devices (Windows) or the internal clock.
 
-Audio and simulation answer `unsupported`, and `hello` reports `simulation: false` and `audio: false`.
+`sim.setOutput` answers `unsupported`: every output plays the Speakers.
 
 **Running it.** It listens on 127.0.0.1, port 8370 by default ('S' is 83 and 'F' is 70 in ASCII). The settings come
 from the command line, environment variables prefixed `SPICEFORGE_`, or `appsettings.json`:
@@ -740,9 +770,20 @@ from the command line, environment variables prefixed `SPICEFORGE_`, or `appsett
 | `--allowedOrigins` | None, besides the server's own (comma-separated) |
 | `--settings` | `%APPDATA%/SpiceForge/server-settings.json` |
 | `--userFolder` | `Documents/LiveSPICE` |
+| `--audio` | The saved driver, else `None` (`None` or `ASIO`) |
+| `--audioDevice` | The saved device, else the driver's first |
+| `--audioInputs`, `--audioOutputs` | The saved channels, else the device's defaults (comma-separated names; empty for none, as `--audioOutputs=`) |
+| `--sampleRate`, `--bufferSize` | The saved ones, else the device's |
+| `--listAudio true` | Prints every driver's devices, with their channels, rates and buffer sizes, and exits |
 
-It prints the URL to connect to, with the token. `SpiceForge.Validate server` checks it: every test schematic through
-the JSON document and back, and every editing operation against a running server.
+The audio settings on the command line apply to that run only, over the saved configuration; a different `--audio`
+starts from that driver's defaults. `audio.setConfig` from a client applies and saves.
+
+It prints the URL to connect to, with the token, and the audio device it will use. `SpiceForge.Validate server`
+checks it: every test schematic through the JSON document and back, every editing operation against a running
+server, simulation, and the audio operations on the internal clock. `SpiceForge.Validate asio "driver" [bufferSize]
+[seconds] [sampleRate]` runs the Rat on a real ASIO device with its outputs silent, and reports the load, the
+dropouts, and whether a rebuild glitches; it's for a person with the hardware, and never runs on its own.
 
 What the server needs beyond today's SpiceForge:
 
@@ -762,8 +803,8 @@ What the server needs beyond today's SpiceForge:
   position) when it builds, to report problems, nodes, controls and probes in the client's terms.
 - **Lossless files.** A file read and then written without edits should come back unchanged, apart from formatting:
   unresolved components and subcircuit bodies included. A round-trip test over the `Tests` folder checks it.
-- **Audio drivers:** the stand-alone host's ASIO support (`AudioPlugSharpHost`) covers Windows. Which other drivers
-  to support decides what `audio.devices` lists.
+- **Audio drivers:** ASIO through NAudio's `AsioDevice` (duplex: one callback reads the inputs and writes the
+  outputs), with every driver call on one STA thread. JACK, through JackSharpCore, is next; WASAPI maybe after.
 - **Threading:** LiveSPICE's computer algebra isn't known to be thread-safe (see LessonsLearned.md, Validation).
   Builds, layouts and checks should therefore run one at a time, on a dedicated thread.
 
@@ -775,5 +816,5 @@ What the server needs beyond today's SpiceForge:
   ask for every distinct (type, properties) it sees? The second is simpler, and on a local socket probably fast
   enough.
 - Is one simulation at a time right? LiveSPICE allowed several windows, each opening the device, which ASIO doesn't
-  permit.
+  permit. The audio service assumes one client on the device.
 - Should the scope stream be decimated on the server for slow clients, rather than dropped?

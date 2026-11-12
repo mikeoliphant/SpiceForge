@@ -80,6 +80,21 @@ public sealed class SettingsStore
         }
     }
 
+    /// <summary>The saved audio configuration (see <c>audio.setConfig</c>), or null if there's none.</summary>
+    public JsonObject? Audio
+    {
+        get { lock (sync) return data["audio"]?.DeepClone() as JsonObject; }
+    }
+
+    public void SetAudio(JsonObject audio)
+    {
+        lock (sync)
+        {
+            data["audio"] = audio.DeepClone();
+            Save();
+        }
+    }
+
     /// <summary>Moves a file to the front of the recent files.</summary>
     public void Used(string file) => UpdateRecent(list =>
     {

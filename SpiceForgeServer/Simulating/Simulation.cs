@@ -1,9 +1,9 @@
-using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using Circuit;
 using SpiceForge;
+using SpiceForgeServer.Audio;
 using SpiceForgeServer.Documents;
 using SpiceForgeServer.Protocol;
 using Util;
@@ -13,15 +13,14 @@ namespace SpiceForgeServer.Simulating;
 
 /// <summary>
 /// One simulation (WebSocketApi.md, Simulation): a <see cref="SchematicProcessor"/> built from a client's document, run
-/// in real time on its own thread. There's no audio device yet, so the thread is the clock: it processes a block
-/// whenever the wall clock says one is due, driving the Input from a test signal and sending the output only to the
-/// meters, while probes stream node voltages to the scope.
+/// on the audio device (see <see cref="AudioService"/>), or on the internal clock without one. The device calls
+/// <see cref="Process"/> for every block: it drives the Input from a device channel or an expression, and plays the
+/// Speakers on every output channel. A monitor thread does everything that mustn't happen on the audio thread: it
+/// streams the probes' samples to the scope, and sends the levels and stats, and any failure.
 /// </summary>
-public sealed class Simulation
+public sealed class Simulation : IAudioClient
 {
-    public const double SampleRate = 48000;
-    private const int Block = 256;
-    private const int ScopeRate = 60;
+    private const int MonitorRate = 60;
     private const int LevelRate = 10;
     private const double LevelDecaySeconds = 0.25;
 
@@ -29,8 +28,8 @@ public sealed class Simulation
 
     private readonly ServerContext context;
     private readonly object sync = new();
-    private readonly Thread thread;
-    private volatile bool stopping;
+    private readonly Thread monitor;
+    private volatile bool stopping, started;
 
     public string Id { get; }
     public int Number { get; }
@@ -44,22 +43,51 @@ public sealed class Simulation
     private string? code, message;
     private int buildVersion;
     private volatile SchematicProcessor? processor;
-    private Dictionary<string, int> probeIndex = new();
     private readonly Dictionary<string, double> potPositions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> switchPositions = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Probe> probes = new();
-    private volatile Probe[] probeSnapshot = Array.Empty<Probe>();
+    private volatile ProbeSet probeSnapshot = ProbeSet.Empty;
     private int nextProbe = 1;
     private InputSource? source;
     private volatile Func<double, double>? sourceFunction;
+    private volatile int sourceChannel = -1;   // The device input driving the Input, or -1.
     private volatile float inputGain = 1, outputGain = 1;
     private double inputDb, outputDb;
     private DateTime runningSince;
 
-    // Monitoring, written by the run thread.
-    private long dropouts;
+    // The device's format, and the audio thread's buffers for it: replaced by Prepare, while the device is stopped.
+    private volatile AudioFormat format = new(ClockDriver.DefaultSampleRate, 0, Array.Empty<string>(), Array.Empty<string>());
+    private double[][] inputs = { Array.Empty<double>() }, outputs = { Array.Empty<double>() };
 
-    private sealed record InputSource(JsonObject Json, Func<double, double>? Function);
+    // Written by the audio thread; read (and taken) by the monitor.
+    private long sample;               // Samples processed, from the first build's first: the stream's index, and t.
+    private long dropouts;
+    private long busyTicks;
+    private double inputPeak, outputPeak;
+    private volatile bool scopeWatched;
+    private volatile SchematicProcessor? failed;   // A build the audio thread has given up on.
+    private Failure? pendingFailure;
+    private readonly ScopeRing scope = new();
+
+    private sealed record InputSource(JsonObject Json, Func<double, double>? Function, string? Channel);
+
+    private sealed record Failure(SchematicProcessor Processor, bool Diverged, string Message);
+
+    /// <summary>The probes as the audio thread reads them: their nodes, and the streams they go out on. A new set is
+    /// made whenever the probes change, so the scope can tell where one set ends.</summary>
+    private sealed class ProbeSet
+    {
+        public static readonly ProbeSet Empty = new(Array.Empty<Probe>());
+
+        public ProbeSet(Probe[] probes)
+        {
+            Nodes = probes.Select(p => p.Node).ToArray();
+            Streams = probes.Select(p => p.Stream).ToArray();
+        }
+
+        public string[] Nodes { get; }
+        public int[] Streams { get; }
+    }
 
     private sealed class Probe
     {
@@ -89,13 +117,15 @@ public sealed class Simulation
         this.document = document;
         this.check = check;
         this.settings = settings;
-        thread = new Thread(RunLoop) { IsBackground = true, Name = $"Simulation {Id}", Priority = ThreadPriority.AboveNormal };
+        monitor = new Thread(Monitor) { IsBackground = true, Name = $"Simulation {Id} monitor" };
     }
 
-    /// <summary>Starts building, and the thread that will run the build.</summary>
+    /// <summary>Starts building, and the monitor. Attach the simulation to the audio device first, so it builds for the
+    /// device's rate.</summary>
     public void Start()
     {
-        thread.Start();
+        started = true;
+        monitor.Start();
         _ = BuildAsync();
     }
 
@@ -170,6 +200,7 @@ public sealed class Simulation
         Dictionary<string, double> pots;
         Dictionary<string, int> switches;
         bool first, needSource;
+        AudioFormat device = format;
         lock (sync)
         {
             if (stopping)
@@ -189,13 +220,19 @@ public sealed class Simulation
             CapturingLog log = context.Log.For(Id);
             var (built, initialSource) = await Engine.Run(() =>
             {
-                SchematicProcessor p = Create(doc, options, pots, switches, log);
-                // The first time, the Input plays a 220 Hz sine at half its full scale, until the client sets a source.
+                SchematicProcessor p = Create(doc, options, pots, switches, log, device.SampleRate);
+                // The first time, the Input plays the device's first input, or without one a 220 Hz sine at half its
+                // full scale, until the client sets a source.
                 InputSource? initial = null;
                 if (needSource && p.HasInput)
                 {
-                    string text = $"{Format(p.InputFullScale / 2)}*Sin(2*Pi*220*t)";
-                    initial = new InputSource(new JsonObject { ["expression"] = text }, CompileSource(text));
+                    if (device.Inputs.Count > 0)
+                        initial = new InputSource(new JsonObject { ["channel"] = device.Inputs[0] }, null, device.Inputs[0]);
+                    else
+                    {
+                        string text = $"{Format(p.InputFullScale / 2)}*Sin(2*Pi*220*t)";
+                        initial = new InputSource(new JsonObject { ["expression"] = text }, CompileSource(text), null);
+                    }
                 }
                 return (p, initial);
             });
@@ -213,7 +250,7 @@ public sealed class Simulation
                 foreach (SwitchControl control in built.Switches)
                     if (switchPositions.TryGetValue(control.Name, out int position) && position < control.Positions)
                         control.Position = position;
-                probeIndex = built.ProbeNodes.Select((name, i) => (name, i)).ToDictionary(p => p.name, p => p.i);
+                lookup = new ProbeLookup(built, built.ProbeNodes.Select((name, i) => (name, i)).ToDictionary(p => p.name, p => p.i));
                 processor = built;
                 runningSince = DateTime.UtcNow;
             }
@@ -231,7 +268,7 @@ public sealed class Simulation
         }
     }
 
-    private SchematicProcessor Create(JsonObject doc, JsonObject options, Dictionary<string, double> pots, Dictionary<string, int> switches, ILog log)
+    private SchematicProcessor Create(JsonObject doc, JsonObject options, Dictionary<string, double> pots, Dictionary<string, int> switches, ILog log, double sampleRate)
     {
         XElement xml = SchxConverter.ToSchematic(doc);
         string title = Title;
@@ -242,7 +279,7 @@ public sealed class Simulation
             return circuit;
         }
         var args = new Args(options);
-        return new SchematicProcessor(Build, SampleRate, new SchematicProcessorOptions
+        return new SchematicProcessor(Build, sampleRate, new SchematicProcessorOptions
         {
             Oversample = Math.Clamp(args.Int("oversample", 4), 1, 64),
             IterationCap = Math.Clamp(args.Int("iterationCap", 32), 1, 127),
@@ -294,7 +331,7 @@ public sealed class Simulation
                 ["title"] = Title,
                 ["state"] = state,
                 ["settings"] = settings.DeepClone(),
-                ["sampleRate"] = SampleRate,
+                ["sampleRate"] = format.SampleRate,
                 ["latency"] = p?.Latency ?? 0,
             };
             if (code != null)
@@ -374,8 +411,12 @@ public sealed class Simulation
             ["pots"] = pots,
             ["switches"] = switches,
             ["inputs"] = inputs,
-            // No audio device: the output only drives the meters.
-            ["outputs"] = new JsonArray(),
+            // Every output channel plays the Speakers. Without a device there are none: the output only drives the meters.
+            ["outputs"] = Json.Array(format.Outputs.Select(channel => (JsonNode?)new JsonObject
+            {
+                ["channel"] = channel,
+                ["signal"] = new JsonObject { ["speakers"] = true },
+            })),
             ["gains"] = new JsonObject { ["inputDb"] = inputDb, ["outputDb"] = outputDb },
         };
     }
@@ -450,14 +491,22 @@ public sealed class Simulation
                 throw new ApiException(ErrorCodes.NotFound, $"Element '{element}' isn't an Input of the circuit.");
         InputSource newSource;
         if (sourceJson["silence"] is JsonValue)
-            newSource = new InputSource(new JsonObject { ["silence"] = true }, null);
+            newSource = new InputSource(new JsonObject { ["silence"] = true }, null, null);
         else if (sourceJson["expression"] is JsonValue e && e.TryGetValue(out string? text))
         {
             Func<double, double> function = await Engine.Run(() => CompileSource(text));
-            newSource = new InputSource(new JsonObject { ["expression"] = text }, function);
+            newSource = new InputSource(new JsonObject { ["expression"] = text }, function, null);
         }
-        else if (sourceJson["channel"] != null)
-            throw new ApiException(ErrorCodes.Unsupported, "This server has no audio device yet: use an expression or silence.");
+        else if (sourceJson["channel"] is JsonValue c && c.TryGetValue(out string? channel))
+        {
+            IReadOnlyList<string> available = format.Inputs;
+            string name = available.FirstOrDefault(a => string.Equals(a, channel, StringComparison.OrdinalIgnoreCase))
+                ?? throw new ApiException(ErrorCodes.InvalidValue, available.Count > 0
+                    ? $"The audio device has no input '{channel}' open. Its inputs are: {string.Join(", ", available)}."
+                    : $"No audio inputs are open, so there's no input '{channel}': configure the audio device's inputs.",
+                    Json.Strings(available));
+            newSource = new InputSource(new JsonObject { ["channel"] = name }, null, name);
+        }
         else
             throw new ApiException(ErrorCodes.InvalidValue, "A source is { \"expression\": \"...\" }, { \"channel\": \"...\" } or { \"silence\": true }.");
         lock (sync)
@@ -469,7 +518,12 @@ public sealed class Simulation
     {
         source = newSource;
         sourceFunction = newSource.Function;
+        sourceChannel = ChannelIndex(newSource.Channel, format);
     }
+
+    // The index of an input channel among the device's open inputs, or -1: a channel that isn't open reads silence.
+    private static int ChannelIndex(string? channel, AudioFormat device) =>
+        channel == null ? -1 : device.Inputs.ToList().FindIndex(i => string.Equals(i, channel, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Compiles a signal in t (seconds), in volts. Uses LiveSPICE's computer algebra: call it on the engine.</summary>
     private static Func<double, double> CompileSource(string text)
@@ -561,7 +615,7 @@ public sealed class Simulation
                 probe = new Probe { Id = $"p{number}", Stream = number, Target = (JsonObject)target.DeepClone(), Node = node, Color = color };
                 probes.Add(probe);
             }
-            probeSnapshot = probes.ToArray();
+            probeSnapshot = new ProbeSet(probes.ToArray());
         }
         BroadcastProbes();
         return probe.ToJson();
@@ -576,7 +630,7 @@ public sealed class Simulation
                 if (!probes.Any(p => p.Id == id))
                     throw new ApiException(ErrorCodes.NotFound, $"There's no probe '{id}'.");
             probes.RemoveAll(p => remove.Contains(p.Id));
-            probeSnapshot = probes.ToArray();
+            probeSnapshot = new ProbeSet(probes.ToArray());
         }
         BroadcastProbes();
     }
@@ -592,7 +646,7 @@ public sealed class Simulation
             else
                 probe.Node = node;
         }
-        probeSnapshot = probes.ToArray();
+        probeSnapshot = new ProbeSet(probes.ToArray());
     }
 
     private void BroadcastProbes()
@@ -605,172 +659,228 @@ public sealed class Simulation
 
     // ---- Running ----
 
-    private void RunLoop()
+    /// <summary>The probe nodes' indices into a build's <see cref="SchematicProcessor.ProbeSamples"/>, with the build they
+    /// belong to, so the audio thread never reads one build's samples by another's indices.</summary>
+    private sealed record ProbeLookup(SchematicProcessor? Processor, Dictionary<string, int> Index);
+
+    private volatile ProbeLookup lookup = new(null, new Dictionary<string, int>());
+
+    /// <summary>The device's format, before it starts and whenever it changes, while it's stopped: sizes the buffers,
+    /// and rebuilds if the rate changed.</summary>
+    public void Prepare(AudioFormat newFormat)
     {
-        var inputs = new[] { new double[Block] };
-        var outputs = new[] { new double[Block] };
-        var clock = Stopwatch.StartNew();
-        long sample = 0;               // The stream's sample index: the next sample to process.
-        double start = 0;              // Wall-clock seconds at which sample 0 was due.
-        SchematicProcessor? running = null;
-        var scope = new Dictionary<int, List<float>>();
-        long scopeStart = 0;
-        int scopeEvery = (int)(SampleRate / ScopeRate), levelEvery = (int)(SampleRate / LevelRate);
-        long nextScope = 0, nextLevels = 0, nextStats = 0;
-        double inputPeak = 0, outputPeak = 0;
-        double decay = Math.Exp(-Block / (LevelDecaySeconds * SampleRate));
-        double busy = 0, statsSince = 0;
-        long cappedBefore = 0;
+        AudioFormat old = format;
+        inputs = new[] { new double[newFormat.MaxFrames] };
+        outputs = new[] { new double[newFormat.MaxFrames] };
+        format = newFormat;
+        lock (sync)
+            sourceChannel = ChannelIndex(source?.Channel, newFormat);
+        if (!started || stopping)
+            return;
+        if (newFormat.SampleRate != old.SampleRate)
+            _ = BuildAsync();
+        BroadcastControls();
+    }
 
-        while (!stopping)
+    /// <summary>One block, on the audio thread. Allocates nothing, and takes no lock: what the monitor needs is left in
+    /// fields and in the scope ring.</summary>
+    public void Process(AudioBlock block)
+    {
+        int frames = block.Frames;
+        SchematicProcessor? p = processor;
+        double rate = format.SampleRate;
+        // Building, failed, or built for another rate (until the rebuild Prepare started): silence.
+        if (p == null || p == failed || stopping || p.SampleRate != rate || frames > inputs[0].Length)
         {
-            SchematicProcessor? p = processor;
-            if (p == null)
-            {
-                running = null;
-                Thread.Sleep(5);
-                continue;
-            }
-            if (p != running)
-            {
-                // A new build: carry on from now, without catching up on the time it took.
-                running = p;
-                cappedBefore = 0;
-                start = clock.Elapsed.TotalSeconds - sample / SampleRate;
-                statsSince = clock.Elapsed.TotalSeconds;
-                busy = 0;
-            }
+            Silence(block);
+            return;
+        }
+        long began = Stopwatch.GetTimestamp();
+        if (block.Skipped > 0 || block.Xruns > 0)
+        {
+            Interlocked.Add(ref dropouts, (block.Skipped > 0 ? 1 : 0) + block.Xruns);
+            sample += block.Skipped;
+        }
 
-            double now = clock.Elapsed.TotalSeconds;
-            double due = (now - start) * SampleRate;
-            if (sample + Block > due)
+        // The input: a device channel in the Input's full-scale units, or the source in volts; after the input gain.
+        double[] input = inputs[0];
+        double blockIn = 0;
+        int channel = sourceChannel;
+        if (channel >= 0 && channel < block.Inputs.Length)
+        {
+            float[] from = block.Inputs[channel];
+            double gain = inputGain;
+            for (int n = 0; n < frames; n++)
             {
-                Thread.Sleep(1);
-                continue;
-            }
-            if (due - sample > SampleRate / 4)
-            {
-                // More than a quarter second behind: skip ahead rather than spiral, and say so.
-                Interlocked.Increment(ref dropouts);
-                sample = (long)due - Block;
-                scope.Clear();
-            }
-
-            // The input: the source in volts, in the Input's full-scale units, after the input gain.
-            Func<double, double>? f = sourceFunction;
-            double gain = inputGain / p.InputFullScale;
-            double[] input = inputs[0];
-            double blockIn = 0;
-            for (int n = 0; n < Block; n++)
-            {
-                double x = f == null ? 0 : f((sample + n) / SampleRate) * gain;
+                double x = from[n] * gain;
                 input[n] = x;
                 blockIn = Math.Max(blockIn, Math.Abs(x));
             }
-
-            double began = clock.Elapsed.TotalSeconds;
-            try
+        }
+        else
+        {
+            Func<double, double>? f = sourceFunction;
+            double gain = inputGain / p.InputFullScale;
+            for (int n = 0; n < frames; n++)
             {
-                p.Process(inputs, outputs, Block);
-            }
-            catch (Exception ex)
-            {
-                Fail(p, ErrorCodes.Internal, $"The simulation failed: {ex.Message}");
-                continue;
-            }
-            busy += clock.Elapsed.TotalSeconds - began;
-
-            double blockOut = 0;
-            float outGain = outputGain;
-            double[] output = outputs[0];
-            for (int n = 0; n < Block; n++)
-                blockOut = Math.Max(blockOut, Math.Abs(output[n] * outGain));
-            if (double.IsNaN(blockOut) || double.IsInfinity(blockOut) || !ProbesFinite(p))
-            {
-                Diverged(p);
-                continue;
-            }
-            inputPeak = Math.Max(inputPeak * decay, blockIn);
-            outputPeak = Math.Max(outputPeak * decay, blockOut);
-
-            // Probe samples for the scope, for as long as anyone is watching.
-            Probe[] watched = probeSnapshot;
-            bool anyScope = context.Hub.Sessions.Any(s => s.ScopeSimulation == Id);
-            if (anyScope && watched.Length > 0)
-            {
-                if (scope.Count == 0)
-                    scopeStart = sample;
-                Dictionary<string, int> index = probeIndex;
-                foreach (Probe probe in watched)
-                {
-                    if (!scope.TryGetValue(probe.Stream, out List<float>? samples))
-                        scope[probe.Stream] = samples = new List<float>(scopeEvery * 2);
-                    // A probe that started mid-frame is padded at the front, so every signal starts at the frame's index.
-                    while (samples.Count < sample - scopeStart)
-                        samples.Add(0);
-                    if (index.TryGetValue(probe.Node, out int i))
-                    {
-                        double[] values = p.ProbeSamples[i];
-                        for (int n = 0; n < Block; n++)
-                            samples.Add((float)values[n]);
-                    }
-                    else
-                    {
-                        // Ground, or a node the circuit doesn't solve for: 0 V.
-                        for (int n = 0; n < Block; n++)
-                            samples.Add(0);
-                    }
-                }
-            }
-            else
-                scope.Clear();
-            sample += Block;
-
-            if (sample >= nextScope)
-            {
-                nextScope = sample + scopeEvery;
-                if (scope.Count > 0)
-                {
-                    SendScope(scopeStart, scope, watched);
-                    scope.Clear();
-                }
-            }
-            if (sample >= nextLevels)
-            {
-                nextLevels = sample + levelEvery;
-                context.Hub.Broadcast("sim.levels", new JsonObject
-                {
-                    ["sim"] = Id,
-                    ["inputs"] = p.HasInput ? new JsonArray(inputPeak) : new JsonArray(),
-                    ["outputs"] = new JsonArray(outputPeak),
-                });
-            }
-            if (sample >= nextStats)
-            {
-                nextStats = sample + (long)SampleRate;
-                double elapsed = clock.Elapsed.TotalSeconds - statsSince;
-                context.Hub.Broadcast("sim.stats", new JsonObject
-                {
-                    ["sim"] = Id,
-                    ["load"] = elapsed > 0 ? Math.Round(busy / elapsed, 4) : 0,
-                    ["cappedSteps"] = p.CappedSteps - cappedBefore,
-                    ["rejectedSettings"] = p.RejectedSettings,
-                    ["dropouts"] = Interlocked.Read(ref dropouts),
-                });
-                busy = 0;
-                cappedBefore = p.CappedSteps;
-                statsSince = clock.Elapsed.TotalSeconds;
+                double x = f == null ? 0 : f((sample + n) / rate) * gain;
+                input[n] = x;
+                blockIn = Math.Max(blockIn, Math.Abs(x));
             }
         }
+
+        try
+        {
+            p.Process(inputs, outputs, frames);
+        }
+        catch (Exception ex)
+        {
+            GiveUp(new Failure(p, false, $"The simulation failed: {ex.Message}"));
+            Silence(block);
+            return;
+        }
+
+        double blockOut = 0;
+        float outGain = outputGain;
+        double[] output = outputs[0];
+        for (int n = 0; n < frames; n++)
+            blockOut = Math.Max(blockOut, Math.Abs(output[n] * outGain));
+        if (double.IsNaN(blockOut) || double.IsInfinity(blockOut) || !ProbesFinite(p, frames))
+        {
+            GiveUp(new Failure(p, true, "The simulation diverged."));
+            Silence(block);
+            return;
+        }
+        // Every output channel plays the Speakers.
+        for (int o = 0; o < block.Outputs.Length; o++)
+        {
+            float[] to = block.Outputs[o];
+            for (int n = 0; n < frames; n++)
+                to[n] = (float)(output[n] * outGain);
+        }
+        Accumulate.Max(ref inputPeak, blockIn);
+        Accumulate.Max(ref outputPeak, blockOut);
+
+        // Probe samples for the scope, for as long as anyone is watching. Ground, or a node the circuit doesn't solve
+        // for, reads 0 V.
+        ProbeSet set = probeSnapshot;
+        if (scopeWatched && set.Nodes.Length > 0 && scope.Begin(set.Nodes.Length, frames))
+        {
+            ProbeLookup probesOf = lookup;
+            for (int j = 0; j < set.Nodes.Length; j++)
+            {
+                if (probesOf.Processor == p && probesOf.Index.TryGetValue(set.Nodes[j], out int i))
+                {
+                    double[] values = p.ProbeSamples[i];
+                    for (int n = 0; n < frames; n++)
+                        scope.Put(j, n, (float)values[n]);
+                }
+                else
+                    for (int n = 0; n < frames; n++)
+                        scope.Put(j, n, 0);
+            }
+            scope.Commit(sample, set.Streams);
+        }
+        sample += frames;
+        Interlocked.Add(ref busyTicks, Stopwatch.GetTimestamp() - began);
     }
 
-    private static bool ProbesFinite(SchematicProcessor p)
+    private static void Silence(AudioBlock block)
+    {
+        for (int o = 0; o < block.Outputs.Length; o++)
+            Array.Clear(block.Outputs[o], 0, block.Frames);
+    }
+
+    // The audio thread stops running this build at once; the monitor reports it (and rebuilds, after a divergence).
+    private void GiveUp(Failure failure)
+    {
+        failed = failure.Processor;
+        Interlocked.CompareExchange(ref pendingFailure, failure, null);
+    }
+
+    private static bool ProbesFinite(SchematicProcessor p, int frames)
     {
         foreach (double[] values in p.ProbeSamples)
-            for (int n = 0; n < Block; n++)
+            for (int n = 0; n < frames; n++)
                 if (!double.IsFinite(values[n]))
                     return false;
         return true;
+    }
+
+    /// <summary>The monitor thread: about 60 times a second it sends the scope's frames, and any failure; the levels at
+    /// about 10 Hz and the stats every second.</summary>
+    private void Monitor()
+    {
+        var clock = Stopwatch.StartNew();
+        double nextLevels = 0, lastLevels = 0, nextStats = 1, statsSince = 0;
+        double shownIn = 0, shownOut = 0;
+        SchematicProcessor? statsOf = null;
+        long cappedBefore = 0;
+        while (!stopping)
+        {
+            Thread.Sleep(1000 / MonitorRate);
+            if (Interlocked.Exchange(ref pendingFailure, null) is Failure failure)
+            {
+                if (failure.Diverged)
+                    Diverged(failure.Processor);
+                else
+                    Fail(failure.Processor, ErrorCodes.Internal, failure.Message);
+            }
+
+            List<Session> watching = context.Hub.Sessions.Where(s => s.ScopeSimulation == Id).ToList();
+            scopeWatched = watching.Count > 0;
+            foreach (byte[] frame in scope.Drain((uint)Number, (float)format.SampleRate))
+                foreach (Session session in watching)
+                    session.TrySendBinary(frame);
+
+            SchematicProcessor? p = processor;
+            double now = clock.Elapsed.TotalSeconds;
+            if (now >= nextLevels)
+            {
+                double decay = Math.Exp(-(now - lastLevels) / LevelDecaySeconds);
+                lastLevels = now;
+                nextLevels = now + 1.0 / LevelRate;
+                shownIn = Math.Max(shownIn * decay, Interlocked.Exchange(ref inputPeak, 0));
+                shownOut = Math.Max(shownOut * decay, Interlocked.Exchange(ref outputPeak, 0));
+                if (p != null)
+                {
+                    var levels = new JsonArray();
+                    for (int o = 0; o < Math.Max(1, format.Outputs.Count); o++)
+                        levels.Add(shownOut);
+                    context.Hub.Broadcast("sim.levels", new JsonObject
+                    {
+                        ["sim"] = Id,
+                        ["inputs"] = p.HasInput ? new JsonArray(shownIn) : new JsonArray(),
+                        ["outputs"] = levels,
+                    });
+                }
+            }
+            if (now >= nextStats)
+            {
+                double elapsed = now - statsSince;
+                statsSince = now;
+                nextStats = now + 1;
+                long busy = Interlocked.Exchange(ref busyTicks, 0);
+                if (p != null)
+                {
+                    if (p != statsOf)
+                    {
+                        statsOf = p;
+                        cappedBefore = 0;
+                    }
+                    long capped = p.CappedSteps;
+                    context.Hub.Broadcast("sim.stats", new JsonObject
+                    {
+                        ["sim"] = Id,
+                        ["load"] = elapsed > 0 ? Math.Round(busy / (double)Stopwatch.Frequency / elapsed, 4) : 0,
+                        ["cappedSteps"] = capped - cappedBefore,
+                        ["rejectedSettings"] = p.RejectedSettings,
+                        ["dropouts"] = Interlocked.Read(ref dropouts),
+                    });
+                    cappedBefore = capped;
+                }
+            }
+        }
     }
 
     private void Fail(SchematicProcessor p, string failCode, string failMessage)
@@ -794,36 +904,5 @@ public sealed class Simulation
         Fail(p, ErrorCodes.Diverged, "The simulation diverged.");
         if (rebuild)
             _ = BuildAsync();
-    }
-
-    /// <summary>A scope frame (WebSocketApi.md, Binary frames) with each watched probe's samples, to every connection
-    /// that has the scope on for this simulation.</summary>
-    private void SendScope(long first, Dictionary<int, List<float>> scope, Probe[] watched)
-    {
-        var signals = watched.Where(p => scope.ContainsKey(p.Stream)).Select(p => (p.Stream, Samples: scope[p.Stream])).ToList();
-        int size = 24 + signals.Sum(s => 8 + 4 * s.Samples.Count);
-        var frame = new byte[size];
-        Span<byte> span = frame;
-        span[0] = 1;
-        span[1] = 1;
-        BinaryPrimitives.WriteUInt32LittleEndian(span[4..], (uint)Number);
-        BinaryPrimitives.WriteUInt64LittleEndian(span[8..], (ulong)first);
-        BinaryPrimitives.WriteSingleLittleEndian(span[16..], (float)SampleRate);
-        BinaryPrimitives.WriteUInt16LittleEndian(span[20..], (ushort)signals.Count);
-        int at = 24;
-        foreach (var (stream, samples) in signals)
-        {
-            BinaryPrimitives.WriteUInt32LittleEndian(span[at..], (uint)stream);
-            BinaryPrimitives.WriteUInt32LittleEndian(span[(at + 4)..], (uint)samples.Count);
-            at += 8;
-            foreach (float value in samples)
-            {
-                BinaryPrimitives.WriteSingleLittleEndian(span[at..], value);
-                at += 4;
-            }
-        }
-        foreach (Session session in context.Hub.Sessions)
-            if (session.ScopeSimulation == Id)
-                session.TrySendBinary(frame);
     }
 }
