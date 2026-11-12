@@ -66,6 +66,11 @@ const simulation = new SimulationPanel({
   shown: () => active?.state ?? null,
   status: (text, kind) => setStatus(text, kind),
   changed: () => updateChrome(),
+  keyOf: (state) => tabs.find((t) => t.state === state)?.file?.path ?? null,
+  display: (componentOf) => {
+    editor.displayComponent = componentOf;
+    editor.redraw();
+  },
 });
 let hello: Hello | null = null;
 let connected = false;
@@ -906,6 +911,12 @@ async function start() {
   for (const f of files) if (!shown || !samePath(f, shown)) await open(f);
   if (shown && files.some((f) => samePath(f, shown))) await open(shown);
   if (tabs.length === 0) newTab();
+
+  // A simulation this browser tab was showing before a reload carries on, if its schematic is open again.
+  await simulation.resume((key) => {
+    const tab = tabs.find((t) => t.file && samePath(t.file.path, key));
+    return tab ? { state: tab.state, title: tabName(tab) } : null;
+  });
 }
 
 // ---- The theme: chosen here, kept in this browser and in the server's client settings ----

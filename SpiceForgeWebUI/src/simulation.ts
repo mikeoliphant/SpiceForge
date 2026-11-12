@@ -4,9 +4,9 @@
 
 import type { ApiClient } from "./client";
 import type { EditorState } from "./editor";
-import { mapBox, mapPoint, mappingOf } from "./geometry";
+import { boxIntersects, mapBox, mapPoint, mappingOf, type Box } from "./geometry";
 import type { LayoutCache } from "./layouts";
-import type { Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
+import type { ComponentData, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
 import { Scope, formatUnits, type SignalStats } from "./scope";
 import type { SchematicView } from "./view";
 
@@ -108,6 +108,42 @@ export interface SimulationHost {
   status: (text: string, kind?: "info" | "error") => void;
   /** Called when whether it's running or probing changes, for the toolbar. */
   changed: () => void;
+  /** Where to remember a schematic's simulation setup (probes, scope, input, controls): its file, or null. */
+  keyOf: (state: EditorState) => string | null;
+  /** Draws symbols as these stand-ins, for display only (null: as they are), and redraws. */
+  display: (componentOf: ((s: SymbolElement) => ComponentData | null) | null) => void;
+}
+
+/** What's remembered of a schematic's simulation between runs and reloads, in this browser. */
+interface Remembered {
+  probes: { target: Target; at: Point | null }[];
+  timeScale: number;
+  voltScale: number;
+  source: { expression?: string; silence?: boolean } | null;
+  pots: Record<string, number>;
+  switches: Record<string, number>;
+}
+
+const RememberPrefix = "spiceforge.sim:";
+/** The simulation this browser tab is showing, kept for a reload: the server carries on running it. */
+const RunningKey = "spiceforge.simulation";
+
+function readJson<T>(storage: Storage, key: string): T | null {
+  try {
+    const text = storage.getItem(key);
+    return text ? (JSON.parse(text) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeJson(storage: Storage, key: string, value: unknown) {
+  try {
+    if (value === null) storage.removeItem(key);
+    else storage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage may be full or unavailable; remembering is a convenience.
+  }
 }
 
 export class SimulationPanel {
@@ -118,6 +154,10 @@ export class SimulationPanel {
   private probingNow = false;
   /** Where each probe's flag is drawn, from where it was clipped on. */
   private readonly flags = new Map<string, Point>();
+  private rememberTimer = 0;
+  private displayTimer = 0;
+  /** Live positions to draw switches and pots at, by element id, while simulating. */
+  private readonly shownAs = new Map<string, ComponentData>();
   /** The knob being dragged on the schematic, if any. */
   private turning: { pot: string; pointer: number; startY: number; start: number } | null = null;
   private readonly scope: Scope;
@@ -214,10 +254,12 @@ export class SimulationPanel {
     e.timeScale.addEventListener("change", () => {
       this.scope.timePerDivision = TimeScales[Number(e.timeScale.value)] ?? null;
       this.scope.refresh();
+      this.remember();
     });
     e.voltScale.addEventListener("change", () => {
       this.scope.voltsPerDivision = VoltScales[Number(e.voltScale.value)] ?? null;
       this.scope.refresh();
+      this.remember();
     });
     e.freeze.addEventListener("click", () => {
       this.scope.frozen = !this.scope.frozen;
@@ -272,16 +314,9 @@ export class SimulationPanel {
     this.host.status(`Simulating ${title}…`);
     try {
       const info = await this.host.client.request<SimulationInfo>("sim.start", { document: state.doc, title, replace: true });
-      this.info = info;
-      this.state = state;
-      this.sentVersion = state.history.version;
-      this.host.root.hidden = false;
-      this.el.title.textContent = title;
-      this.setState(info);
-      this.showSettings(info.settings);
-      this.setControls(info);
-      this.setProbes(info.probes);
+      this.show(info, state, title);
       await this.host.client.request("sim.scope", { sim: info.sim, enabled: true });
+      await this.restore();
       this.host.status(`Simulating ${title}.`);
     } catch (e) {
       this.host.status(`Couldn't simulate: ${(e as Error).message}`, "error");
@@ -289,16 +324,126 @@ export class SimulationPanel {
     this.host.changed();
   }
 
+  /** Shows a simulation in the panel, for a schematic. */
+  private show(info: SimulationInfo, state: EditorState, title: string) {
+    this.info = info;
+    this.state = state;
+    this.sentVersion = state.history.version;
+    this.host.root.hidden = false;
+    this.el.title.textContent = title;
+    this.setState(info);
+    this.showSettings(info.settings);
+    this.setControls(info);
+    this.setProbes(info.probes);
+    writeJson(sessionStorage, RunningKey, { sim: info.sim, key: this.host.keyOf(state) });
+  }
+
+  /**
+   * After a reload: if the simulation this browser tab was showing still runs on the server, and its schematic is
+   * open again, shows it again, sending the schematic as it is now (probes and controls carry over on the server).
+   */
+  async resume(stateFor: (key: string) => { state: EditorState; title: string } | null) {
+    const running = readJson<{ sim: string; key: string | null }>(sessionStorage, RunningKey);
+    if (!running?.key || this.info) return;
+    const found = stateFor(running.key);
+    let info: SimulationInfo;
+    try {
+      info = await this.host.client.request<SimulationInfo>("sim.get", { sim: running.sim });
+    } catch {
+      writeJson(sessionStorage, RunningKey, null);
+      return;
+    }
+    if (!found) return;
+    this.show(info, found.state, found.title);
+    // Flags go where they were clipped on, as remembered.
+    const saved = readJson<Remembered>(localStorage, RememberPrefix + running.key);
+    for (const probe of info.probes) {
+      const at = saved?.probes.find((p) => JSON.stringify(p.target) === JSON.stringify(probe.target))?.at;
+      if (at) this.flags.set(probe.id, at);
+    }
+    if (saved) this.restoreScales(saved);
+    this.drawFlags();
+    this.host.changed();
+    try {
+      await this.host.client.request("sim.scope", { sim: info.sim, enabled: true });
+      await this.host.client.request("sim.update", { sim: info.sim, document: found.state.doc });
+      this.host.status(`Simulating ${found.title} (carried on from before the reload).`);
+    } catch (e) {
+      this.el.message.textContent = `Still simulating the last version that built: ${(e as Error).message.replace(/^sim\.update: /, "")}`;
+    }
+  }
+
+  // ---- Remembering a schematic's setup ----
+
+  /** Saves this schematic's probes, scope scales, input and controls, a moment after the last change. */
+  private remember() {
+    clearTimeout(this.rememberTimer);
+    this.rememberTimer = window.setTimeout(() => {
+      const info = this.info, state = this.state;
+      const key = state && this.host.keyOf(state);
+      if (!info || !key) return;
+      const remembered: Remembered = {
+        probes: info.probes.map((p) => ({ target: p.target, at: this.flags.get(p.id) ?? null })),
+        timeScale: Number(this.el.timeScale.value),
+        voltScale: Number(this.el.voltScale.value),
+        source: info.inputs[0]?.source ?? null,
+        pots: Object.fromEntries(info.pots.map((p) => [p.name, p.position])),
+        switches: Object.fromEntries(info.switches.map((s) => [s.name, s.position])),
+      };
+      writeJson(localStorage, RememberPrefix + key, remembered);
+    }, 300);
+  }
+
+  private restoreScales(saved: Remembered) {
+    this.el.timeScale.value = String(saved.timeScale ?? 0);
+    this.el.voltScale.value = String(saved.voltScale ?? 0);
+    this.scope.timePerDivision = TimeScales[saved.timeScale] ?? null;
+    this.scope.voltsPerDivision = VoltScales[saved.voltScale] ?? null;
+    this.scope.refresh();
+  }
+
+  /** Puts back what was remembered of this schematic: what no longer applies (a pot renamed, a wire deleted) is
+   * skipped. */
+  private async restore() {
+    const info = this.info, state = this.state;
+    const key = state && this.host.keyOf(state);
+    const saved = key ? readJson<Remembered>(localStorage, RememberPrefix + key) : null;
+    if (!info || !saved) return;
+    this.restoreScales(saved);
+    const pots = Object.fromEntries(Object.entries(saved.pots ?? {}).filter(([name]) => info.pots.some((p) => p.name === name)));
+    const switches = Object.fromEntries(
+      Object.entries(saved.switches ?? {}).filter(([name, position]) => info.switches.some((s) => s.name === name && position < s.positions)),
+    );
+    if (Object.keys(pots).length + Object.keys(switches).length > 0)
+      await this.host.client.request("sim.set", { sim: info.sim, pots, switches }).catch(() => {});
+    const input = info.inputs[0];
+    if (input && saved.source && (saved.source.expression || saved.source.silence))
+      await this.host.client.request("sim.setInput", { sim: info.sim, element: input.element, source: saved.source }).catch(() => {});
+    for (const p of saved.probes ?? []) {
+      try {
+        const probe = await this.host.client.request<Probe>("sim.probe", { sim: info.sim, target: p.target });
+        if (p.at) this.flags.set(probe.id, p.at);
+      } catch {
+        // Its wire or terminal is gone.
+      }
+    }
+    this.drawFlags();
+  }
+
   async stop() {
     clearTimeout(this.updateTimer);
     const info = this.info;
     this.reset();
     this.host.changed();
+    writeJson(sessionStorage, RunningKey, null);
     if (info) await this.host.client.request("sim.stop", { sim: info.sim }).catch(() => {});
   }
 
   private reset() {
     this.info = null;
+    this.shownAs.clear();
+    clearTimeout(this.displayTimer);
+    this.host.display(null);
     this.turning = null;
     this.scope.frozen = false;
     this.el.freeze.classList.remove("active");
@@ -309,6 +454,8 @@ export class SimulationPanel {
     this.setProbing(false);
     this.host.root.hidden = true;
     this.el.controls.replaceChildren();
+    // So the next simulation builds its sliders afresh, even of the same circuit.
+    delete this.el.controls.dataset["key"];
     this.el.legend.replaceChildren();
     this.el.message.textContent = "";
     this.drawFlags();
@@ -421,6 +568,8 @@ export class SimulationPanel {
     }
     // The knobs and buttons on the schematic follow, unless one is being turned there.
     if (!this.turning) this.drawFlags();
+    this.showLive();
+    this.remember();
 
     // The input source.
     const source = c.inputs[0]?.source;
@@ -437,6 +586,43 @@ export class SimulationPanel {
     }
   }
 
+  /**
+   * Draws the simulated schematic's switches at their live positions, and its pots' wipers at theirs, without
+   * editing the document: the editor draws stand-in components, whose layouts are fetched first. Throttled, so a
+   * knob being dragged doesn't fetch a layout per step.
+   */
+  private showLive() {
+    if (this.displayTimer) return;
+    this.displayTimer = window.setTimeout(() => {
+      this.displayTimer = 0;
+      void this.applyLive();
+    }, 120);
+  }
+
+  private async applyLive() {
+    const info = this.info, state = this.state;
+    if (!info || !state) return;
+    const live = new Map<string, ComponentData>();
+    const symbolOf = (id: string) => state.doc.elements.find((e): e is SymbolElement => e.id === id && e.kind === "symbol");
+    const put = (id: string, property: string, value: string) => {
+      const symbol = symbolOf(id);
+      if (!symbol || symbol.component.properties[property] === value) return;
+      live.set(id, { ...symbol.component, properties: { ...symbol.component.properties, [property]: value } });
+    };
+    for (const sw of info.switches) for (const id of sw.elements) put(id, "Position", String(sw.position));
+    // A wiper as the symbol prints it, to two places, so dragging fetches a handful of layouts, not hundreds.
+    for (const pot of info.pots) for (const id of pot.elements) if (symbolOf(id)?.component.properties["Wipe"] !== undefined) put(id, "Wipe", String(Number(pot.position.toFixed(2))));
+    try {
+      await this.host.layouts.fetch([...live.values()]);
+    } catch {
+      return;
+    }
+    if (this.info !== info) return;
+    this.shownAs.clear();
+    for (const [id, component] of live) this.shownAs.set(id, component);
+    this.host.display(this.shownAs.size ? (s) => (this.host.shown() === this.state ? this.shownAs.get(s.id) ?? null : null) : null);
+  }
+
   /** Turns a pot, from the panel's slider or a knob on the schematic: both show it, and the server gets it. */
   private setPot(name: string, position: number) {
     const info = this.info;
@@ -451,6 +637,8 @@ export class SimulationPanel {
     }
     for (const knob of this.host.probeLayer.querySelectorAll<SVGGElement>(".sim-knob")) if (knob.dataset["pot"] === name) turnKnob(knob, pot);
     this.host.client.notify("sim.set", { sim: info.sim, pots: { [name]: position } });
+    this.showLive();
+    this.remember();
   }
 
   private showSettings(settings: Record<string, unknown>) {
@@ -486,6 +674,7 @@ export class SimulationPanel {
     try {
       await this.host.client.request("sim.setInput", { sim: info.sim, element: input.element, source });
       this.el.expression.classList.remove("invalid");
+      this.remember();
     } catch (e) {
       this.el.expression.classList.add("invalid");
       this.host.status((e as Error).message.replace(/^sim\.setInput: /, ""), "error");
@@ -495,6 +684,7 @@ export class SimulationPanel {
   private setProbes(probes: Probe[]) {
     if (!this.info) return;
     this.info.probes = probes;
+    this.remember();
     for (const id of [...this.flags.keys()]) if (!probes.some((p) => p.id === id)) this.flags.delete(id);
     this.scope.setSignals(probes.map((p) => ({ stream: p.stream, color: p.color, label: p.label })));
     this.el.legend.replaceChildren(
@@ -566,6 +756,7 @@ export class SimulationPanel {
       .then((probe) => {
         this.flags.set(probe.id, found.at);
         this.drawFlags();
+        this.remember();
       })
       .catch((err) => this.host.status((err as Error).message.replace(/^sim\.probe: /, ""), "error"));
   }
@@ -600,22 +791,63 @@ export class SimulationPanel {
   /** Knobs beside the pots and buttons beside the switches of the simulated schematic, to turn and click there. */
   private drawControls(layer: SVGGElement, doc: SchematicDocument) {
     const info = this.info!;
-    // A knob to the right of its pot; a switch's button above it, clear of the throws' wires.
-    const beside = (id: string, where: "right" | "above" = "right"): Point | null => {
-      const symbol = doc.elements.find((e): e is SymbolElement => e.id === id && e.kind === "symbol");
-      const layout = symbol && this.host.layouts.get(symbol.component);
-      if (!symbol || !layout) return null;
-      const box = mapBox(mappingOf(symbol), layout.bounds);
-      return where === "right" ? [box.max[0] + 11, (box.min[1] + box.max[1]) / 2] : [(box.min[0] + box.max[0]) / 2, box.min[1] - 9];
+    // What a control shouldn't cover: every symbol, every wire, the probe flags, and the controls already placed.
+    const symbols = doc.elements.filter((e): e is SymbolElement => e.kind === "symbol");
+    const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire");
+    const boxOf = (s: SymbolElement): Box | null => {
+      const layout = this.host.layouts.get(this.shownAs.get(s.id) ?? s.component) ?? this.host.layouts.get(s.component);
+      return layout ? mapBox(mappingOf(s), layout.bounds) : null;
+    };
+    const symbolBoxes = new Map(symbols.map((s) => [s.id, boxOf(s)] as const));
+    const taken: Box[] = [...this.flags.values()].map(([x, y]) => ({ min: [x - 2, y - 21], max: [x + 21, y + 2] }));
+    // Labels aren't in a symbol's bounds: their boxes as drawn, in schematic coordinates, the symbol's own included.
+    const labels: Box[] = [...document.querySelectorAll<SVGRectElement>("#drawing .text-box")].map((r) => {
+      const x = Number(r.getAttribute("x")), y = Number(r.getAttribute("y"));
+      return { min: [x, y], max: [x + Number(r.getAttribute("width")), y + Number(r.getAttribute("height"))] };
+    });
+    const around = (c: Point, r: number): Box => ({ min: [c[0] - r, c[1] - r], max: [c[0] + r, c[1] + r] });
+    const cost = (box: Box, own: string) => {
+      let n = 0;
+      for (const [id, b] of symbolBoxes) if (id !== own && b && boxIntersects(b, box)) n += 2;
+      for (const w of wires) if (segmentHitsBox(w.a, w.b, box)) n += 3;
+      for (const t of taken) if (boxIntersects(t, box)) n += 4;
+      for (const l of labels) if (boxIntersects(l, box)) n += 3;
+      return n;
+    };
+    // Places a control of half-size r beside a symbol: the first of the preferred sides that's clear, or else the
+    // side with the least in the way.
+    type Side = "right" | "left" | "above" | "below" | "above-right" | "below-right" | "above-left" | "below-left";
+    const place = (id: string, r: number, sides: Side[]): Point | null => {
+      const box = symbolBoxes.get(id);
+      if (!box) return null;
+      const midX = (box.min[0] + box.max[0]) / 2, midY = (box.min[1] + box.max[1]) / 2, gap = r + 3;
+      const at: Record<Side, Point> = {
+        right: [box.max[0] + gap, midY],
+        left: [box.min[0] - gap, midY],
+        above: [midX, box.min[1] - gap],
+        below: [midX, box.max[1] + gap],
+        "above-right": [box.max[0] + gap, box.min[1] - gap],
+        "below-right": [box.max[0] + gap, box.max[1] + gap],
+        "above-left": [box.min[0] - gap, box.min[1] - gap],
+        "below-left": [box.min[0] - gap, box.max[1] + gap],
+      };
+      let best: Point | null = null, bestCost = Infinity;
+      for (const side of sides) {
+        const c = cost(around(at[side]!, r + 1), id);
+        if (c < bestCost) (best = at[side]!), (bestCost = c);
+        if (c === 0) break;
+      }
+      if (best) taken.push(around(best, r + 1));
+      return best;
     };
     for (const pot of info.pots)
       for (const id of pot.elements) {
-        const at = beside(id);
+        const at = place(id, 8, ["right", "left", "above", "below", "above-right", "below-right", "above-left", "below-left"]);
         if (at) layer.append(this.knob(pot, at));
       }
     for (const sw of info.switches)
       for (const id of sw.elements) {
-        const at = beside(id, "above");
+        const at = place(id, 7, ["above", "below", "right", "left", "above-right", "below-right", "above-left", "below-left"]);
         if (at) layer.append(this.switchButton(sw, at));
       }
   }
@@ -726,6 +958,29 @@ function svg<K extends keyof SVGElementTagNameMap>(tag: K, attributes: Record<st
 function turnKnob(knob: SVGGElement, pot: Pot) {
   knob.querySelector(".knob-pointer")!.setAttribute("transform", `rotate(${-135 + 270 * pot.position})`);
   knob.querySelector("title")!.textContent = `${pot.name}: ${percent(pot.position)}. Drag up or down, or scroll, to turn; double-click for its schematic position.`;
+}
+
+/** Whether a segment passes through a box: clipped against each side in turn (Liang-Barsky). */
+function segmentHitsBox(a: Point, b: Point, box: Box): boolean {
+  const d: Point = [b[0] - a[0], b[1] - a[1]];
+  let t0 = 0, t1 = 1;
+  const edges: [number, number][] = [
+    [-d[0], a[0] - box.min[0]],
+    [d[0], box.max[0] - a[0]],
+    [-d[1], a[1] - box.min[1]],
+    [d[1], box.max[1] - a[1]],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return false;
+    } else {
+      const t = q / p;
+      if (p < 0) t0 = Math.max(t0, t);
+      else t1 = Math.min(t1, t);
+      if (t0 > t1) return false;
+    }
+  }
+  return true;
 }
 
 function sub(a: Point, b: Point): Point {

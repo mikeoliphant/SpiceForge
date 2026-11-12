@@ -6,7 +6,7 @@
 
 import { mapBox, mapPoint, mapVector, mappingOf, onAnyWire, unionBoxes, type Box, type Mapping } from "./geometry";
 import type { LayoutCache } from "./layouts";
-import type { Edge, Layout, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
+import type { ComponentData, Edge, Layout, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
 
 const SVG = "http://www.w3.org/2000/svg";
 
@@ -58,6 +58,8 @@ export function renderDocument(
   layouts: LayoutCache,
   selected: ReadonlySet<string> = new Set(),
   wireTitle: (id: string) => string = () => "",
+  /** The component to draw a symbol as: its own, or a stand-in for display only (a simulated switch's live position). */
+  componentOf: (s: SymbolElement) => ComponentData = (s) => s.component,
 ): Rendered {
   root.replaceChildren();
   const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire");
@@ -74,7 +76,7 @@ export function renderDocument(
 
   const symbolLayer = el("g", { class: "symbols" });
   for (const s of symbols) {
-    const layout = layouts.get(s.component);
+    const layout = layouts.get(componentOf(s)) ?? layouts.get(s.component);
     if (!layout) {
       problems.push(`${s.component.properties["Name"] ?? s.id}: no layout`);
       continue;

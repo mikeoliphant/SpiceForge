@@ -155,6 +155,14 @@ opens under the canvas:
 The load shows how much of real time the simulation takes, and how many Newton steps hit the iteration cap in the
 last second: if that stays above zero, raise the cap.
 
+While it runs, switches are drawn at their live positions and pots show their live wiper values, without changing
+the file: Stop draws them as saved again. Knobs and switch buttons go beside their symbols, wherever is clearest of
+wires, labels and other symbols.
+
+Each schematic's simulation setup (its probes, the scope's scales, the input, and the pot and switch positions) is
+remembered in the browser and put back the next time it's simulated. Reloading the page doesn't stop a simulation:
+the server carries on, and the page picks it up again once the schematic is open.
+
 Editing the simulated schematic updates the simulation as you go: it rebuilds a moment after the last change, and
 keeps running the last version that built while an edit leaves it broken. There's no audio device yet, so nothing
 plays: the output drives the Out meter, and probes show what any node does.

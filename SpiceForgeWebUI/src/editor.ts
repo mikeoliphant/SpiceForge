@@ -66,6 +66,10 @@ export class Editor {
 
   /** Called after the drawing changes, and after the selection, tool or history does. */
   onChange: () => void = () => {};
+
+  /** A stand-in component to draw a symbol as, for display only, or null for its own: the simulation shows switches
+   * and pots at their live positions this way, without editing the document. */
+  displayComponent: ((s: SymbolElement) => ComponentData | null) | null = null;
   /** Reports a failure the user should see (the status bar). */
   onError: (message: string) => void = () => {};
   /** The named-wire rule for connectivity (wireNames, from the catalogue's types). */
@@ -145,7 +149,8 @@ export class Editor {
       return;
     }
     const titles = this.wireTitles(this.doc);
-    this.rendered = renderDocument(this.drawing, this.doc, this.layouts, this.selection, (id) => titles.get(id) ?? "");
+    const shown = this.displayComponent;
+    this.rendered = renderDocument(this.drawing, this.doc, this.layouts, this.selection, (id) => titles.get(id) ?? "", (s) => shown?.(s) ?? s.component);
     this.onChange();
   }
 

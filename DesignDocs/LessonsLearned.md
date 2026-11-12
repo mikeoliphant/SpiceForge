@@ -933,6 +933,31 @@ the web front end shows it on a scope.
   exists, then the catalogue reloads with them and `catalog.changed` goes to every client. `SpiceForge.Validate
   server` adds a folder with one part, sees it arrive, removes the folder, and sees it go.
 
+## Loose ends from the polish
+
+- **Draw live positions with stand-in components, not edits.** A simulated switch's symbol depends on its `Position`
+  property, and a pot's prints its `Wipe`. The renderer now takes a display-only component per symbol; the simulation
+  panel supplies copies with the live values, fetches their layouts (throttled to 120 ms, wipers rounded to two
+  places so a drag fetches a handful of layouts), and the editor draws them. On SP3T, clicking the switch moved the
+  blade from the first throw to the second while the document kept `Position="0"`, stayed clean, and had nothing to
+  undo; Stop drew it as saved again.
+- **Place controls by cost, counting labels.** Text labels aren't in a symbol's layout bounds, so the first placement
+  rule (right of a pot, or the first side clear of wires and symbols) put knobs over the Rat's "A100 kΩ" labels. Each
+  candidate spot (four sides and four corners) now costs its overlaps with symbols, wires (a proper segment-box clip;
+  `wireIntersects` only tests the box's corners), drawn text boxes, probe flags and controls already placed, and the
+  cheapest wins. All three of the Rat's knobs land clear.
+- **Reset the sliders' key with the sliders.** The panel rebuilds its sliders only when the set of controls changes,
+  keyed on their names. Stopping cleared the sliders but not the key, so simulating the same circuit again showed none.
+- **Remember per file in the browser; resume by id across a reload.** A schematic's probes (with where their flags
+  were clipped), scope scales, input and control positions are saved in localStorage by file path, and put back
+  after `sim.start`, skipping what no longer applies. The running simulation's id is kept in sessionStorage; after a
+  reload, `sim.get` finds it still running on the server, the panel shows it again, and a `sim.update` brings it the
+  schematic as reloaded. Checked on the Rat: two probes, 2 ms/div, Distortion 0.8 and a 440 Hz input survived both a
+  reload and a stop and restart.
+- **The longer engine checks still pass with the capped-step counters.** `SpiceForge.Validate dynamic` and
+  `livespice`: every circuit ok but `Unstable/Triode stage`, which LiveSPICE can't solve either (see Starting out);
+  the interpreter and compiled engine still agree exactly.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was
@@ -969,11 +994,9 @@ the web front end shows it on a scope.
   won't compensate for it. A minimum-phase or shorter filter would cut it, at some cost in phase or rejection.
 - The plugin defaults to sinc resampling (the processor and renderer keep LiveSPICE's linear), so its 40 samples of
   latency, unreported to the host, are now the norm in a DAW.
-- A switch clicked while simulating keeps its symbol drawn at the schematic's position: the drawing comes from the
-  document's `Position`, and simulation controls don't edit the document. The button on the schematic shows the live
-  position. Drawing the symbol from the live position, without an edit, would need the layout per position.
-- Knobs and switch buttons are placed beside their symbols by rule (right of a pot, above a switch); a crowded
-  schematic can put one over a wire or a label.
+- Knobs and switch buttons go to the least crowded of eight spots beside their symbols; on a dense schematic every
+  spot may overlap something, and the least bad one is used.
+- A simulation's remembered setup is per file and per browser; an untitled schematic's isn't remembered.
 - Simulation has no audio device yet: the server's clock drives it, from expressions only. `sim.setOutput`, channel
   sources and `audio.*` answer `unsupported`.
 - The plugin defaults to 4× with a cap of 32, which the study found nearly as accurate as 8× for about 40% less CPU.
