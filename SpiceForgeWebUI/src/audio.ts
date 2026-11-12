@@ -19,6 +19,10 @@ export interface AudioState {
   outputLatency?: number;
   /** Running on the internal clock, although a device was configured. */
   fallback?: boolean;
+  /** Whether a simulation or the test is running on it: a JACK client stays open without. */
+  running?: boolean;
+  /** JACK: SpiceForge's ports, the channel each was opened for, and what each is connected to now. */
+  connections?: { port: string; channel: string; connected: string[] }[];
   error?: string;
 }
 
@@ -102,6 +106,7 @@ export async function configureAudio(client: ApiClient): Promise<void> {
   const rate = h("select", { title: "The sample rate. A change rebuilds a running simulation." });
   const buffer = h("select", { title: "Samples per buffer: smaller is less latency, and less time to process each one" });
   const state = h("div", { className: "audio-state" });
+  const connections = h("div", { className: "audio-connections", title: "SpiceForge's JACK ports, as connected now (including from a patchbay)" });
   const error = h("div", { className: "error" });
   const test = h("button", { textContent: "Test", title: "Loops the sum of the inputs to every output, with the settings above (they're applied first)" });
   const inputMeters = h("div", { className: "audio-meters" });
@@ -120,6 +125,7 @@ export async function configureAudio(client: ApiClient): Promise<void> {
     row("Rate", rate),
     row("Buffer", buffer),
     state,
+    connections,
     h(
       "div",
       { className: "audio-test" },
@@ -221,6 +227,35 @@ export async function configureAudio(client: ApiClient): Promise<void> {
   const showState = (s: AudioState) => {
     state.textContent = `Now: ${describeAudio(s)}`;
     state.classList.toggle("warning", !!s.fallback);
+    // JACK: each port's live connections, whoever made them.
+    connections.replaceChildren(
+      ...(s.open && s.connections ? s.connections : []).map((c) => {
+        const input = /:in_\d+$/.test(c.port);
+        const others = c.connected.length > 0 ? c.connected.join(", ") : "nothing";
+        return h("div", { textContent: input ? `${c.port} ← ${others}` : `${c.port} → ${others}` });
+      }),
+    );
+  };
+
+  // JACK's ports come and go as programs start and stop: refresh the lists, quietly, keeping what's chosen.
+  let refreshing = 0;
+  const refreshInfo = () => {
+    clearTimeout(refreshing);
+    refreshing = window.setTimeout(async () => {
+      if (busy || testing || !info || !device.value) return;
+      const asked = `${driver.value}/${device.value}`;
+      try {
+        const got = await client.request<DeviceInfo>("audio.deviceInfo", { driver: driver.value, device: device.value });
+        if (asked !== `${driver.value}/${device.value}` || !info) return;
+        const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+        if (same(got.inputs, info.inputs) && same(got.outputs, info.outputs)) return;
+        info = got;
+        showInfo(rate.value ? Number(rate.value) : null, buffer.value ? Number(buffer.value) : null);
+        enable();
+      } catch {
+        // The lists stay as they were.
+      }
+    }, 300);
   };
 
   const enable = () => {
@@ -289,6 +324,7 @@ export async function configureAudio(client: ApiClient): Promise<void> {
     client.on("audio.state", (d) => {
       lastState = d as AudioState;
       showState(lastState);
+      if (lastState.driver === "JACK" && driver.value === "JACK") refreshInfo();
     }),
     client.on("audio.levels", (d) => {
       if (!testing) return;

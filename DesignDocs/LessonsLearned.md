@@ -1049,6 +1049,17 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   keeps a client active at least 100 ms. With a second client of the same process watching the graph, a close could
   still stall (once for about four minutes); SpiceForge's one long-lived client doesn't meet it. And
   `JackUseExactName` is ignored: a second client of the same name opens, so JackSharpCore checks the name it got.
+- **A JACK client should stay in the graph.** Opening it per simulation, as an ASIO device is, dropped every
+  connection made to SpiceForge's ports in a patchbay when a simulation stopped. The JACK stream is now resident: it
+  opens when JACK is configured (at startup too), plays silence with nothing running, and simulations and the test
+  swap in and out of it (`AudioStream.SetClient`), the new client prepared before the real-time thread sees it.
+  `SpiceForge.Validate jack` checks it: the client is in the graph and connected before anything runs; a connection
+  made by another client is reported in `audio.state` within a moment (graph events are coalesced over 100 ms); a
+  simulation runs without the client ever leaving the graph, and stopping keeps it and the patchbay connection.
+- **Report the simulation's latency to JACK.** JackSharpCore 1.1's `Processor.AddedLatency` installs JACK's latency
+  callback, which passes upstream latency through the client plus what it adds. SpiceForge sets it to the running
+  build's resampling delay, and again after each rebuild: on the dummy server SpiceForge's input reported a capture
+  latency of 256 frames and its outputs 296, the Rat's 40 samples (4× sinc) added.
 - **JACK works as a driver like any other.** `SpiceForge.Validate jack` runs the Rat at the server's 48 kHz and 256
   frames: SpiceForge's ports connected to `system:capture_1` and `system:playback_1` and `_2` (as another client sees
   the graph), load 0.20 of real time, no dropouts in 5 s, reported latencies of 256 frames in and 512 out, the client
@@ -1098,10 +1109,9 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
 - Knobs and switch buttons go to the least crowded of eight spots beside their symbols; on a dense schematic every
   spot may overlap something, and the least bad one is used.
 - A simulation's remembered setup is per file and per browser; an untitled schematic's isn't remembered.
-- The JACK client is opened when a simulation or the test starts and closed when it stops, as an ASIO device is, so
-  connections made to SpiceForge's ports in a patchbay don't outlast a simulation; and changes made in a patchbay
-  while it runs aren't reflected in the audio settings. Keeping the client registered while JACK is the configured
-  driver, and following the graph's connection events, would be the next step.
+- A JACK connection changed in a patchbay is shown, not adopted: the configured channels still say what SpiceForge
+  connects when its client opens (at startup, or after a configuration change). Whether a patchbay change should
+  become the configuration is open.
 - JACK2 1.9.22 on Windows can stall closing a client opened and closed in quick succession while another client of
   the same process watches the graph (see Audio I/O, JACK); SpiceForge's one long-lived client doesn't do that.
 - Output signals can be the Speakers or the voltage across picked two-terminal components, not an expression

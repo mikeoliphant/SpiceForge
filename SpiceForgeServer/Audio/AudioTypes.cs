@@ -45,6 +45,9 @@ public interface IAudioClient
     /// <summary>Called on the audio thread for every block. It must fill every output, and must not allocate, lock or
     /// block.</summary>
     void Process(AudioBlock block);
+
+    /// <summary>The latency the client adds, in samples, for drivers that report it on (JACK).</summary>
+    int Latency => 0;
 }
 
 /// <summary>What a device offers, for <c>audio.deviceInfo</c> and for checking a configuration.</summary>
@@ -165,6 +168,20 @@ public abstract class AudioStream
 
     protected void OnFailed(string message) => Failed?.Invoke(this, message);
 
+    /// <summary>Whether the stream stays open with no client, playing silence, so a client can be swapped in and out
+    /// (<see cref="SetClient"/>) without closing it: JACK's, whose ports and their connections stay in the graph.</summary>
+    public virtual bool Resident => false;
+
+    /// <summary>Swaps the client a resident stream runs (null for none), preparing the new one first.</summary>
+    public virtual void SetClient(IAudioClient? client) => throw new NotSupportedException($"{Driver} streams don't swap clients.");
+
+    /// <summary>The client's latency changed (a rebuild): drivers that report latency pass it on.</summary>
+    public virtual void LatencyChanged(int samples) { }
+
+    /// <summary>The stream's ports and what each is connected to now, for drivers whose connections can change outside
+    /// SpiceForge (JACK, from a patchbay); null for the others.</summary>
+    public virtual JsonArray? Connections() => null;
+
     protected void OnChanged() => Changed?.Invoke(this);
 
     /// <summary>Stops the stream and closes the device. No callback runs after it returns.</summary>
@@ -182,8 +199,12 @@ public abstract class AudioDriver
     public abstract Task<AudioDeviceInfo> Info(string device);
 
     /// <summary>Opens the configuration's device (null: the first), prepares the client for its format, and starts
-    /// it.</summary>
-    public abstract Task<AudioStream> Open(AudioConfig config, IAudioClient client);
+    /// it. Only a driver that <see cref="KeepsOpen"/> takes no client.</summary>
+    public abstract Task<AudioStream> Open(AudioConfig config, IAudioClient? client);
+
+    /// <summary>Whether the driver's stream stays open while it's the configured driver, with or without a client
+    /// (see <see cref="AudioStream.Resident"/>).</summary>
+    public virtual bool KeepsOpen => false;
 
     public virtual Task ShowControlPanel(string device) =>
         throw new ApiException(ErrorCodes.Unsupported, $"{DriverName} devices have no control panel.");

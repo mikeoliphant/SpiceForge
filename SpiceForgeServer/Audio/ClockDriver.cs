@@ -27,8 +27,9 @@ public sealed class ClockDriver : AudioDriver
 
     public override Task<AudioDeviceInfo> Info(string device) => Task.FromResult(info);
 
-    public override Task<AudioStream> Open(AudioConfig config, IAudioClient client)
+    public override Task<AudioStream> Open(AudioConfig config, IAudioClient? client)
     {
+        ArgumentNullException.ThrowIfNull(client);
         // A rate or size this clock doesn't offer (a fallback from a device's settings) gets the default.
         int rate = config.SampleRate is int r && info.SampleRates.Contains(r) ? r : DefaultSampleRate;
         int size = config.BufferSize is int b && info.BufferSizes.Contains(b) ? b : DefaultBufferSize;

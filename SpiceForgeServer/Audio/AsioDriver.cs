@@ -36,8 +36,9 @@ public sealed class AsioDriver : AudioDriver, IDisposable
         return InfoOf(d, device);
     });
 
-    public override Task<AudioStream> Open(AudioConfig config, IAudioClient client) => worker.Run<AudioStream>(() =>
+    public override Task<AudioStream> Open(AudioConfig config, IAudioClient? client) => worker.Run<AudioStream>(() =>
     {
+        ArgumentNullException.ThrowIfNull(client);
         if (open != null)
             throw new ApiException(ErrorCodes.AudioBusy, $"The ASIO device '{open.Device}' is already open.");
         string name = config.Device ?? AsioDevice.GetDriverNames().FirstOrDefault()

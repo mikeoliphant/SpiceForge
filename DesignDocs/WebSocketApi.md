@@ -424,7 +424,11 @@ A property descriptor:
   While it runs, the summed signal streams to every connection as stream 0 (source 0), and `audio.levels` events
   carry each channel's level. It fails with `audio_busy` while a simulation is running.
 - **When the device opens.** It opens when a simulation or the test starts, and closes when it stops, so an idle
-  server doesn't hold an ASIO driver another program wants.
+  server doesn't hold an ASIO driver another program wants. JACK is the exception: its client stays in the graph
+  while JACK is the configured driver, from startup, playing silence when nothing runs, so connections made to its
+  ports in a patchbay last; simulations and the test run in that one client, and changing the configuration reopens
+  it. The running simulation's latency (its resampling delay) is reported to JACK through its ports, so JACK-aware
+  programs downstream can compensate.
 - **Falling back.** If the configured device can't be opened (a USB interface that isn't plugged in), or stops while
   running, the simulation carries on on the internal clock, and `audio.state` has `fallback` and the `error`.
   `audio.setConfig` tries the device again.
@@ -433,7 +437,10 @@ Events:
 
 - `audio.state`: `open`, `driver`, `device`, and while it's open `sampleRate`, `bufferSize`, `inputs`, `outputs`,
   `inputLatency` and `outputLatency` (in samples, as the driver reports them), `fallback`, and `error` if the
-  configured device couldn't be used. Sent when the device opens, closes, changes, or fails.
+  configured device couldn't be used; `running`, whether a simulation or the test is running on it; and for JACK,
+  `connections`: each of SpiceForge's ports, the channel it was opened for, and what it's connected to now
+  (`[{port, channel, connected: [name]}]`). Sent when the device opens, closes, changes, or fails, and for JACK when
+  its connections change or ports come and go, whoever changed them.
 - `audio.levels`: `inputs: [peak]`, `outputs: [peak]`, one per channel, at about 10 Hz, during a test.
 
 ## Simulation

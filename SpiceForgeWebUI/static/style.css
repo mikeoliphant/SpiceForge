@@ -1202,6 +1202,16 @@ button:disabled {
   margin-bottom: 8px;
 }
 
+.audio-connections {
+  color: var(--muted);
+  font-size: 12px;
+  margin: -4px 0 8px;
+}
+
+.audio-connections:empty {
+  display: none;
+}
+
 .audio-state.warning,
 .sim-audio-text.warning {
   color: var(--error);

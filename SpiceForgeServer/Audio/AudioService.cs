@@ -36,6 +36,21 @@ public sealed class AudioService : IDisposable
             asio = new AsioDriver();
         if (JackDriver.IsAvailable)
             jack = new JackDriver();
+        // A driver whose stream stays open (JACK) opens at startup, so its ports are in the graph from the start.
+        _ = Task.Run(async () =>
+        {
+            await gate.WaitAsync();
+            try
+            {
+                if (stream == null && client == null)
+                    await OpenLocked();
+            }
+            finally
+            {
+                gate.Release();
+            }
+            BroadcastState();
+        });
     }
 
     /// <summary>The drivers this platform has, the internal clock first.</summary>
@@ -84,23 +99,35 @@ public sealed class AudioService : IDisposable
 
     // ---- Clients ----
 
-    /// <summary>Opens the device for <paramref name="newClient"/>, prepares it and starts it, falling back to the
-    /// internal clock if the device can't be opened. Any other client is detached first.</summary>
+    /// <summary>Runs <paramref name="newClient"/> on the device, preparing it and starting it, falling back to the
+    /// internal clock if the device can't be opened. Any other client is detached first. A stream that stays open
+    /// (JACK's) takes the client in; any other opens for it.</summary>
     public async Task Attach(IAudioClient newClient)
     {
         await gate.WaitAsync();
         try
         {
-            if (client != null)
-                await CloseLocked();
-            client = newClient;
-            await OpenLocked();
+            await AttachLocked(newClient);
         }
         finally
         {
             gate.Release();
         }
         BroadcastState();
+    }
+
+    private async Task AttachLocked(IAudioClient newClient)
+    {
+        if (client != null)
+            await DetachLocked();
+        client = newClient;
+        if (stream != null && stream.Resident && stream.Driver == config.Driver)
+            stream.SetClient(newClient);
+        else
+        {
+            await CloseStreamLocked();
+            await OpenLocked();
+        }
     }
 
     public async Task Detach(IAudioClient oldClient)
@@ -110,7 +137,7 @@ public sealed class AudioService : IDisposable
         {
             if (client != oldClient)
                 return;
-            await CloseLocked();
+            await DetachLocked();
         }
         finally
         {
@@ -119,28 +146,64 @@ public sealed class AudioService : IDisposable
         BroadcastState();
     }
 
+    // The client stops running: a resident stream carries on in silence; any other closes.
+    private async Task DetachLocked()
+    {
+        client = null;
+        if (stream != null && stream.Resident)
+            stream.SetClient(null);
+        else
+            await CloseStreamLocked();
+    }
+
+    /// <summary>The running client's latency changed (a rebuild): drivers that report it pass it on.</summary>
+    public void LatencyChanged(IAudioClient changed)
+    {
+        if (client == changed)
+            stream?.LatencyChanged(changed.Latency);
+    }
+
+    // Opens the configured device for the client; with no client, only a driver that keeps its stream open does.
     private async Task OpenLocked()
     {
         error = null;
-        try
+        AudioDriver? driver = Drivers.FirstOrDefault(d => string.Equals(d.DriverName, config.Driver, StringComparison.OrdinalIgnoreCase));
+        if (client == null)
         {
-            stream = await Driver(config.Driver).Open(config, client!);
+            if (driver?.KeepsOpen != true)
+                return;
+            try
+            {
+                stream = await driver.Open(config, null);
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                log.Write(MessageType.Info, "audio", $"Couldn't open {Describe(config)}: {ex.Message}");
+                return;
+            }
         }
-        catch (Exception ex)
+        else
         {
-            error = ex.Message;
-            log.Write(MessageType.Warning, "audio", $"Couldn't open {Describe(config)}, so running on the internal clock: {ex.Message}");
-            stream = await clock.Open(config, client!);
+            try
+            {
+                stream = await Driver(config.Driver).Open(config, client);
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                log.Write(MessageType.Warning, "audio", $"Couldn't open {Describe(config)}, so running on the internal clock: {ex.Message}");
+                stream = await clock.Open(config, client);
+            }
         }
         stream.Failed += OnFailed;
         stream.Changed += OnChanged;
     }
 
-    private async Task CloseLocked()
+    private async Task CloseStreamLocked()
     {
         AudioStream? s = stream;
         stream = null;
-        client = null;
         if (s != null)
         {
             s.Failed -= OnFailed;
@@ -149,14 +212,21 @@ public sealed class AudioService : IDisposable
         }
     }
 
-    // The device stopped on its own: carry on on the internal clock.
+    // The device stopped on its own: a client carries on on the internal clock; with none, the stream just closes.
     private void OnFailed(AudioStream failed, string message) => _ = Task.Run(async () =>
     {
         await gate.WaitAsync();
         try
         {
-            if (stream != failed || client == null)
+            if (stream != failed)
                 return;
+            if (client == null)
+            {
+                log.Write(MessageType.Warning, "audio", message);
+                error = message;
+                await CloseStreamLocked();
+                return;
+            }
             log.Write(MessageType.Error, "audio", $"{message} Running on the internal clock.");
             failed.Failed -= OnFailed;
             failed.Changed -= OnChanged;
@@ -192,12 +262,16 @@ public sealed class AudioService : IDisposable
             json["outputs"] = Json.Strings(s.Format.Outputs);
             json["inputLatency"] = s.InputLatency;
             json["outputLatency"] = s.OutputLatency;
+            if (s.Connections() is JsonArray connections)
+                json["connections"] = connections;
         }
         else
         {
             json["driver"] = config.Driver;
             json["device"] = config.Device;
         }
+        // Whether a simulation or the test is running on it (a resident stream stays open without).
+        json["running"] = client != null;
         // Running on the clock although a device was configured.
         json["fallback"] = s is not null && s.Driver != config.Driver;
         if (error != null)
@@ -269,7 +343,12 @@ public sealed class AudioService : IDisposable
                 ?? throw new ApiException(ErrorCodes.NotFound, $"There are no {driver.DriverName} devices.");
             next = next with { Driver = driver.DriverName, Device = device };
             if (client == null)
+            {
                 config = next.Checked(await driver.Info(device));
+                // A stream that stays open (JACK's) reopens with the new settings, or closes for another driver.
+                await CloseStreamLocked();
+                await OpenLocked();
+            }
             else
             {
                 AudioDeviceInfo? info = null;
@@ -283,10 +362,8 @@ public sealed class AudioService : IDisposable
                 {
                     // Another ASIO driver is running: it has to close before this one can be looked at.
                 }
-                IAudioClient running = client;
                 AudioConfig previous = config;
-                await CloseLocked();
-                client = running;
+                await CloseStreamLocked();
                 try
                 {
                     if (info == null)
@@ -376,8 +453,7 @@ public sealed class AudioService : IDisposable
                 if (client != null)
                     throw new ApiException(ErrorCodes.AudioBusy, "A simulation is running on the audio device.");
                 newTest = new AudioTest(hub);
-                client = newTest;
-                await OpenLocked();
+                await AttachLocked(newTest);
             }
             finally
             {
@@ -407,7 +483,8 @@ public sealed class AudioService : IDisposable
         {
             if (client is AudioTest running)
                 running.Stop();
-            CloseLocked().Wait(TimeSpan.FromSeconds(5));
+            client = null;
+            CloseStreamLocked().Wait(TimeSpan.FromSeconds(5));
         }
         finally
         {

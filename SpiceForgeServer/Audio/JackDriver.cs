@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using JackSharp;
 using SpiceForgeServer.Protocol;
 
@@ -9,6 +10,10 @@ namespace SpiceForgeServer.Audio;
 /// (<c>system:capture_1</c>, <c>system:playback_1</c>): SpiceForge registers a port of its own for each, and connects
 /// it there. The rate and buffer size are the server's; SpiceForge reports them, and never starts a server or changes
 /// its settings, which are the user's.
+/// <para>The client stays in the graph while JACK is the configured driver, playing silence when nothing runs, so
+/// connections made to its ports in a patchbay last; simulations and the test swap in and out of it. Changes to its
+/// connections, and ports coming and going, are reported as they happen, and the simulation's latency is reported to
+/// JACK, so programs downstream can compensate.</para>
 /// </summary>
 public sealed class JackDriver : AudioDriver
 {
@@ -32,6 +37,8 @@ public sealed class JackDriver : AudioDriver
 
     public override string DriverName => Name;
 
+    public override bool KeepsOpen => true;
+
     public override Task<IReadOnlyList<string>> Devices() =>
         Task.FromResult<IReadOnlyList<string>>(IsAvailable ? new[] { DeviceName } : Array.Empty<string>());
 
@@ -47,7 +54,7 @@ public sealed class JackDriver : AudioDriver
         return InfoOf(query);
     });
 
-    public override Task<AudioStream> Open(AudioConfig config, IAudioClient client) => Task.Run<AudioStream>(() =>
+    public override Task<AudioStream> Open(AudioConfig config, IAudioClient? client) => Task.Run<AudioStream>(() =>
     {
         CheckDevice(config.Device ?? DeviceName);
         lock (sync)
@@ -123,7 +130,8 @@ public sealed class JackDriver : AudioDriver
     private sealed class JackStream : AudioStream
     {
         private readonly JackDriver owner;
-        private readonly IAudioClient client;
+        private volatile IAudioClient? client;
+        private readonly Timer changes;
         private readonly string[] sources, destinations;
         private readonly AudioPort[] inputs, outputs;
         private volatile AudioBlock block = new();
@@ -132,7 +140,7 @@ public sealed class JackDriver : AudioDriver
         private int restarting;
         private bool closed;
 
-        public JackStream(JackDriver owner, Processor processor, string[] sources, string[] destinations, IAudioClient client)
+        public JackStream(JackDriver owner, Processor processor, string[] sources, string[] destinations, IAudioClient? client)
         {
             this.owner = owner;
             Processor = processor;
@@ -146,10 +154,75 @@ public sealed class JackDriver : AudioDriver
                 OnFailed(e.Reason.Length > 0 ? $"The JACK server shut down: {e.Reason}" : "The JACK server shut down.");
             processor.BufferSizeChanged += (_, _) => Restart();
             processor.SampleRateChanged += (_, _) => Restart();
+            // The graph changing (connections to SpiceForge's ports, from a patchbay, say; ports coming and going) is
+            // reported, a moment after the last change of a burst.
+            changes = new Timer(_ => OnChanged());
+            processor.PortsConnected += (_, e) =>
+            {
+                if (Mine(e.Source) || Mine(e.Destination))
+                    changes.Change(100, Timeout.Infinite);
+            };
+            processor.PortRegistered += (_, _) => changes.Change(100, Timeout.Infinite);
+            processor.AddedLatency = client?.Latency ?? 0;
             format = Prepare();
             processor.Process = Process;
             processor.Activate();
             Connect();
+        }
+
+        public override bool Resident => true;
+
+        private bool Mine(string port) => port.StartsWith(Processor.Name + ":", StringComparison.Ordinal);
+
+        public override void SetClient(IAudioClient? newClient)
+        {
+            lock (this)
+            {
+                // The new client is prepared before the real-time thread can see it; the old one may finish a block.
+                newClient?.Prepare(format);
+                Interlocked.Exchange(ref xruns, 0);   // Dropouts while nothing ran aren't the new client's.
+                client = newClient;
+                SetLatency(newClient?.Latency ?? 0);
+            }
+        }
+
+        public override void LatencyChanged(int samples) => SetLatency(samples);
+
+        private void SetLatency(int samples)
+        {
+            try
+            {
+                if (!closed && Processor.AddedLatency != samples)
+                    Processor.AddedLatency = samples;
+            }
+            catch (Exception)
+            {
+                // The server has gone: the stream is about to fail.
+            }
+        }
+
+        public override JsonArray? Connections()
+        {
+            var ports = new JsonArray();
+            void Add(AudioPort port, string channel)
+            {
+                IReadOnlyList<string> connected;
+                try { connected = port.IsRegistered ? port.GetConnections() : Array.Empty<string>(); }
+                catch (Exception) { connected = Array.Empty<string>(); }
+                ports.Add(new JsonObject { ["port"] = port.FullName, ["channel"] = channel, ["connected"] = Json.Strings(connected) });
+            }
+            try
+            {
+                for (int i = 0; i < inputs.Length; i++)
+                    Add(inputs[i], sources[i]);
+                for (int o = 0; o < outputs.Length; o++)
+                    Add(outputs[o], destinations[o]);
+            }
+            catch (Exception)
+            {
+                return new JsonArray();
+            }
+            return ports;
         }
 
         public Processor Processor { get; }
@@ -173,7 +246,7 @@ public sealed class JackDriver : AudioDriver
             var f = new AudioFormat(Processor.SampleRate, Processor.BufferSize, sources, destinations);
             block = AudioBlock.For(f);
             format = f;
-            client.Prepare(f);
+            client?.Prepare(f);
             return f;
         }
 
@@ -225,6 +298,7 @@ public sealed class JackDriver : AudioDriver
                     return;
                 closed = true;
             }
+            changes.Dispose();
             Processor.Dispose();
             owner.Closed(this);
         });
@@ -234,9 +308,10 @@ public sealed class JackDriver : AudioDriver
         {
             AudioBlock b = block;
             int frames = context.Frames;
-            if (frames > b.Capacity || b.Inputs.Length != inputs.Length || b.Outputs.Length != outputs.Length)
+            IAudioClient? c = client;
+            if (c == null || frames > b.Capacity || b.Inputs.Length != inputs.Length || b.Outputs.Length != outputs.Length)
             {
-                // Between a change of buffer size and the restart that prepares for it.
+                // Nothing running; or between a change of buffer size and the restart that prepares for it.
                 foreach (AudioPort port in outputs)
                     port.GetBuffer(context).Clear();
                 return;
@@ -248,7 +323,7 @@ public sealed class JackDriver : AudioDriver
             b.Xruns = Interlocked.Exchange(ref xruns, 0);
             try
             {
-                client.Process(b);
+                c.Process(b);
             }
             catch (Exception)
             {

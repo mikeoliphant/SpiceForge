@@ -323,6 +323,25 @@ internal static class ServerCheck
             await using Client client = await Client.Connect(port);
             JsonObject hello = Result(await client.Request("hello", new JsonObject { ["protocol"] = 1, ["client"] = "JackCheck" }));
             Check(hello["capabilities"]?["audioDrivers"]?.AsArray().Any(d => d?.GetValue<string>() == "JACK") == true, "hello lists the JACK driver");
+            // SpiceForge's client leaving the graph at any point would drop connections made in a patchbay.
+            int left = 0;
+            watch.ClientRegistered += (_, e) => { if (e.ClientName == JackSharp_ClientName && !e.Registered) Interlocked.Increment(ref left); };
+
+            // With JACK configured, the client is in the graph before anything runs, its ports connected.
+            bool resident = WaitUntil(() =>
+                watch.GetConnections($"{JackSharp_ClientName}:in_1").SequenceEqual(new[] { "system:capture_1" })
+                && watch.GetConnections($"{JackSharp_ClientName}:out_1").SequenceEqual(new[] { "system:playback_1" })
+                && watch.GetConnections($"{JackSharp_ClientName}:out_2").SequenceEqual(new[] { "system:playback_2" }), 10000);
+            Check(resident, $"before anything runs, {JackSharp_ClientName} is in the graph: in_1 from system:capture_1, out_1 and out_2 to system:playback_1 and _2");
+            JsonObject idle = Result(await client.Request("audio.getConfig", new JsonObject()))["state"]!.AsObject();
+            Check(idle["open"]?.GetValue<bool>() == true && idle["running"]?.GetValue<bool>() == false && idle["connections"]?.AsArray().Count == 3,
+                $"audio.state: open, nothing running, three ports with their connections");
+
+            // A connection made in a patchbay is reported.
+            watch.Connect($"{JackSharp_ClientName}:out_1", "system:playback_2");
+            JsonObject? patched = await WaitFor(client, "audio.state", e => e["connections"]?.AsArray().OfType<JsonObject>().Any(c =>
+                c["port"]?.GetValue<string>() == $"{JackSharp_ClientName}:out_1" && c["connected"]!.AsArray().Count == 2) == true, TimeSpan.FromSeconds(3));
+            Check(patched != null, "a connection made in a patchbay (out_1 to system:playback_2 as well) is reported in audio.state");
 
             JsonObject info = Result(await client.Request("audio.deviceInfo", new JsonObject { ["driver"] = "JACK" }));
             string[] inputs = info["inputs"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray();
@@ -338,7 +357,7 @@ internal static class ServerCheck
             JsonObject document = read["document"]!.AsObject();
             JsonObject sim = Result(await client.Request("sim.start", new JsonObject { ["document"] = document.DeepClone(), ["title"] = "Rat" }));
             string id = sim["sim"]!.GetValue<string>();
-            JsonObject? state = await WaitFor(client, "audio.state", e => e["open"]?.GetValue<bool>() == true, TimeSpan.FromSeconds(20));
+            JsonObject? state = await WaitFor(client, "audio.state", e => e["running"]?.GetValue<bool>() == true, TimeSpan.FromSeconds(20));
             Check(state?["driver"]?.GetValue<string>() == "JACK" && state["fallback"]?.GetValue<bool>() == false
                     && state["sampleRate"]?.GetValue<double>() == 48000 && state["bufferSize"]?.GetValue<int>() == 256,
                 $"the simulation opens JACK: {state?.ToJsonString()}");
@@ -348,11 +367,18 @@ internal static class ServerCheck
             Check(got["sampleRate"]?.GetValue<double>() == 48000 && got["inputs"]?[0]?["source"]?["channel"]?.GetValue<string>() == "system:capture_1",
                 "at the server's rate, the Input playing system:capture_1");
 
-            bool connected = WaitUntil(() =>
-                watch.GetConnections($"{JackSharp_ClientName}:in_1").SequenceEqual(new[] { "system:capture_1" })
-                && watch.GetConnections($"{JackSharp_ClientName}:out_1").SequenceEqual(new[] { "system:playback_1" })
-                && watch.GetConnections($"{JackSharp_ClientName}:out_2").SequenceEqual(new[] { "system:playback_2" }));
-            Check(connected, $"in the JACK graph: {JackSharp_ClientName}:in_1 from system:capture_1, out_1 and out_2 to system:playback_1 and _2");
+            Check(Volatile.Read(ref left) == 0 && watch.GetConnections($"{JackSharp_ClientName}:out_1").Count == 2,
+                "the simulation runs in the same client: it never left the graph, and the patchbay connection is still there");
+            // The simulation's resampling latency, reported to JACK: its outputs' capture latency is its inputs' plus it.
+            int simLatency = got["latency"]!.GetValue<int>();
+            uint inLatency = 0, outLatency = 0;
+            bool reported = WaitUntil(() =>
+            {
+                inLatency = watch.GetLatency($"{JackSharp_ClientName}:in_1", JackSharp.LatencyMode.Capture).Max;
+                outLatency = watch.GetLatency($"{JackSharp_ClientName}:out_1", JackSharp.LatencyMode.Capture).Max;
+                return simLatency > 0 && outLatency == inLatency + simLatency;
+            });
+            Check(reported, $"the simulation's latency ({simLatency} samples) is reported to JACK: capture latency {inLatency} in, {outLatency} out");
 
             JsonArray elements = document["elements"]!.AsArray();
             string input = elements.First(e => e!["component"]?["type"]?.GetValue<string>().StartsWith("Circuit.Input") == true)!["id"]!.GetValue<string>();
@@ -378,7 +404,11 @@ internal static class ServerCheck
             Check(levels != null, $"each output has its level: {levels?["outputs"]?.ToJsonString()}");
 
             await client.Request("sim.stop", new JsonObject { ["sim"] = id });
-            Check(WaitUntil(() => watch.GetPorts($"^{JackSharp_ClientName}:").Count == 0), "stopping it takes SpiceForge's client out of the graph");
+            JsonObject? stopped = await WaitFor(client, "audio.state", e => e["running"]?.GetValue<bool>() == false, TimeSpan.FromSeconds(5));
+            Thread.Sleep(300);
+            Check(stopped?["open"]?.GetValue<bool>() == true && watch.GetPorts($"^{JackSharp_ClientName}:").Count == 3
+                    && watch.GetConnections($"{JackSharp_ClientName}:out_1").Count == 2 && Volatile.Read(ref left) == 0,
+                "stopping it leaves SpiceForge's client in the graph, silent, with the patchbay connection");
 
             // The JACK server going away mid-simulation: the simulation carries on, on the internal clock.
             JsonObject again = Result(await client.Request("sim.start", new JsonObject { ["document"] = document.DeepClone(), ["title"] = "Rat" }));

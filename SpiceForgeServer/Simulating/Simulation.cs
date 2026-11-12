@@ -276,6 +276,8 @@ public sealed class Simulation : IAudioClient
             }
             SetState("running");
             BroadcastControls();
+            // The new build's resampling latency, for drivers that report it (JACK).
+            context.Audio.LatencyChanged(this);
         }
         catch (Exception ex)
         {
@@ -767,6 +769,9 @@ public sealed class Simulation : IAudioClient
 
     /// <summary>The device's format, before it starts and whenever it changes, while it's stopped: sizes the buffers,
     /// and rebuilds if the rate changed.</summary>
+    /// <summary>The running build's latency in samples: its resampling delay.</summary>
+    public int Latency => processor?.Latency ?? 0;
+
     public void Prepare(AudioFormat newFormat)
     {
         AudioFormat old = format;
