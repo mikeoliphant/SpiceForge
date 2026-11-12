@@ -9,6 +9,7 @@
          seconds into a simulation, and that stalled ASIO callbacks past 64- and 128-sample buffers (LessonsLearned.md,
          Audio I/O). Startup and the server check cost no more without it. -->
     <TieredCompilation>false</TieredCompilation>
+    <ApplicationIcon>..\Assets\Icon\SpiceForge.ico</ApplicationIcon>
   </PropertyGroup>
 
   <!-- For packages (SpiceForge.Package): the version, and on Windows no console window (it logs to a file instead).

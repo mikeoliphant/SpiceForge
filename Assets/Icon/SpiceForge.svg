@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- SpiceForge's icon: "SF" on a rounded blue square. make-icon.mjs renders the PNGs and the .ico from it. -->
+  <defs>
+    <linearGradient id="face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f6fd6"/>
+      <stop offset="1" stop-color="#1b4596"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#face)"/>
+  <text x="128" y="128" dy="0.355em" text-anchor="middle" fill="#ffffff"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="138"
+        letter-spacing="-6">SF</text>
+</svg>

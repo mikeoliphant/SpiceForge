@@ -21,6 +21,7 @@ DefaultGroupName=SpiceForge
 DisableProgramGroupPage=yes
 ; For everyone (needs administrator rights) or just the current user, as chosen.
 PrivilegesRequiredOverridesAllowed=dialog
+SetupIconFile=..\Assets\Icon\SpiceForge.ico
 UninstallDisplayIcon={app}\SpiceForgeServer.exe
 UninstallDisplayName=SpiceForge
 LicenseFile={#SourceDir}\LICENSE.txt

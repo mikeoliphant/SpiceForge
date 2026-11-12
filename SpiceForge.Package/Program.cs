@@ -55,6 +55,9 @@ foreach (string rid in rids)
     File.Copy(Path.Combine(repo, "LICENSE"), Path.Combine(stage, "LICENSE.txt"));
     File.Copy(Path.Combine(repo, "CREDITS.md"), Path.Combine(stage, "CREDITS.md"));
     File.WriteAllText(Path.Combine(stage, "README.txt"), Readme(version, windows));
+    if (!windows)
+        // For a desktop entry (the Windows executable carries the icon itself).
+        File.Copy(Path.Combine(repo, "Assets", "Icon", "SpiceForge-256.png"), Path.Combine(stage, "spiceforge.png"));
     if (!File.Exists(Path.Combine(stage, "Components", "Diodes.xml")) && Directory.GetFiles(Path.Combine(stage, "Components"), "*.xml").Length == 0)
         Fail("LiveSPICE's component libraries weren't published.");
 

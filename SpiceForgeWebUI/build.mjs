@@ -7,9 +7,14 @@ import { copyFile, mkdir } from "node:fs/promises";
 const watch = process.argv.includes("--watch");
 const statics = ["index.html", "themes.css", "style.css"];
 
+// The app's icon (Assets/Icon, rendered from its SVG by make-icon.mjs), as the page's favicons: the editor's own
+// window (a browser's app mode) shows it in its title bar and taskbar.
+const icons = { "SpiceForge-32.png": "favicon-32.png", "SpiceForge-256.png": "icon-256.png" };
+
 async function copyStatics() {
   await mkdir("dist", { recursive: true });
   await Promise.all(statics.map((f) => copyFile(`static/${f}`, `dist/${f}`)));
+  await Promise.all(Object.entries(icons).map(([from, to]) => copyFile(`../Assets/Icon/${from}`, `dist/${to}`)));
 }
 
 const options = {

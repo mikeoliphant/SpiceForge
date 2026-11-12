@@ -63,6 +63,10 @@ dotnet run -c Release --project SpiceForge.Package [-- --version 0.1.0] [--rid w
 
 Packages are unsigned: Windows SmartScreen asks before the installer or the zip's server runs for the first time.
 
+The app's icon is `Assets/Icon/SpiceForge.svg`. `node Assets/Icon/make-icon.mjs` renders it (with headless Chrome or
+Edge) into the `.ico` the server's executable and the installer carry, and the PNGs this editor uses as its favicons
+(which its own window shows) and the Linux package includes as `spiceforge.png`.
+
 ## Using it
 
 The window has the component library on the left, the schematic in the middle, and the properties of the selection
