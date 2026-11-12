@@ -33,8 +33,18 @@ public sealed class ServerOptions
     /// (while developing) SpiceForgeWebUI/dist in the repository. Null if there's none, and only the API is served.</summary>
     public string? WebRoot { get; init; }
 
-    /// <summary>Whether to open the front end in the default browser once the server starts (<c>--open true</c>).</summary>
-    public bool OpenBrowser { get; init; }
+    /// <summary>Where to open the front end once the server starts: <c>--open browser</c> (or <c>true</c>), the default
+    /// browser; <c>--open app</c>, a window of its own (a Chromium browser's app mode, else the default browser).</summary>
+    public OpenMode Open { get; init; }
+
+    /// <summary><c>--exitWhenIdle seconds</c>: stop the server once no editor has been connected for this long (and, if
+    /// none ever connects, after two minutes), so closing the editor's window quits it. 5 s with <c>--open app</c>, and
+    /// off otherwise; 0 turns it off.</summary>
+    public TimeSpan? ExitWhenIdle { get; init; }
+
+    /// <summary><c>--logFile path</c>: where the console's output goes instead (relative to the settings folder), for a
+    /// server without a console. Rewritten each run.</summary>
+    public string? LogFile { get; init; }
 
     // The audio configuration for this run, over the saved one (see AudioService.Startup). Null: the saved value.
 
@@ -76,7 +86,11 @@ public sealed class ServerOptions
             SettingsPath = configuration["settings"] ?? defaults.SettingsPath,
             UserFolder = userFolder,
             WebRoot = FindWebRoot(configuration["webRoot"]),
-            OpenBrowser = bool.TryParse(configuration["open"], out bool open) && open,
+            Open = ParseOpen(configuration["open"]),
+            ExitWhenIdle = ParseIdle(configuration["exitWhenIdle"], ParseOpen(configuration["open"])),
+            LogFile = configuration["logFile"] is { Length: > 0 } logFile
+                ? Path.Combine(Path.GetDirectoryName(configuration["settings"] ?? defaults.SettingsPath) ?? ".", logFile)
+                : null,
             AudioDriver = AudioDriverName(configuration["audio"]),
             AudioDevice = configuration["audioDevice"],
             AudioInputs = Channels(configuration["audioInputs"]),
@@ -90,6 +104,23 @@ public sealed class ServerOptions
                 Path.Combine(userFolder, "Components"),
             },
         };
+    }
+
+    private static OpenMode ParseOpen(string? configured) => configured?.ToLowerInvariant() switch
+    {
+        null or "" or "false" or "none" => OpenMode.None,
+        "true" or "browser" => OpenMode.Browser,
+        "app" or "window" => OpenMode.App,
+        _ => throw new ArgumentException($"--open is browser, app or none, not '{configured}'."),
+    };
+
+    private static TimeSpan? ParseIdle(string? configured, OpenMode open)
+    {
+        if (configured == null)
+            return open == OpenMode.App ? TimeSpan.FromSeconds(5) : null;
+        return double.TryParse(configured, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double seconds) && seconds >= 0
+            ? (seconds == 0 ? null : TimeSpan.FromSeconds(seconds))
+            : throw new ArgumentException($"--exitWhenIdle is a number of seconds, not '{configured}'.");
     }
 
     private static string? AudioDriverName(string? configured)
@@ -136,4 +167,14 @@ public sealed class ServerOptions
             || trimmed.Equals($"http://localhost:{Port}", StringComparison.OrdinalIgnoreCase)
             || AllowedOrigins.Any(o => o.TrimEnd('/').Equals(trimmed, StringComparison.OrdinalIgnoreCase));
     }
+}
+
+/// <summary>Where the front end opens when the server starts.</summary>
+public enum OpenMode
+{
+    None,
+    /// <summary>A tab of the default browser.</summary>
+    Browser,
+    /// <summary>A window of its own: a Chromium browser's app mode (no tabs or address bar), else the default browser.</summary>
+    App,
 }

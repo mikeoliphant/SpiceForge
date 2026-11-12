@@ -11,6 +11,15 @@
     <TieredCompilation>false</TieredCompilation>
   </PropertyGroup>
 
+  <!-- For packages (SpiceForge.Package): the version, and on Windows no console window (it logs to a file instead).
+       Properties of their own, so they don't reach the libraries a publish also builds. -->
+  <PropertyGroup Condition="'$(SpiceForgeVersion)' != ''">
+    <Version>$(SpiceForgeVersion)</Version>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(SpiceForgeNoConsole)' == 'true'">
+    <OutputType>WinExe</OutputType>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\SpiceForge\SpiceForge.csproj" />
     <!-- JACK through JackSharpCore (Dependencies/JackSharpCore): Windows, Linux (including PipeWire) and macOS. -->

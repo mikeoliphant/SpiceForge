@@ -1070,6 +1070,30 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   check is refused before the running device is touched, unless a different ASIO driver has to be loaded to check
   it, in which case the old one is reopened.
 
+## Packaging
+
+`SpiceForge.Package` builds a self-contained server with the web editor for Windows (a zip, and an Inno Setup
+installer) and Linux (a tarball), started in a window of its own.
+
+- **A Chromium browser's app mode makes a good enough app window.** `--app=<url>` with a profile of its own
+  (`--user-data-dir`, in the settings folder) gives a window with no tabs or address bar and its own taskbar entry,
+  with nothing new to ship: Edge is always on Windows 10 and 11. Whether the window has closed comes from the editor's
+  connection, not the browser's process (a browser can stay running in the background): the server stops 5 s after the
+  last editor disconnects, and a reload reconnects well within that. A second launch reads the running server's port
+  and token from `server-instance.json`, checks `/health`, and opens another window onto it.
+- **Don't ship ReadyToRun code.** With tiered compilation off (see Audio I/O), precompiled code is used as it is,
+  less optimized than the JIT's, on the audio path; so the packages are self-contained but JIT-compiled.
+- **Properties on a publish's command line reach every project it builds.** `-p:OutputType=WinExe` (for a server
+  without a console window) made the libraries executables too, and the publish failed; `-p:Version` would have
+  versioned them all. The server's project takes properties of its own (`SpiceForgeNoConsole`, `SpiceForgeVersion`)
+  and sets its own `OutputType` and `Version` from them.
+- **Write the Linux tarball with its permissions.** Tar tools on Windows don't reliably record the execute bit, so the
+  packaging tool writes the tarball itself (`System.Formats.Tar`), the server and `createdump` 755 and the rest 644.
+- **Checked as packaged.** Each package's server, run from its folder with the window turned off, served its own
+  editor and the 131-entry catalogue, listed its audio drivers (Windows: None, ASIO, JACK; Linux, under WSL's
+  Ubuntu 22.04: None, JACK), logged to its file (Windows), and stopped itself when its client left. Both are about
+  48 MB.
+
 ## Open issues
 
 - The Rat at 0.5 input was −10 dB from stock LiveSPICE, while stock under noise stayed near −80 dB, and the cause was

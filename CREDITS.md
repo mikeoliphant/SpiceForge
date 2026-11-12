@@ -45,6 +45,11 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
 - UILayout's image processor also uses SharpFont (`SpaceWizards.SharpFont`; MIT) and StbImageSharp and
   StbImageWriteSharp, at build time only.
 
+### Build tools
+
+- [Inno Setup](https://jrsoftware.org/isinfo.php) by Jordan Russell and Martijn Laan (its own free license): builds the
+  Windows installer from `SpiceForge.Package/SpiceForge.iss`, as LiveSPICE's installer is built.
+
 ### npm packages (build only)
 
 The web front end, `SpiceForgeWebUI`, has no runtime dependencies. These build it, under

@@ -40,8 +40,28 @@ dotnet run -c Release --project SpiceForgeServer
 Build it in Release: a Debug build runs SpiceForge's audio code without JIT optimizations, and simulates four to five
 times slower (the SD-1 at 25 to 27% of real time, against 6% in Release). It says so when it starts.
 
-`--open true` opens it in the default browser. The page takes the token from its address and keeps it for reloads.
-`?file=<path>` opens a schematic straight away; otherwise the last one opened is reopened.
+`--open true` opens it in the default browser, and `--open app` in a window of its own (Edge's or Chrome's app mode),
+stopping the server a few seconds after the window closes. The page takes the token from its address and keeps it for
+reloads. `?file=<path>` opens a schematic straight away; otherwise the last one opened is reopened.
+
+## Packaging
+
+`SpiceForge.Package` builds the packages into `artifacts/`: the server, self-contained (no .NET to install), with this
+editor, LiveSPICE's component libraries and its example schematics. They start the editor in a window of its own.
+
+```
+dotnet run -c Release --project SpiceForge.Package [-- --version 0.1.0] [--rid win-x64,linux-x64] [--skipWeb]
+```
+
+- **Windows:** `SpiceForge-<version>-win-x64.zip`, portable, and `SpiceForge-<version>-setup.exe`, built when
+  [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed. The installer adds a Start menu entry, copies the
+  examples to `Documents\LiveSPICE\Examples` (keeping any already there), and installs for the current user or for
+  everyone. The server has no console window there, and logs to `server.log` in its settings folder.
+- **Linux:** `SpiceForge-<version>-linux-x64.tar.gz`. Unpack it and run `SpiceForge/SpiceForgeServer`.
+- **macOS:** build from source for now (`dotnet run`, above). Distributing it needs Apple's signing and notarization,
+  and macOS audio needs a CoreAudio driver SpiceForge doesn't have yet (only JACK).
+
+Packages are unsigned: Windows SmartScreen asks before the installer or the zip's server runs for the first time.
 
 ## Using it
 

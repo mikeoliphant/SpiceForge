@@ -90,6 +90,9 @@ public sealed class Hub
 
     public void Add(Session session) => sessions[session.Id] = session;
 
+    /// <summary>How many connections are open now, greeted or not.</summary>
+    public int Connected => sessions.Count;
+
     public void Remove(Session session) => sessions.TryRemove(session.Id, out _);
 
     public IEnumerable<Session> Sessions => sessions.Values.Where(s => s.Greeted);

@@ -797,6 +797,13 @@ from the command line, environment variables prefixed `SPICEFORGE_`, or `appsett
 | `--audioInputs`, `--audioOutputs` | The saved channels, else the device's defaults (comma-separated names; empty for none, as `--audioOutputs=`) |
 | `--sampleRate`, `--bufferSize` | The saved ones, else the device's |
 | `--listAudio true` | Prints every driver's devices, with their channels, rates and buffer sizes, and exits |
+| `--open` | `none`; `browser` (or `true`), a tab of the default browser; `app`, a window of its own (a Chromium browser's app mode, with a profile of its own in the settings folder, else the default browser) |
+| `--exitWhenIdle` | Seconds after the last editor disconnects (or two minutes, if none ever connects) to stop the server; 5 with `--open app`, else off; 0 for off |
+| `--logFile` | None: where the console's output goes instead, relative to the settings folder (the packaged Windows server, which has no console, logs to `server.log`) |
+
+Settings can also come from `appsettings.json` beside the server: the packages set `"open": "app"` there. A running
+server records its port and token in `server-instance.json` beside its settings, and answers `/health` with
+`SpiceForgeServer`, so launching it again with `--open` opens another editor onto it, instead of failing on the port.
 
 The audio settings on the command line apply to that run only, over the saved configuration; a different `--audio`
 starts from the configuration last used with that driver, else its defaults. `audio.setConfig` from a client
