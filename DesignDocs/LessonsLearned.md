@@ -908,6 +908,14 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   it. Pixels rather than schematic units, so the handle is the same size at any zoom. Checked in the scratch script:
   free and connected ends (a terminal, another wire's end, a mere crossing), the routes, and an extension onto a
   terminal with undo and redo exact.
+- **Stop Enter where it's handled, or it presses the button focus returns to.** Enter in Save As's name box saved and
+  closed the dialog on keydown; closing a modal dialog returns focus to what opened it, the toolbar's Save As button,
+  and the same keypress then activated that button. The dialog came straight back with the old name (the write hadn't
+  finished, so the tab still had its old file). Every Enter handler in the file dialog now prevents the default.
+- **Deleting is the server's, and narrow.** `fs.delete` deletes only `.schx` and `.xml` files, never folders, for good
+  (no recycle bin: the server isn't Windows-only), and forgets them from the recent files. `fs.mkdir` makes one folder
+  inside one that exists, so a mistyped path can't create a chain. `SpiceForge.Validate server` checks both, refusals
+  included: 0 problems, with the web editor's conformance (53 schematics) still passing.
 - **Show the grid as a CSS background, not SVG.** A dot pattern on the schematic `svg` element, sized and placed from
   the view on every pan and zoom, adds nothing to the drawing, so exports never include it. Dots closer than 8 pixels
   are thinned to every second grid point (and again), so those drawn are always snap points.

@@ -387,7 +387,7 @@ async function saveAs(tab = active) {
   if (!tab) return;
   const folder = tab.file ? tab.file.path.replace(/[\\/][^\\/]*$/, "") : (hello?.folders.user ?? "");
   const name = tab.file ? tab.file.path.split(/[\\/]/).pop()! : `${tabName(tab)}.schx`;
-  const path = await chooseFile(client, folder, { mode: "save", name });
+  const path = await chooseFile(client, folder, { mode: "save", name, isOpen: (p) => tabs.some((t) => t.file && samePath(t.file.path, p)) });
   if (!path) return;
   const other = tabs.find((t) => t !== tab && t.file && samePath(t.file.path, path));
   if (other) return setStatus(`${fileName(path)} is open in another tab; close it first.`, "error");

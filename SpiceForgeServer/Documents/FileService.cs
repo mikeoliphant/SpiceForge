@@ -152,6 +152,54 @@ public sealed class FileService : IDisposable
         }
     }
 
+    /// <summary>The files <see cref="Delete"/> will delete: schematics, as the client's dialogs list them.</summary>
+    public static readonly string[] SchematicExtensions = { ".schx", ".xml" };
+
+    /// <summary>Creates a folder in one that exists (not a chain of them, so a typo can't make several).</summary>
+    public JsonObject CreateFolder(string path)
+    {
+        string full = FullPath(path);
+        if (Directory.Exists(full) || File.Exists(full))
+            throw new ApiException(ErrorCodes.Exists, $"'{full}' already exists.", new JsonObject { ["path"] = full });
+        string? parent = Path.GetDirectoryName(full);
+        if (parent == null || !Directory.Exists(parent))
+            throw new ApiException(ErrorCodes.NotFound, $"There's no folder '{parent ?? full}'.", new JsonObject { ["path"] = full });
+        try
+        {
+            Directory.CreateDirectory(full);
+            log.Write(MessageType.Info, "file", $"Folder '{full}' created");
+            return new JsonObject { ["path"] = full };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ApiException(ErrorCodes.IoError, ex.Message, new JsonObject { ["path"] = full });
+        }
+    }
+
+    /// <summary>Deletes a schematic file, for good, and takes it out of the recent files. Nothing else is deleted:
+    /// not other files, and not folders.</summary>
+    public JsonObject Delete(string path)
+    {
+        string full = FullPath(path);
+        if (!SchematicExtensions.Any(e => full.EndsWith(e, StringComparison.OrdinalIgnoreCase)))
+            throw new ApiException(ErrorCodes.InvalidValue, $"Only schematics ({string.Join(", ", SchematicExtensions)}) can be deleted.",
+                new JsonObject { ["path"] = full });
+        if (!File.Exists(full))
+            throw new ApiException(ErrorCodes.NotFound, $"There's no file '{full}'.", new JsonObject { ["path"] = full });
+        try
+        {
+            File.Delete(full);
+            ownWrites.TryRemove(full, out _);
+            settings.Forget(full);
+            log.Write(MessageType.Info, "file", $"Schematic '{full}' deleted");
+            return new JsonObject { ["path"] = full };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ApiException(ErrorCodes.IoError, ex.Message, new JsonObject { ["path"] = full });
+        }
+    }
+
     private static bool SameTime(string a, string b) =>
         DateTime.TryParse(a, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime x)
         && DateTime.TryParse(b, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime y)

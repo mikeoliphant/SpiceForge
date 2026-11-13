@@ -350,6 +350,8 @@ A property descriptor:
 |---|---|---|
 | `fs.list` | `path`, `extensions` (e.g. `[".schx", ".xml"]`; default all) | `path`, `parent`, `entries: [{name, kind: "dir" \| "file", modified}]` |
 | `fs.recent` | | `files: [path]` (up to 20, most recent first) |
+| `fs.mkdir` | `path` | `path` |
+| `fs.delete` | `path` | `path` |
 | `file.read` | `path` | `document`, `modified`, `messages: [LogEntry]` |
 | `file.write` | `path`, `document`, `overwrite` (true), `expectModified` | `modified` |
 | `file.watch` | `paths` | |
@@ -358,6 +360,10 @@ A property descriptor:
 
 - **`fs.list`** exists because a web page can't open native file dialogs that return paths. The client builds its Open
   and Save As dialogs on it, starting from `folders.user`.
+- **`fs.mkdir`** creates a folder inside one that exists (`not_found` otherwise, so a mistyped path can't create a
+  chain of folders), failing with `exists` if something is already there.
+- **`fs.delete`** deletes a schematic file (`.schx` or `.xml`; anything else is `invalid_value`), permanently, and
+  removes it from the recent files. It never deletes folders. The client asks first.
 - **`file.read`** converts a `.schx` (or XML) file to a document. `messages` reports what LiveSPICE logged while
   loading, such as unresolved types.
 - **`file.write`** converts a document to `.schx` and writes it safely (to a temporary file, then a replace), as
@@ -640,7 +646,7 @@ A `log` event carries one entry: `{ "time": "2026-11-11T14:03:22.512Z", "level":
 | `not_found` | No such simulation, probe, control, path, catalogue entry, element or node |
 | `invalid_value` | A value doesn't parse or is out of range; `details` says which |
 | `io_error` | A file couldn't be read or written |
-| `exists` | `file.write` onto an existing file without `overwrite` |
+| `exists` | `file.write` onto an existing file without `overwrite`, or `fs.mkdir` where something is already there |
 | `modified_on_disk` | `file.write` with an `expectModified` the file no longer has |
 | `bad_document` | A document doesn't follow the format (a missing field, a type that isn't a component) |
 | `build_failed` | The circuit couldn't be built or solved; `details` has the problems, and the log has LiveSPICE's messages |

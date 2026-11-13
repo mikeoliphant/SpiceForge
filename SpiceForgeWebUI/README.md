@@ -113,7 +113,7 @@ classes (`s-red` for a red stroke, `terminal unconnected`), so a new theme needs
 | New | A new, untitled schematic in a new tab |
 | Open… (Ctrl+O) | Browses the server's files; for a file already open, asks whether to open another copy (a tab of its own, saving to the same file) or reload the open one from disk |
 | Save (Ctrl+S) | Saves, asking before overwriting a file that changed on disk; an untitled schematic goes to Save As |
-| Save As… (Ctrl+Shift+S) | Saves under a new name or folder, asking before replacing a file |
+| Save As… (Ctrl+Shift+S) | Saves under a new name or folder, asking before replacing a file. Enter in the name box saves and closes. New folder makes one in the folder shown and goes into it; Delete deletes the schematic the name box names (highlighted in the list), after asking, unless it's open in a tab |
 | Click a tab, × or middle-click | Switches to it, or closes it (asking if it has unsaved changes) |
 
 Browsers keep Ctrl+N and Ctrl+W for themselves, so New and closing a tab have no shortcuts.
@@ -252,7 +252,7 @@ server and runs it.
 | `src/about.ts` | The About dialog |
 | `src/panelWidth.ts` | Resizing the side panels by dragging their edges |
 | `src/properties.ts` | The properties panel |
-| `src/fileDialog.ts` | The Open and Save As dialogs, on `fs.list` and `fs.recent` |
+| `src/fileDialog.ts` | The Open and Save As dialogs, on `fs.list` and `fs.recent`, with `fs.mkdir` and `fs.delete` |
 | `src/theme.ts` | The colour theme: the picker's choice, kept locally and in the server's client settings |
 | `src/simulation.ts` | The simulation panel: controls, input, meters, the probe tool and flags, live updates |
 | `src/componentFolders.ts` | The component folders dialog |

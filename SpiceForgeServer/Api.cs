@@ -75,6 +75,8 @@ public sealed class Api
             ["settings.set"] = SettingsSet,
             ["fs.list"] = (_, a) => Done(context.Files.List(a.String("path"), a.Has("extensions") ? a.Strings("extensions") : null)),
             ["fs.recent"] = (_, _) => Done(new JsonObject { ["files"] = Json.Strings(context.Settings.RecentFiles) }),
+            ["fs.mkdir"] = (_, a) => Done(context.Files.CreateFolder(a.String("path"))),
+            ["fs.delete"] = (_, a) => Done(context.Files.Delete(a.String("path"))),
             ["file.read"] = (_, a) => Engine.Run<JsonNode?>(() => context.Files.Read(a.String("path"))),
             ["file.write"] = (_, a) => Engine.Run<JsonNode?>(() =>
                 context.Files.Write(a.String("path"), a.Object("document"), a.Bool("overwrite", true), a.OptionalString("expectModified"))),

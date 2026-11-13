@@ -736,6 +736,25 @@ internal static class ServerCheck
         JsonObject? changed = await client.WaitForEvent("file.changed", TimeSpan.FromSeconds(3));
         Check(!ownWriteReported && changed?["path"]?.GetValue<string>() == copy, "an outside change is reported, and the server's own write isn't");
 
+        // New folders, and deleting schematics (only schematics).
+        string newFolder = Path.Combine(scratch, "New folder");
+        JsonObject made = Result(await client.Request("fs.mkdir", new JsonObject { ["path"] = newFolder }));
+        Check(made["path"]?.GetValue<string>() == newFolder && Directory.Exists(newFolder), "fs.mkdir creates a folder");
+        Check(Code(await client.Request("fs.mkdir", new JsonObject { ["path"] = newFolder })) == "exists", "fs.mkdir where a folder is refuses");
+        Check(Code(await client.Request("fs.mkdir", new JsonObject { ["path"] = Path.Combine(scratch, "missing", "deeper") })) == "not_found",
+            "fs.mkdir doesn't create a chain of folders");
+        string notSchematic = Path.Combine(scratch, "notes.txt");
+        File.WriteAllText(notSchematic, "keep me");
+        Check(Code(await client.Request("fs.delete", new JsonObject { ["path"] = notSchematic })) == "invalid_value" && File.Exists(notSchematic),
+            "fs.delete refuses a file that isn't a schematic");
+        Check(Code(await client.Request("fs.delete", new JsonObject { ["path"] = newFolder })) == "invalid_value" && Directory.Exists(newFolder),
+            "fs.delete refuses a folder");
+        await client.Request("file.watch", new JsonObject { ["paths"] = new JsonArray() });
+        Result(await client.Request("fs.delete", new JsonObject { ["path"] = copy }));
+        string[] recentAfter = Result(await client.Request("fs.recent", null))["files"]!.AsArray().Select(r => r!.GetValue<string>()).ToArray();
+        Check(!File.Exists(copy) && !recentAfter.Contains(copy, StringComparer.OrdinalIgnoreCase), "fs.delete deletes a schematic and forgets it");
+        Check(Code(await client.Request("fs.delete", new JsonObject { ["path"] = copy })) == "not_found", "fs.delete of a missing file is not_found");
+
         // Settings.
         JsonObject settings = Result(await client.Request("settings.set", new JsonObject { ["client"] = new JsonObject { ["layout"] = "x" } }));
         Check(settings["client"]?["layout"]?.GetValue<string>() == "x", "the client's state is stored");

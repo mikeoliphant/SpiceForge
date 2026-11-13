@@ -789,6 +789,24 @@ button:disabled {
   border-color: var(--accent);
 }
 
+/* Delete, apart from the buttons that finish the dialog. */
+.file-dialog .buttons .left {
+  margin-right: auto;
+}
+
+/* The schematic the name box names: what Delete deletes, and what Save replaces. */
+.file-dialog li.chosen {
+  background: var(--active);
+}
+
+.file-dialog li.new-folder .name {
+  font: inherit;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  width: calc(100% - 3em);
+}
+
 .toolbar {
   grid-area: toolbar;
 }
