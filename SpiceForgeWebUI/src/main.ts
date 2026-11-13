@@ -18,6 +18,7 @@ import type { CatalogEntry, Element, FileRead, Hello, Point, SchematicDocument, 
 import { makePanelsResizable } from "./panelWidth";
 import { choose } from "./choiceDialog";
 import { showAbout, versionLabel } from "./about";
+import { showHelp } from "./help";
 import { applyTheme, currentTheme, initTheme, isTheme, Themes } from "./theme";
 import { SchematicView } from "./view";
 
@@ -53,6 +54,7 @@ const buttons = {
   simulate: $<HTMLButtonElement>("simulate"),
   audio: $<HTMLButtonElement>("audio"),
   export: $<HTMLButtonElement>("export"),
+  help: $<HTMLButtonElement>("help"),
 };
 
 const client = new ApiClient();
@@ -499,9 +501,8 @@ const CtrlShortcutTypes: Record<string, string> = {
   g: "Circuit.Ground, Circuit",
   p: "Circuit.Rail, Circuit",
   r: "Circuit.Resistor, Circuit",
-  f: "Circuit.Capacitor, Circuit",
   l: "Circuit.Inductor, Circuit",
-  h: "Circuit.Inductor, Circuit",
+  h:"Circuit.Inductor, Circuit",
 };
 
 function pickType(type: string) {
@@ -824,6 +825,7 @@ svg.addEventListener("wheel", hideMenu);
 buttons.new.addEventListener("click", newTab);
 // The About dialog needs hello's about; before the server answers, the button does nothing.
 buttons.about.addEventListener("click", () => hello && showAbout(hello.about));
+buttons.help.addEventListener("click", showHelp);
 buttons.open.addEventListener("click", async () => {
   const from = active?.file?.path ?? localStorage.getItem("spiceforge.activeFile") ?? hello?.folders.user ?? "";
   const folder = /\.(schx|xml)$/i.test(from) ? from.replace(/[\\/][^\\/]*$/, "") : from;
@@ -862,6 +864,12 @@ window.addEventListener("keydown", (e) => {
     handled();
     if (e.shiftKey) void simulation.stop();
     else simulate();
+    return;
+  }
+  if (e.key === "F1" || (e.key === "?" && !ctrl && !e.altKey)) {
+    // F1 (or ?) shows the shortcuts, rather than the browser's own help.
+    handled();
+    showHelp();
     return;
   }
   if (e.key === "Escape" && simulation.picking !== null) return simulation.setPicking(null);

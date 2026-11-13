@@ -137,8 +137,9 @@ A component whose name is taken is renamed (R1 becomes the first free R number).
 overlapping wires merge, and it connects wherever it ends on a wire or passes through a terminal, but not where it
 merely crosses another wire.
 
-LiveSPICE's own Ctrl shortcuts (Ctrl+G, Ctrl+P, Ctrl+R, Ctrl+F, Ctrl+L, Ctrl+H) work too. Browsers keep Ctrl+W and
-Ctrl+T for themselves, so the plain letters are the dependable ones.
+LiveSPICE's own Ctrl shortcuts (Ctrl+G, Ctrl+P, Ctrl+R, Ctrl+L, Ctrl+H) work too. Browsers keep Ctrl+W and
+Ctrl+T for themselves, and Ctrl+F is Find here rather than LiveSPICE's capacitor, so the plain letters are the
+dependable ones.
 
 ### Selecting and editing
 
