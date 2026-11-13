@@ -28,16 +28,23 @@
 		<Message Text="Restoring dotnet tools" Importance="High" />
 		<Exec Command="dotnet tool restore" />
 	</Target>
+
+	<!-- Build order only: the image processor generates Content/Textures, so it is built first but not referenced. -->
 	<ItemGroup>
-		<ProjectReference Include="../SpiceForgeImageProcessor/SpiceForgeImageProcessor.csproj"
-					  ReferenceOutputAssembly="false"
-					  OutputItemType="ToolExePath" />
+		<ProjectReference Include="..\SpiceForgeImageProcessor\SpiceForgeImageProcessor.csproj"
+						  ReferenceOutputAssembly="false"
+						  OutputItemType="ImageProcessorPath" />
 	</ItemGroup>
-	<Target Name="RunCommandWhenNewer"
+
+	<!-- Regenerate the sprite sheets and ImageManifest.xml when the image processor's Program.cs is newer than the
+	     manifest (or the manifest is missing). This has to run before MonoGame's content builder, which runs before
+	     BeforeBuild and packs Content/Textures. -->
+	<Target Name="RunImageProcessor"
 			DependsOnTargets="ResolveProjectReferences"
-			BeforeTargets="CoreCompile"
+			BeforeTargets="RunContentBuilder"
 			Inputs="..\SpiceForgeImageProcessor\Program.cs"
 			Outputs="Content\Textures\ImageManifest.xml">
-		<Exec Command="dotnet &quot;@(ToolExePath)&quot;" />
+		<Message Text="Running SpiceForgeImageProcessor" Importance="High" />
+		<Exec Command="dotnet &quot;%(ImageProcessorPath.Identity)&quot;" />
 	</Target>
 </Project>
