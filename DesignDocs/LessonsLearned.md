@@ -1067,7 +1067,9 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   ports are registered before activating, and JACK on Windows always gives one. JackSharpCore 1.1.1 gives an empty
   span for a port without a buffer and catches anything a cycle throws; SpiceForge's driver reads silence from an
   input without one and skips an output without one. `SpiceForge.Validate jack` (its own dummy JACK server, on
-  Windows) and JackSharpCore's tests (17 passed) still pass; the PipeWire case itself isn't checked here.
+  Windows) and JackSharpCore's tests (17 passed) still pass. On the Linux box with PipeWire's JACK, the packaged
+  server (single file, 0.0.2-dev.16) no longer crashes connecting; audio there still had trouble, thought to be the
+  system's own, and wasn't pursued.
 - **The JACK check also caught the device-loss change.** When the JACK server goes, the configuration now resets
   to None rather than falling back (see above), so `audio.state` has no `fallback`; `SpiceForge.Validate jack` waited
   for `fallback` and failed. It isn't in the regular server check, so it wasn't run when that changed; it now
