@@ -30,6 +30,19 @@ test suite.
 `DesignDocs/LessonsLearned.md` records what was tried and measured. `CREDITS.md` lists the projects SpiceForge
 builds on.
 
+## Geting it
+
+You can find binaries in the [Releases section](https://github.com/mikeoliphant/SpiceForge/releases/latest).
+
+Binaries are provided for x64 Windows and Linux. The app *should* also run on macOS, but you will have to use
+.NET locally to build it.
+
+## Current notable limitations
+
+- No macOS package is currently produced - it must be built locally.
+- macOS support is untested. It *should* work with JACK audio. macOS Core Audio is not yet implemented.
+- There is initial DAW plugin support, but it is still very bare bones and it is currently limited to Windows VST. It is not currently packaged for releases. 
+
 ## Building
 
 You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) and, for the editor,
@@ -71,4 +84,5 @@ dotnet run -c Release --project SpiceForge.Validate -- server
 
 ## License
 
-MIT; see `LICENSE`. Dependencies keep their own licenses, listed in `CREDITS.md`.
+MIT. See [LICENSE](https://github.com/mikeoliphant/SpiceForge/blob/master/LICENSE). Dependencies keep their own licenses, listed in [CREDITS.md](https://github.com/mikeoliphant/SpiceForge/blob/master/CREDITS.md).
+A full set of applicable licenses is provided with the binary distributions distributed in the [Releases section](https://github.com/mikeoliphant/SpiceForge/releases). If you find any omissions, please let me know.
