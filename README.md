@@ -3,6 +3,8 @@
 SpiceForge simulates guitar pedal and amplifier circuits in real time from their schematics. It includes a schematic editor
 that runs in a browser or a window of its own, playing through ASIO or JACK, on Windows and Linux.
 
+<img width="1384" height="861" alt="SpiceForge" src="https://github.com/user-attachments/assets/fcb27b05-9f4e-44e5-ac42-68b27703b674" />
+
 ## Based on LiveSPICE
 
 SpiceForge is built on [LiveSPICE](https://github.com/dsharlet/LiveSPICE), which it includes,
