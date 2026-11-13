@@ -75,11 +75,12 @@ Edge) into the `.ico` the server's executable and the installer carry, and the P
 ## Using it
 
 The window has the component library on the left, the schematic in the middle, and the properties of the selection
-(or of the schematic itself, with nothing selected) on the right.
+(or of the schematic itself, with nothing selected) on the right, under a View section with the zoom controls and the
+theme.
 
 ### Themes
 
-The Theme menu at the right of the toolbar picks the colours: System (follows the operating system's light or dark
+The Theme menu, in the View section above the properties, picks the colours: System (follows the operating system's light or dark
 setting), Light (LiveSPICE's look), Dark, Dim, Paper, or High contrast. The choice is kept by the server with your other
 client settings, so it follows you to another browser, and in this browser, so the page opens in it without a flash.
 
@@ -92,6 +93,9 @@ classes (`s-red` for a red stroke, `terminal unconnected`), so a new theme needs
 - **Find (Ctrl+F)** looks for parts by name or part number as you type, selects the first and brings it into view;
   Enter and Shift+Enter step through the rest.
 - **Export…** saves the drawing as an SVG or PNG image, in the theme's colours, without selection or hover marks.
+- **The SpiceForge button** at the toolbar's left, which shows the server's version, opens the About dialog: the
+  version and commit, copyright, the source repository, and the license texts of SpiceForge and of what the server
+  ships.
 - **The library** shows each component's icon and name, as LiveSPICE's does. Its ▦ button switches to a compact view
   of icons alone (names in the tooltips), and the choice is remembered.
 - **Drag the library's or the properties' edge** by the schematic to resize that panel (remembered); double-click the
@@ -123,7 +127,7 @@ version. Saving then asks before overwriting.
 | Click a component in the library | Places it: a gray ghost follows the pointer, and a click places a copy and selects it |
 | Ctrl+click while placing | Places a copy and keeps placing |
 | Left, Right, Up, Down while placing | Rotate or flip the ghost |
-| Wire button, W, or the library's wire | Wire tool: drag to draw an L-shaped wire, its first leg in the direction the drag starts |
+| W, or the library's Wire | Wire tool: drag to draw an L-shaped wire, its first leg in the direction the drag starts |
 | Ctrl while releasing a wire | Keeps the wire tool for another |
 | Escape | Leaves the tool |
 | G, P, R, C, L, T | Place a ground, rail, resistor, capacitor, inductor or label |
@@ -240,6 +244,7 @@ server and runs it.
 | `src/connectivity.ts` | Which terminals and wires form each node: LiveSPICE's rules, part of the contract |
 | `test/conformance.ts` | The conformance test |
 | `src/library.ts` | The component library panel |
+| `src/about.ts` | The About dialog |
 | `src/panelWidth.ts` | Resizing the side panels by dragging their edges |
 | `src/properties.ts` | The properties panel |
 | `src/fileDialog.ts` | The Open and Save As dialogs, on `fs.list` and `fs.recent` |

@@ -207,5 +207,6 @@ static string Readme(string version, bool windows) => $"""
       SpiceForge's repository, and can also be set in appsettings.json beside the server.
 
     License
-      MIT: see LICENSE.txt. CREDITS.md lists the projects SpiceForge is built on and their licenses.
+      MIT: see LICENSE.txt. The licenses folder holds the license texts of SpiceForge and of what it includes (the
+      editor's About dialog shows them too); CREDITS.md lists the projects SpiceForge is built on.
     """;

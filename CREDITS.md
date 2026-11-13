@@ -45,6 +45,12 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
 - UILayout's image processor also uses SharpFont (`SpaceWizards.SharpFont`; MIT) and StbImageSharp and
   StbImageWriteSharp, at build time only.
 
+### Runtime
+
+- [.NET](https://github.com/dotnet/runtime) and [ASP.NET Core](https://github.com/dotnet/aspnetcore) by the .NET
+  Foundation and Contributors (MIT): the packages are self-contained, so they include the runtime. Their license
+  texts are bundled (`Assets/Licenses/dotnet.txt`), and the About dialog links their third-party notices.
+
 ### Build tools
 
 - [Inno Setup](https://jrsoftware.org/isinfo.php) by Jordan Russell and Martijn Laan (its own free license): builds the

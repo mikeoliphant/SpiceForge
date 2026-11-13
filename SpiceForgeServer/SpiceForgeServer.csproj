@@ -21,6 +21,38 @@
     <OutputType>WinExe</OutputType>
   </PropertyGroup>
 
+  <!-- What the About dialog and the startup summary show (About.cs). The SDK appends the git commit to the
+       informational version ("0.0.1+f85d36a..."). -->
+  <PropertyGroup>
+    <Product>SpiceForge</Product>
+    <Copyright>Copyright (c) 2026 Mike Oliphant</Copyright>
+  </PropertyGroup>
+
+  <!-- A development build (no SpiceForgeVersion) is versioned after the latest release tag, as "0.0.1-dev", rather
+       than the SDK's 1.0.0, a release it never was; "0.0.0-dev" without git or a tag. Set before GetAssemblyVersion,
+       which derives the informational version from Version. -->
+  <Target Name="SpiceForgeDevelopmentVersion" BeforeTargets="GetAssemblyVersion" Condition="'$(SpiceForgeVersion)' == ''">
+    <Exec Command="git describe --tags --abbrev=0" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
+          IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low" EchoOff="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="SpiceForgeLastTag" />
+      <Output TaskParameter="ExitCode" PropertyName="SpiceForgeGitExit" />
+    </Exec>
+    <PropertyGroup>
+      <SpiceForgeLastTag Condition="'$(SpiceForgeGitExit)' != '0'"></SpiceForgeLastTag>
+      <Version Condition="'$(SpiceForgeLastTag)' != ''">$(SpiceForgeLastTag.Trim().TrimStart('v'))-dev</Version>
+      <Version Condition="'$(SpiceForgeLastTag)' == ''">0.0.0-dev</Version>
+    </PropertyGroup>
+  </Target>
+
+  <!-- The license texts of what the server ships, beside it in licenses/, for the About dialog (Assets/Licenses). -->
+  <ItemGroup>
+    <None Include="..\LICENSE" Link="licenses\SpiceForge.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Dependencies\LiveSPICE\LICENSE" Link="licenses\LiveSPICE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Dependencies\LiveSPICE\ComputerAlgebra\LICENSE" Link="licenses\ComputerAlgebra.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Dependencies\JackSharpCore\LICENSE" Link="licenses\JackSharpCore.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Assets\Licenses\*.txt" Link="licenses\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\SpiceForge\SpiceForge.csproj" />
     <!-- JACK through JackSharpCore (Dependencies/JackSharpCore): Windows, Linux (including PipeWire) and macOS. -->

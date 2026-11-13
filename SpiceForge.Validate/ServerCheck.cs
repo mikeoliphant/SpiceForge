@@ -599,6 +599,25 @@ internal static class ServerCheck
                 && hello["capabilities"]?["audio"]?.GetValue<bool>() == true
                 && hello["capabilities"]?["audioDrivers"]?.AsArray().Any(d => d?.GetValue<string>() == "None") == true,
             "hello: protocol 1, simulation and audio, with the None driver");
+
+        // The About dialog's information, and its license texts, served beside the server.
+        JsonObject? about = hello["about"] as JsonObject;
+        string[] files = new[] { about?["licenseFile"]?.GetValue<string>() ?? "" }
+            .Concat(about?["components"]?.AsArray().Select(c => c?["file"]?.GetValue<string>() ?? "") ?? []).Distinct().ToArray();
+        Check(about?["version"]?.GetValue<string>() is { Length: > 0 } && about["copyright"]?.GetValue<string>() is { Length: > 0 }
+                && files.Length > 1,
+            $"hello: about, version {about?["version"]}, commit {about?["commit"]}, {files.Length} license files");
+        using (var http = new HttpClient())
+        {
+            var missing = new List<string>();
+            foreach (string file in files)
+            {
+                HttpResponseMessage response = await http.GetAsync($"http://127.0.0.1:{port}/licenses/{Uri.EscapeDataString(file)}");
+                if (!response.IsSuccessStatusCode || !(await response.Content.ReadAsStringAsync()).Contains("Copyright", StringComparison.OrdinalIgnoreCase))
+                    missing.Add(file);
+            }
+            Check(missing.Count == 0, missing.Count == 0 ? "every license text is served, with its copyright" : $"license texts not served: {string.Join(", ", missing)}");
+        }
         Check(Code(await client.Request("no.such", null)) == "unknown_op", "an unknown operation is unknown_op");
         await Audio(client);
 
@@ -1019,14 +1038,21 @@ internal static class ServerCheck
         return port;
     }
 
+    /// <summary>Whether the server announces it's listening within 20 seconds. Its About summary comes first.</summary>
     private static async Task<bool> WaitForListening(Process process)
     {
-        Task<string?> line = process.StandardOutput.ReadLineAsync();
-        if (await Task.WhenAny(line, Task.Delay(TimeSpan.FromSeconds(20))) != line)
+        _ = process.StandardError.ReadToEndAsync();
+        Task<bool> listening = Task.Run(async () =>
+        {
+            while (await process.StandardOutput.ReadLineAsync() is string line)
+                if (line.Contains("listening"))
+                    return true;
+            return false;
+        });
+        if (await Task.WhenAny(listening, Task.Delay(TimeSpan.FromSeconds(20))) != listening || !listening.Result)
             return false;
         _ = process.StandardOutput.ReadToEndAsync();
-        _ = process.StandardError.ReadToEndAsync();
-        return line.Result?.Contains("listening") == true;
+        return true;
     }
 
     /// <summary>A minimal client: requests with ids, and events kept until asked for.</summary>

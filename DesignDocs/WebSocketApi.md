@@ -251,10 +251,16 @@ Y  = y1·cos − x·sin + py
 
 | Op | Args | Result |
 |---|---|---|
-| `hello` | `protocol` (1), `client` (a name) | `protocol`, `server: {name, version}`, `capabilities`, `simulationDefaults`, `folders: {user, components}` |
+| `hello` | `protocol` (1), `client` (a name) | `protocol`, `server: {name, version}`, `about`, `capabilities`, `simulationDefaults`, `folders: {user, components}` |
 | `settings.get` | | `recentFiles`, `audio`, `logVerbosity`, `simulationDefaults`, `componentFolders`, `client` |
 | `settings.set` | any of `logVerbosity`, `simulationDefaults`, `componentFolders`, `client` | the settings |
 
+- **`about`** is what the editor's About dialog shows: `name`, `version` ("0.0.1", or "0.0.1-dev" for a development
+  build, after the latest release tag), `commit` (the git commit built, in full; empty if unknown), `development`,
+  `copyright`, `license`, `licenseFile`, `repository`, and `components`, the third-party components the server ships,
+  each `{name, by, license, url, file, notices?}`. `licenseFile` and each `file` name a license text the server serves
+  over HTTP at `/licenses/<file>`, from the `licenses` folder beside it; `notices` links a component's own third-party
+  notices, where they're long. `server.version` is the same version with the commit appended (`0.0.1-dev+<commit>`).
 - **`capabilities`** says what this server supports:
   - `simulation` and `audio`: whether those operations are implemented. While they're false, `sim.*` and `audio.*`
     answer `unsupported`;
@@ -809,7 +815,7 @@ The audio settings on the command line apply to that run only, over the saved co
 starts from the configuration last used with that driver, else its defaults. `audio.setConfig` from a client
 applies and saves.
 
-It prints the URL to connect to, with the token, and the audio device it will use. `SpiceForge.Validate server`
+It prints a summary of the About information first (the version and commit, copyright, license, source, and where the license texts are), then the URL to connect to, with the token, and the audio device it will use. `SpiceForge.Validate server`
 checks it: every test schematic through the JSON document and back, every editing operation against a running
 server, simulation, and the audio operations on the internal clock. `SpiceForge.Validate asio "driver" [bufferSize]
 [seconds] [sampleRate]` runs the Rat on a real ASIO device with its outputs silent, and reports the load, the

@@ -40,6 +40,10 @@ if (options.LogFile is string logFile)
 if (options.ListAudio)
     return await ListAudio(options);
 
+// What the About dialog shows, in brief: the version and commit, copyright, license and source, and where the
+// third-party licenses are.
+Console.WriteLine(About.Summary());
+
 // Launched again while a server is running: open another editor onto it, instead of failing on the port.
 string instancePath = ServerInstance.PathFor(options);
 string profileFolder = Path.Combine(Path.GetDirectoryName(options.SettingsPath) ?? ".", "editor-window");
@@ -57,6 +61,16 @@ var api = new Api(context);
 
 WebApplication app = builder.Build();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
+
+// The license texts the About dialog shows (About.cs), beside the server.
+if (Directory.Exists(About.LicenseFolder))
+{
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(About.LicenseFolder),
+        RequestPath = "/licenses",
+    });
+}
 
 if (options.WebRoot != null)
 {

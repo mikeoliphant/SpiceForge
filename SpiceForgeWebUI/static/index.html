@@ -19,7 +19,7 @@
   </head>
   <body>
     <header class="toolbar">
-      <span class="brand">SpiceForge</span>
+      <button id="about" class="brand" title="About SpiceForge">SpiceForge</button>
       <button id="new" disabled title="A new schematic, in a new tab">New</button>
       <button id="open" disabled title="Open a schematic (Ctrl+O)">Open…</button>
       <button id="save" disabled title="Save (Ctrl+S)">Save</button>
@@ -34,16 +34,8 @@
       <button id="paste" disabled title="Paste (Ctrl+V)">Paste</button>
       <button id="delete" disabled title="Delete (Del)">Delete</button>
       <span class="separator"></span>
-      <button id="wire" disabled title="Draw wires (W)">Wire</button>
-      <span class="separator"></span>
       <button id="simulate" disabled title="Simulate this schematic (F5)">Simulate</button>
       <button id="audio" disabled title="The audio device: driver, channels, rate and buffer size, and a test">Audio…</button>
-      <span class="separator"></span>
-      <button id="zoom-out" title="Zoom out (−)">−</button>
-      <span id="zoom" class="zoom">100%</span>
-      <button id="zoom-in" title="Zoom in (+)">+</button>
-      <button id="fit" title="Zoom to fit (F)">Fit</button>
-      <label class="theme" title="The colour theme">Theme <select id="theme"></select></label>
     </header>
     <nav id="tabs" class="tabs"></nav>
     <div id="banner" class="banner" hidden></div>
@@ -61,7 +53,19 @@
           <g id="probes"></g>
         </svg>
       </main>
-      <aside id="properties" class="panel properties"></aside>
+      <aside id="properties" class="panel properties">
+        <!-- The view: zoom and theme, above the properties (PropertiesPanel appends its own after). -->
+        <section class="view-section">
+          <div class="panel-title">View</div>
+          <div class="view-row">
+            <button id="zoom-out" title="Zoom out (−)">−</button>
+            <span id="zoom" class="zoom">100%</span>
+            <button id="zoom-in" title="Zoom in (+)">+</button>
+            <button id="fit" title="Zoom to fit (F)">Fit</button>
+          </div>
+          <label class="view-row theme" title="The colour theme">Theme <select id="theme"></select></label>
+        </section>
+      </aside>
     </div>
     <section id="sim" class="sim" hidden></section>
     <footer class="statusbar">

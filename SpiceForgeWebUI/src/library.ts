@@ -56,7 +56,9 @@ export class LibraryPanel {
     this.filter = h("input", { type: "search", placeholder: "Filter", className: "filter", spellcheck: false });
     const refresh = h("button", { textContent: "↻", title: "Reload the component libraries" });
     const folders = h("button", { textContent: "…", title: "Component folders: add your own libraries" });
-    const view = h("button", { textContent: "▦" });
+    // A grid of four squares, in the text's colour: font glyphs for this (▦) come out as coloured emoji on some systems.
+    const view = h("button", { className: "view-toggle" });
+    view.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="currentColor"><rect x="0" y="0" width="5" height="5"/><rect x="7" y="0" width="5" height="5"/><rect x="0" y="7" width="5" height="5"/><rect x="7" y="7" width="5" height="5"/></svg>';
     const showView = () => {
       view.title = this.compact ? "Show component names" : "Show icons only";
       view.classList.toggle("active", this.compact);

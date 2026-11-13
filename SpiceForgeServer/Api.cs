@@ -139,6 +139,7 @@ public sealed class Api
         {
             ["protocol"] = Protocol,
             ["server"] = new JsonObject { ["name"] = "SpiceForgeServer", ["version"] = version },
+            ["about"] = About.ToJson(),
             ["capabilities"] = new JsonObject
             {
                 ["simulation"] = true,

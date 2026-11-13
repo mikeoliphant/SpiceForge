@@ -1093,6 +1093,21 @@ installer) and Linux (a tarball), started in a window of its own.
   editor and the 131-entry catalogue, listed its audio drivers (Windows: None, ASIO, JACK; Linux, under WSL's
   Ubuntu 22.04: None, JACK), logged to its file (Windows), and stopped itself when its client left. Both are about
   48 MB.
+- **Ship the license texts, not just a credits list.** MIT asks for the copyright and permission notice to go with
+  every copy, and the packages had only SpiceForge's own `LICENSE`, while shipping LiveSPICE, ComputerAlgebra,
+  JackSharpCore, NAudio and the .NET runtime. The server's build now copies their texts into `licenses/` beside it
+  (the submodules' own files; NAudio's and .NET's, which no file here held, checked in verbatim from upstream under
+  `Assets/Licenses`), it serves them at `/licenses/`, and the editor's About dialog shows them. The .NET runtime's and
+  ASP.NET Core's third-party notices (97 KB and 57 KB) are linked rather than bundled. `SpiceForge.Validate server`
+  checks every listed file is served. Inter and the Material Symbols are the plugin's, which is packaged apart.
+- **The SDK already records the commit.** The informational version carries `+<commit>` (Source Link, on by
+  default), so the About dialog and the startup summary needed no build step for it. A development build was
+  versioned 1.0.0, a release it never was; the server's project now versions it after the latest tag
+  (`git describe --tags --abbrev=0`, so "0.0.1-dev"), in a target before `GetAssemblyVersion`, which derives the
+  informational version from `Version`. A package's `SpiceForgeVersion` skips it (checked: 9.8.7+commit). The
+  commit doesn't say whether the tree had uncommitted changes.
+- **The server's first line of output is no longer the listening line.** The About summary comes first, and
+  `SpiceForge.Validate server` waited for "listening" on the first line only; it now reads lines until it.
 
 ## Open issues
 

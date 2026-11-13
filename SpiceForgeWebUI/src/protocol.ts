@@ -63,8 +63,24 @@ export interface Layout {
 export interface Hello {
   protocol: number;
   server: { name: string; version: string };
+  about: About;
   capabilities: Record<string, unknown>;
   folders: { user: string; components: string[] };
+}
+
+/** What the About dialog shows (hello's about): license files are served at licenses/<file>. */
+export interface About {
+  name: string;
+  /** "0.0.1", or "0.0.1-dev" for a development build. */
+  version: string;
+  /** The git commit built, in full; empty if unknown. */
+  commit: string;
+  development: boolean;
+  copyright: string;
+  license: string;
+  licenseFile: string;
+  repository: string;
+  components: { name: string; by: string; license: string; url: string; file: string; notices?: string }[];
 }
 
 export interface FileEntry {

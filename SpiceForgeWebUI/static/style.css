@@ -57,9 +57,48 @@ body {
   margin-right: 12px;
 }
 
-.brand {
-  font-weight: 600;
+/* The brand's colours, from the icon (Assets/Icon/SpiceForge.svg): its face's gradient and its lettering. The same in
+   every theme, as the icon is; a new icon changes them here. */
+:root {
+  --brand-top: #2f6fd6;
+  --brand-bottom: #1b4596;
+  --brand-text: #ffffff;
+}
+
+/* The SpiceForge "logo": a button to the About dialog, coloured as the icon. */
+.toolbar .brand {
+  font-weight: 700;
   margin-right: 8px;
+  /* A pixel less above than below: Segoe UI's line box puts the letters' middle about 0.07 em below its own, which
+     the solid background shows. */
+  padding: 2px 10px 4px;
+  border: none;
+  border-radius: 6px;
+  background: linear-gradient(var(--brand-top), var(--brand-bottom));
+  color: var(--brand-text);
+  white-space: nowrap;
+  flex: none;
+}
+
+.toolbar .brand:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.toolbar .brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toolbar .brand .version {
+  margin-left: 6px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+/* Toolbar buttons keep their labels on one line. */
+.toolbar button {
+  white-space: nowrap;
+  flex: none;
 }
 
 .separator {
@@ -422,6 +461,11 @@ button:disabled {
   padding: 0 8px;
 }
 
+.library-bar .view-toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
 .library .tree,
 .library .flat {
   overflow: auto;
@@ -766,12 +810,35 @@ button:disabled {
 }
 
 /* The theme picker. */
-.theme {
-  margin-left: auto;
+/* The View section, above the properties: zoom on one row, the theme on the next. */
+.view-section {
+  border-bottom: 1px solid var(--chrome-border);
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+}
+
+.view-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 0 8px;
+}
+
+.view-row + .view-row {
+  margin-top: 6px;
+}
+
+.view-row .zoom {
+  min-width: 44px;
+}
+
+.theme {
   color: var(--muted);
+}
+
+.theme select {
+  flex: 1;
+  min-width: 0;
 }
 
 .theme select {
@@ -1375,4 +1442,85 @@ button:disabled {
 .sim-output button.active {
   background: var(--active);
   border-color: var(--accent);
+}
+
+/* ---- The About dialog ---- */
+
+.about-dialog {
+  width: min(560px, 92vw);
+}
+
+.about-dialog .about-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+
+.about-dialog .about-head h2 {
+  margin: 0 0 2px;
+  font-size: 18px;
+}
+
+.about-dialog .about-version {
+  margin: 0;
+  color: var(--muted);
+}
+
+.about-dialog p {
+  margin: 6px 0;
+}
+
+.about-dialog a {
+  color: var(--accent);
+}
+
+.about-dialog h3 {
+  margin-top: 14px;
+}
+
+.about-dialog .about-components {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+  padding: 4px 8px;
+  margin-bottom: 12px;
+}
+
+.about-dialog .about-components li {
+  padding: 4px 0;
+}
+
+.about-dialog .about-components li + li {
+  border-top: 1px solid var(--chrome-border);
+}
+
+.about-dialog .license > summary {
+  cursor: pointer;
+  color: var(--muted);
+  user-select: none;
+}
+
+.about-dialog .about-components .license,
+.about-dialog .about-notices {
+  display: inline-block;
+  margin: 2px 12px 0 0;
+  vertical-align: top;
+}
+
+.about-dialog .about-components .license[open] {
+  display: block;
+}
+
+.about-dialog .license-text {
+  max-height: 200px;
+  overflow: auto;
+  margin: 4px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+  background: var(--canvas);
+  font-size: 11px;
+  white-space: pre-wrap;
 }

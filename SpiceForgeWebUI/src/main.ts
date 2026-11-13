@@ -17,6 +17,7 @@ import { SimulationPanel } from "./simulation";
 import type { CatalogEntry, Element, FileRead, Hello, Point, SchematicDocument, SymbolElement } from "./protocol";
 import { makePanelsResizable } from "./panelWidth";
 import { choose } from "./choiceDialog";
+import { showAbout, versionLabel } from "./about";
 import { applyTheme, currentTheme, initTheme, isTheme, Themes } from "./theme";
 import { SchematicView } from "./view";
 
@@ -35,6 +36,7 @@ const banner = $<HTMLDivElement>("banner");
 const menu = $<HTMLDivElement>("menu");
 const themePicker = $<HTMLSelectElement>("theme");
 const buttons = {
+  about: $<HTMLButtonElement>("about"),
   new: $<HTMLButtonElement>("new"),
   open: $<HTMLButtonElement>("open"),
   save: $<HTMLButtonElement>("save"),
@@ -45,7 +47,6 @@ const buttons = {
   copy: $<HTMLButtonElement>("copy"),
   paste: $<HTMLButtonElement>("paste"),
   remove: $<HTMLButtonElement>("delete"),
-  wire: $<HTMLButtonElement>("wire"),
   fit: $<HTMLButtonElement>("fit"),
   zoomIn: $<HTMLButtonElement>("zoom-in"),
   zoomOut: $<HTMLButtonElement>("zoom-out"),
@@ -260,8 +261,6 @@ function updateChrome() {
   buttons.redo.title = h.redoLabel ? `Redo ${h.redoLabel} (Ctrl+Y)` : "Redo (Ctrl+Y)";
   buttons.cut.disabled = buttons.copy.disabled = buttons.remove.disabled = selected === 0;
   buttons.paste.disabled = !open || !connected;
-  buttons.wire.disabled = !open;
-  buttons.wire.classList.toggle("active", editor.tool === "wire");
   buttons.simulate.disabled = !connected || !open;
   buttons.audio.disabled = !connected || hello?.capabilities["audio"] !== true;
   buttons.simulate.classList.toggle("active", simulation.simulates(active?.state ?? null));
@@ -823,6 +822,8 @@ svg.addEventListener("wheel", hideMenu);
 // ---- Buttons and keys ----
 
 buttons.new.addEventListener("click", newTab);
+// The About dialog needs hello's about; before the server answers, the button does nothing.
+buttons.about.addEventListener("click", () => hello && showAbout(hello.about));
 buttons.open.addEventListener("click", async () => {
   const from = active?.file?.path ?? localStorage.getItem("spiceforge.activeFile") ?? hello?.folders.user ?? "";
   const folder = /\.(schx|xml)$/i.test(from) ? from.replace(/[\\/][^\\/]*$/, "") : from;
@@ -837,7 +838,6 @@ buttons.cut.addEventListener("click", () => void copySelection(true));
 buttons.copy.addEventListener("click", () => void copySelection(false));
 buttons.paste.addEventListener("click", () => void pasteFromClipboard(null));
 buttons.remove.addEventListener("click", () => editor.deleteSelection());
-buttons.wire.addEventListener("click", () => (editor.tool === "wire" ? editor.escape() : editor.startWiring()));
 buttons.simulate.addEventListener("click", () => simulate());
 buttons.audio.addEventListener("click", () => void configureAudio(client).catch((e) => setStatus(`Couldn't open the audio settings: ${errorText(e)}`, "error")));
 
@@ -925,8 +925,9 @@ async function start() {
   }
   connected = true;
   buttons.open.disabled = buttons.new.disabled = false;
+  buttons.about.replaceChildren(hello.about.name, Object.assign(document.createElement("span"), { className: "version", textContent: `v${hello.about.version}` }));
   updateChrome();
-  setStatus(`Connected to ${hello.server.name} ${hello.server.version}.`);
+  setStatus(`Connected to ${versionLabel(hello.about)}${hello.about.commit ? ` (${hello.about.commit.slice(0, 7)})` : ""}.`);
   // The server's copy of the theme wins over this browser's, which may be older or cleared.
   try {
     const settings = await client.request<{ client?: unknown }>("settings.get");
