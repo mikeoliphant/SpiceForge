@@ -154,6 +154,7 @@ behaviour didn't make good sense, this differs. The file format is the one thing
 | Ctrl+click | Toggles it, keeping the rest |
 | Click empty space | Clears the selection (with Ctrl, keeps it) |
 | Drag an element | Selects it, if it wasn't, and moves the selection with it, in 5-unit grid steps, as one undo step. Wires with an end on what moves follow it. A wire that turns a plain corner (one other wire, at a right angle, and nothing else there) keeps its direction and the corner slides with it, so the other wire lengthens or shortens. Otherwise a straight wire stays straight if it can, and else becomes an L that leaves the terminal in its old direction and turns at the line of its far end, which stays put |
+| Drag a wire by its free end | Within 10 pixels of an end that connects to nothing, drags that end instead of moving the wire: the wire extends (or shortens) to the pointer, straight if it lines up with the other end, else as an L that goes on in its old direction and turns. Released on a terminal or a wire, it joins it, as a drawn wire does. The new wire is selected afterwards |
 | Shift+drag an element | Moves without the attached wires, which stay where they are. Shift can also be pressed or released mid-drag |
 | Drag from empty space, or with Ctrl | Rubber band: selects everything it touches (with Ctrl, adds to the selection) |
 | Double-click a symbol | Adds every symbol of its type |

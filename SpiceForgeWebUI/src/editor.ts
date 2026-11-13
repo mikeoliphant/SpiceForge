@@ -6,7 +6,9 @@
 //   pointer in grid steps, live, and the whole drag is one undo step (right button or Escape cancels it). Releasing
 //   without moving selects just that element. Wires with an end on what moves (a moved symbol's terminal, a moved
 //   wire's end) follow it, rerouted straight or as an L, or sliding a plain corner along (wires.ts, followerPaths), and joined as the wire tool joins
-//   them, in the same undo step; holding Shift (at the press or during the drag) leaves them where they are;
+//   them, in the same undo step; holding Shift (at the press or during the drag) leaves them where they are.
+//   Pressing within a few pixels of a wire's free end (one that connects to nothing) drags that end instead, and the
+//   wire extends to it: straight, or an L going on in its old direction (wires.ts, extendPath);
 // - pressing on empty space, or with Ctrl, starts a rubber band. Releasing without moving is a click: Ctrl toggles the
 //   element under the pointer; on empty space, a click clears the selection (Ctrl keeps it). Releasing after a drag
 //   selects everything the band touches (Ctrl adds to the selection);
@@ -24,10 +26,10 @@
 import { ChangeEdit, CompositeEdit, EditStack, FlipEdit, MoveEdit, PropertyEdit, RotateEdit, flipElements, moveElements, nameAdded, rotateElements, type Edit } from "./edits";
 import { boxIntersects, mapBox, mappingOf, normalize, snap, unionBoxes, wireIntersects, type Box } from "./geometry";
 import type { LayoutCache } from "./layouts";
-import type { ComponentData, Element, Layout, Point, SchematicDocument, SymbolElement } from "./protocol";
+import type { ComponentData, Element, Layout, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
 import { drawGhost, renderDocument, selectionBox, type Rendered } from "./render";
 import type { SchematicView } from "./view";
-import { addWire, findFollowers, findWirePath, followerPaths, followerWires, type Follower } from "./wires";
+import { addWire, extendPath, findFollowers, findWirePath, followerPaths, followerWires, isFreeEnd, type Follower } from "./wires";
 import { computeNodes } from "./connectivity";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -52,7 +54,22 @@ type Gesture =
       /** The followers' rerouted stand-ins while dragging: plain wires, joined properly on release. */
       preview: ChangeEdit | null;
     }
-  | { kind: "wire"; pointer: number; mouse: Point[] };
+  | { kind: "wire"; pointer: number; mouse: Point[] }
+  | {
+      kind: "extend";
+      pointer: number;
+      wire: WireElement;
+      /** The end that stays, and the free end being dragged. */
+      fixed: Point;
+      free: Point;
+      /** Where the free end is now. */
+      to: Point;
+      /** The wire's stand-ins while dragging: plain wires, joined properly on release. */
+      preview: ChangeEdit | null;
+    };
+
+/** How close to a wire's free end, in screen pixels, a press drags that end rather than the wire. */
+const FreeEndPixels = 10;
 
 /** One open document's editing state: what a tab keeps while another is shown. */
 export interface EditorState {
@@ -492,7 +509,12 @@ Connects ${shown.join(", ")}` : label);
       return;
     }
     const hit = this.hitAt(e);
-    if (hit && !ctrl) {
+    const free = hit && !ctrl ? this.freeEndAt(hit, e) : null;
+    if (free) {
+      // Pressed by a wire's free end: that end follows the pointer, and the wire extends to it.
+      this.select([free.wire.id], true);
+      this.gesture = { kind: "extend", pointer: e.pointerId, wire: free.wire, fixed: free.fixed, free: free.free, to: free.free, preview: null };
+    } else if (hit && !ctrl) {
       // Select-and-drag in one gesture: an unselected element becomes the selection first.
       if (!this.selection.has(hit)) this.select([hit], true);
       const ids = new Set(this.selection);
@@ -552,6 +574,12 @@ Connects ${shown.join(", ")}` : label);
       g.detached = detached;
       this.follow(g);
       this.redraw();
+    } else if (g.kind === "extend") {
+      if (at[0] === g.to[0] && at[1] === g.to[1]) return;
+      g.to = at;
+      this.unextend(g);
+      this.extend(g);
+      this.redraw();
     } else if (g.kind === "wire") {
       const last = g.mouse[g.mouse.length - 1]!;
       if (last[0] !== at[0] || last[1] !== at[1]) g.mouse.push(at);
@@ -577,6 +605,8 @@ Connects ${shown.join(", ")}` : label);
       if (g.total[0] !== 0 || g.total[1] !== 0) this.finishMove(g);
       // A click (no drag) on an element of a larger selection narrows the selection to it.
       else this.select([g.pressed], true);
+    } else if (g.kind === "extend") {
+      this.finishExtend(g);
     } else if (g.kind === "wire") {
       // WireTool.MouseUp: the routed path, joined to what it meets.
       this.drawWire(findWirePath(g.mouse));
@@ -617,7 +647,60 @@ Connects ${shown.join(", ")}` : label);
       this.unfollow(g);
       moveElements(this.doc, g.ids, [-g.total[0], -g.total[1]]);
       this.redraw();
+    } else if (g.kind === "extend" && g.preview) {
+      this.unextend(g);
+      this.redraw();
     }
+  }
+
+  // ---- Extending a wire by its free end ----
+
+  /** The wire `hit` names, if the press is within FreeEndPixels of an end of it that connects to nothing (the nearer
+   * end, if both are close). */
+  private freeEndAt(hit: string, e: PointerEvent): { wire: WireElement; fixed: Point; free: Point } | null {
+    const wire = this.doc?.elements.find((x): x is WireElement => x.id === hit && x.kind === "wire");
+    if (!this.doc || !wire) return null;
+    const [x, y] = this.view.toSchematic(e.clientX, e.clientY);
+    const distance = (p: Point) => Math.hypot(p[0] - x, p[1] - y) * this.view.Zoom;
+    const [near, far] = distance(wire.a) <= distance(wire.b) ? [wire.a, wire.b] : [wire.b, wire.a];
+    if (distance(near) > FreeEndPixels || !isFreeEnd(this.doc, this.layouts, wire, near)) return null;
+    return { wire, fixed: far, free: near };
+  }
+
+  /** Puts the wire's stand-ins, reaching to where its free end is now, in place of it. */
+  private extend(g: Extract<Gesture, { kind: "extend" }>) {
+    const path = extendPath(g.fixed, g.free, g.to);
+    if (!this.doc || !path || (g.to[0] === g.free[0] && g.to[1] === g.free[1])) return;
+    const stand: Element[] = [];
+    for (let i = 0; i + 1 < path.length; i++) stand.push({ id: this.newId(), kind: "wire", a: path[i]!, b: path[i + 1]! });
+    g.preview = new ChangeEdit("", this.doc, [g.wire], stand);
+    g.preview.apply();
+  }
+
+  private unextend(g: Extract<Gesture, { kind: "extend" }>) {
+    g.preview?.revert();
+    g.preview = null;
+  }
+
+  /** Ends an extension as one undo step: the wire replaced by its new path, joined as the wire tool joins wires, and
+   * the new pieces selected (a wire it merged with comes back as one of them). A release where it started, or on the
+   * wire's other end, changes nothing. */
+  private finishExtend(g: Extract<Gesture, { kind: "extend" }>) {
+    this.unextend(g);
+    const path = extendPath(g.fixed, g.free, g.to);
+    if (!this.doc || !path || (g.to[0] === g.free[0] && g.to[1] === g.free[1])) {
+      this.redraw();
+      return;
+    }
+    const before = new Set(this.doc.elements.map((x) => x.id));
+    const removed = new ChangeEdit("Extend", this.doc, [g.wire], []);
+    removed.apply();
+    const added = addWire(this.doc, this.layouts, path, this.newId);
+    this.commit(new CompositeEdit("Extend", added ? [removed, added] : [removed]));
+    this.select(
+      this.doc.elements.filter((x) => x.kind === "wire" && !before.has(x.id)).map((x) => x.id),
+      true,
+    );
   }
 
   // ---- Wires following a move ----

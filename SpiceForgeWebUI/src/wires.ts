@@ -180,6 +180,30 @@ export function followerPaths(f: Follower, [dx, dy]: Point): Point[][] {
   return [[moved, to]];
 }
 
+/** Whether a wire's end connects to nothing: no other wire touches it (at an end or along it), and no symbol has a
+ * terminal there. */
+export function isFreeEnd(doc: SchematicDocument, layouts: LayoutCache, wire: WireElement, end: Point): boolean {
+  for (const e of doc.elements) {
+    if (e === wire) continue;
+    if (e.kind === "wire" && pointOnSegment(end, e.a, e.b)) return false;
+    if (e.kind === "symbol" && terminalsOf(e, layouts).some((t) => same(t, end))) return false;
+  }
+  return true;
+}
+
+/**
+ * Where a wire runs when its free end is dragged to `to`, from its other end, which stays put: straight if `to` lines
+ * up with that end, else an L whose first leg goes on in the wire's old direction and turns to `to`. A slanted wire
+ * just swings to `to`. Null when `to` is the fixed end, which would leave no wire.
+ */
+export function extendPath(fixed: Point, free: Point, to: Point): Point[] | null {
+  if (same(to, fixed)) return null;
+  if (to[0] === fixed[0] || to[1] === fixed[1]) return [fixed, to];
+  if (fixed[1] === free[1]) return [fixed, [to[0], fixed[1]], to];
+  if (fixed[0] === free[0]) return [fixed, [fixed[0], to[1]], to];
+  return [fixed, to];
+}
+
 /** SchematicEditor.AddWire for a path: each segment in turn, as one undo step. Null if it added nothing. */
 export function addWire(doc: SchematicDocument, layouts: LayoutCache, path: Point[], newId: () => string): Edit | null {
   const edits: Edit[] = [];

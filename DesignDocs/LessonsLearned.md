@@ -900,6 +900,14 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   terminal there), both wires are rebuilt: the corner moves across with the part, and the other wire runs from it to
   its far end. The scratch script checked shortening (a 100-unit wire to 70), lengthening, shortening to nothing (the
   wire goes), a diagonal move, and that a T junction keeps the L route, each with undo and redo exact.
+- **A wire's free end is a handle.** Pressing within 10 screen pixels of an end that connects to nothing (no other
+  wire touches it, at its end or along it, and no terminal is there) drags that end, not the wire. The wire runs from
+  its other end straight to the pointer if they line up, else as an L going on in its old direction, so pulling a
+  stub sideways extends and turns it rather than swinging it slanted. Preview and commit work as for followers:
+  stand-ins swapped by one `ChangeEdit`, then `addWire` on release, so dropping the end on a terminal or a wire joins
+  it. Pixels rather than schematic units, so the handle is the same size at any zoom. Checked in the scratch script:
+  free and connected ends (a terminal, another wire's end, a mere crossing), the routes, and an extension onto a
+  terminal with undo and redo exact.
 - **Show the grid as a CSS background, not SVG.** A dot pattern on the schematic `svg` element, sized and placed from
   the view on every pan and zoom, adds nothing to the drawing, so exports never include it. Dots closer than 8 pixels
   are thinned to every second grid point (and again), so those drawn are always snap points.
