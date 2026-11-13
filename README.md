@@ -1,12 +1,11 @@
 # SpiceForge
 
-SpiceForge simulates guitar pedal and amplifier circuits in real time from their schematics. It comes as a VST3
-plugin, and as a schematic editor that runs in a browser or a window of its own, playing through ASIO or JACK, on
-Windows and Linux.
+SpiceForge simulates guitar pedal and amplifier circuits in real time from their schematics. It includes a schematic editor
+that runs in a browser or a window of its own, playing through ASIO or JACK, on Windows and Linux.
 
 ## Based on LiveSPICE
 
-SpiceForge is built on [LiveSPICE](https://github.com/dsharlet/LiveSPICE) by Dillon Sharlet, which it includes,
+SpiceForge is built on [LiveSPICE](https://github.com/dsharlet/LiveSPICE), which it includes,
 unmodified, as a submodule. It uses LiveSPICE's schematic files (`.schx`) and component libraries, and LiveSPICE's own
 analysis turns each schematic into its circuit equations. SpiceForge's own engine starts from those equations.
 LiveSPICE's simulation is also the reference SpiceForge is validated against, and LiveSPICE's test circuits are its
@@ -22,7 +21,7 @@ test suite.
 - **Circuits LiveSPICE can't run.** SPICE-style junction limiting and a tightly converged DC start run the Fuzz Face
   and Orange Squeezer, which are unstable in LiveSPICE.
 - **Better resampling.** Sinc resampling around the oversampled circuit is an option, in place of LiveSPICE's linear
-  interpolation and averaging. The plugin uses it by default.
+  interpolation and averaging.
 - **A new editor.** It runs in a browser, served by a local server. It has simulation with meters, a scope and
   output selection, and audio through ASIO and JACK. Packages are built for Windows and Linux.
 
