@@ -5,7 +5,7 @@ import { ApiClient, RequestError } from "./client";
 import { wireNames } from "./connectivity";
 import { moveElements, nameAdded } from "./edits";
 import { Editor, newEditorState, type EditorState } from "./editor";
-import { chooseFile } from "./fileDialog";
+import { chooseFile, type Place } from "./fileDialog";
 import { snap } from "./geometry";
 import { LayoutCache } from "./layouts";
 import { configureAudio } from "./audio";
@@ -387,7 +387,7 @@ async function saveAs(tab = active) {
   if (!tab) return;
   const folder = tab.file ? tab.file.path.replace(/[\\/][^\\/]*$/, "") : (hello?.folders.user ?? "");
   const name = tab.file ? tab.file.path.split(/[\\/]/).pop()! : `${tabName(tab)}.schx`;
-  const path = await chooseFile(client, folder, { mode: "save", name, isOpen: (p) => tabs.some((t) => t.file && samePath(t.file.path, p)) });
+  const path = await chooseFile(client, folder, { mode: "save", name, places: places(), isOpen: (p) => tabs.some((t) => t.file && samePath(t.file.path, p)) });
   if (!path) return;
   const other = tabs.find((t) => t !== tab && t.file && samePath(t.file.path, path));
   if (other) return setStatus(`${fileName(path)} is open in another tab; close it first.`, "error");
@@ -829,9 +829,17 @@ buttons.help.addEventListener("click", showHelp);
 buttons.open.addEventListener("click", async () => {
   const from = active?.file?.path ?? localStorage.getItem("spiceforge.activeFile") ?? hello?.folders.user ?? "";
   const folder = /\.(schx|xml)$/i.test(from) ? from.replace(/[\\/][^\\/]*$/, "") : from;
-  const path = await chooseFile(client, folder);
+  const path = await chooseFile(client, folder, { mode: "open", places: places() });
   if (path) await open(path, true);
 });
+
+/** The file dialogs' places: LiveSPICE's user folder, and the example schematics the server has. */
+function places(): Place[] {
+  const list: Place[] = [];
+  if (hello?.folders.user) list.push({ name: "LiveSPICE folder", path: hello.folders.user });
+  if (hello?.folders.examples) list.push({ name: "Examples", path: hello.folders.examples });
+  return list;
+}
 buttons.save.addEventListener("click", () => void save());
 buttons.saveAs.addEventListener("click", () => void saveAs());
 buttons.undo.addEventListener("click", () => editor.undo());

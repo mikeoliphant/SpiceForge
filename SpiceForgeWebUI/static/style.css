@@ -789,6 +789,11 @@ button:disabled {
   border-color: var(--accent);
 }
 
+/* Places, then Recent, in the side pane. */
+.file-dialog .side ul + h3 {
+  margin-top: 12px;
+}
+
 /* Delete, apart from the buttons that finish the dialog. */
 .file-dialog .buttons .left {
   margin-right: auto;

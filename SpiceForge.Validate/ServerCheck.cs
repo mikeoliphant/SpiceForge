@@ -551,7 +551,7 @@ internal static class ServerCheck
         int port = FreePort();
         string scratch = Path.Combine(Path.GetTempPath(), "SpiceForgeServerCheck-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(scratch);
-        var start = new ProcessStartInfo("dotnet", $"\"{server}\" --port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" --userFolder \"{scratch}\"")
+        var start = new ProcessStartInfo("dotnet", $"\"{server}\" --port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" --userFolder \"{UserFolderIn(scratch)}\"")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -575,8 +575,13 @@ internal static class ServerCheck
         }
     }
 
+    /// <summary>The server check's user folder, which doesn't exist when the server starts: it makes it, as LiveSPICE
+    /// does.</summary>
+    private static string UserFolderIn(string scratch) => Path.Combine(scratch, "Documents", "LiveSPICE");
+
     private static async Task Exercise(int port, string testsDir, string scratch)
     {
+        string userFolder = UserFolderIn(scratch);
         // The token is checked before the socket opens.
         using (var refused = new ClientWebSocket())
         {
@@ -599,6 +604,19 @@ internal static class ServerCheck
                 && hello["capabilities"]?["audio"]?.GetValue<bool>() == true
                 && hello["capabilities"]?["audioDrivers"]?.AsArray().Any(d => d?.GetValue<string>() == "None") == true,
             "hello: protocol 1, simulation and audio, with the None driver");
+
+        Check(hello["folders"]?["user"]?.GetValue<string>() == userFolder && Directory.Exists(userFolder),
+            "the user folder, missing at startup, is made, and hello names it");
+
+        // LiveSPICE's examples, for the file dialogs: run from the repository, the submodule's.
+        string? examples = hello["folders"]?["examples"]?.GetValue<string>();
+        int exampleCount = 0;
+        if (examples != null)
+        {
+            JsonObject exampleListing = Result(await client.Request("fs.list", new JsonObject { ["path"] = examples, ["extensions"] = new JsonArray(".schx") }));
+            exampleCount = exampleListing["entries"]!.AsArray().Count(e => e?["kind"]?.GetValue<string>() == "file");
+        }
+        Check(exampleCount >= 10, $"hello names the examples folder, and it lists them: {exampleCount} in {examples ?? "(none)"}");
 
         // The About dialog's information, and its license texts, served beside the server.
         JsonObject? about = hello["about"] as JsonObject;

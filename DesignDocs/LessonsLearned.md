@@ -1159,6 +1159,19 @@ installer) and Linux (a tarball), started in a window of its own.
   (`git describe --tags --abbrev=0`, so "0.0.1-dev"), in a target before `GetAssemblyVersion`, which derives the
   informational version from `Version`. A package's `SpiceForgeVersion` skips it (checked: 9.8.7+commit). The
   commit doesn't say whether the tree had uncommitted changes.
+- **Packaged examples must be reachable from the editor, not just present.** The Linux tarball held all 20 of
+  LiveSPICE's examples in `SpiceForge/Examples`, yet a user saw none: the file dialogs start in
+  `Documents/LiveSPICE`, which only the Windows installer fills with the examples (and which a fresh account may not
+  have at all). The server now reports the examples folder in `hello` (`folders.examples`: beside the server in a
+  package, the submodule's from the repository), the dialogs list it under Places with the LiveSPICE folder, and they
+  start there when the folder they'd start in can't be listed. Nothing is copied into the user's documents, but the
+  server makes `Documents/LiveSPICE` at startup if it's missing, as LiveSPICE's `App.UserDocuments` does (just the
+  folder, not `Components`), so Save As has it to go to. `SpiceForge.Validate server` now starts the server with a
+  user folder that doesn't exist and checks it's made, and that the examples folder is named and lists them (20,
+  from the repository).
+- **A quiet build hides its errors.** `dotnet build -v q`, cut to its last lines, printed "0 Error(s)" for the
+  project that built while the checks project failed to compile; the stale checks then ran and passed without the
+  new one. Look for the check's own line, or build without trimming the output.
 - **The git tag is the version's one source.** It used to come from three places that could disagree: the version
   typed into the Release workflow (passed separately to the build, the installer and the release), the packager's
   default when run by hand (`0.1.0`, a release that never existed), and the installer's (`0.0.0`); and the tag itself

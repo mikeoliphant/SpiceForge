@@ -251,7 +251,7 @@ Y  = y1·cos − x·sin + py
 
 | Op | Args | Result |
 |---|---|---|
-| `hello` | `protocol` (1), `client` (a name) | `protocol`, `server: {name, version}`, `about`, `capabilities`, `simulationDefaults`, `folders: {user, components}` |
+| `hello` | `protocol` (1), `client` (a name) | `protocol`, `server: {name, version}`, `about`, `capabilities`, `simulationDefaults`, `folders: {user, examples, components}` |
 | `settings.get` | | `recentFiles`, `audio`, `logVerbosity`, `simulationDefaults`, `componentFolders`, `client` |
 | `settings.set` | any of `logVerbosity`, `simulationDefaults`, `componentFolders`, `client` | the settings |
 
@@ -359,7 +359,11 @@ A property descriptor:
 | `schx.fromXml` | `xml` | `elements` |
 
 - **`fs.list`** exists because a web page can't open native file dialogs that return paths. The client builds its Open
-  and Save As dialogs on it, starting from `folders.user`.
+  and Save As dialogs on it, starting from `folders.user`, which the server makes at startup if it's missing (as
+  LiveSPICE makes `Documents/LiveSPICE`; just the folder, not its `Components`). `folders.examples` is LiveSPICE's example schematics
+  (the `Examples` folder beside a packaged server, or the LiveSPICE submodule's when it runs from the repository;
+  null if neither is there): the dialogs offer it, with `folders.user`, as a place to go, and start there when the
+  user folder can't be listed.
 - **`fs.mkdir`** creates a folder inside one that exists (`not_found` otherwise, so a mistyped path can't create a
   chain of folders), failing with `exists` if something is already there.
 - **`fs.delete`** deletes a schematic file (`.schx` or `.xml`; anything else is `invalid_value`), permanently, and

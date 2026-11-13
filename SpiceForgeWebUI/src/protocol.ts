@@ -65,7 +65,8 @@ export interface Hello {
   server: { name: string; version: string };
   about: About;
   capabilities: Record<string, unknown>;
-  folders: { user: string; components: string[] };
+  /** `examples`: LiveSPICE's example schematics, beside the server (null if it has none). */
+  folders: { user: string; examples?: string | null; components: string[] };
 }
 
 /** What the About dialog shows (hello's about): license files are served at licenses/<file>. */

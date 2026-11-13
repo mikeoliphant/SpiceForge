@@ -25,6 +25,14 @@ export interface FileDialogOptions {
   name?: string;
   /** Whether a file is open in the editor, which can't be deleted from under it. */
   isOpen?: (path: string) => boolean;
+  /** Folders to offer by name (LiveSPICE's user folder, its examples), above the recent files. The dialog also falls
+   * back to them, in order, when the folder it starts in doesn't exist. */
+  places?: Place[];
+}
+
+export interface Place {
+  name: string;
+  path: string;
 }
 
 /** Runs `action` on Enter, and stops the Enter there (see the top of the file). */
@@ -50,6 +58,8 @@ export function chooseFile(client: ApiClient, folder: string, options: FileDialo
     const up = h("button", { textContent: "Up", title: "The parent folder" });
     const list = h("ul", { className: "entries" });
     const recent = h("ul", { className: "recent" });
+    const places = options.places ?? [];
+    const placeList = h("ul", { className: "places" });
     const error = h("div", { className: "error" });
     const cancel = h("button", { textContent: "Cancel" });
     const nameBox = h("input", { type: "text", className: "name", spellcheck: false, value: options.name ?? "" });
@@ -63,7 +73,12 @@ export function chooseFile(client: ApiClient, folder: string, options: FileDialo
       { className: "file-dialog" },
       h("h2", { textContent: saving ? "Save schematic as" : choosingFolder ? "Choose a folder" : "Open schematic" }),
       h("div", { className: "path-row" }, up, pathBox, ...(canMakeFolders ? [newFolder] : [])),
-      h("div", { className: "panes" }, h("div", { className: "folder" }, list), h("div", { className: "side" }, h("h3", { textContent: "Recent" }), recent)),
+      h(
+        "div",
+        { className: "panes" },
+        h("div", { className: "folder" }, list),
+        h("div", { className: "side" }, ...(places.length ? [h("h3", { textContent: "Places" }), placeList] : []), h("h3", { textContent: "Recent" }), recent),
+      ),
       error,
       saving ? h("div", { className: "name-row" }, h("label", { textContent: "File name" }), nameBox) : "",
       h("div", { className: "buttons" }, ...(saving ? [remove, save, cancel] : choosingFolder ? [useFolder, cancel] : [cancel])),
@@ -161,14 +176,15 @@ export function chooseFile(client: ApiClient, folder: string, options: FileDialo
       input.addEventListener("blur", () => !done && drop());
     };
 
-    async function show(path: string) {
+    /** Lists a folder; false (with the reason shown) if it can't be. */
+    async function show(path: string): Promise<boolean> {
       error.textContent = "";
       try {
         listing = await client.request<FolderListing>("fs.list", { path, extensions: Extensions });
         if (choosingFolder) listing = { ...listing, entries: listing.entries.filter((e) => e.kind === "dir") };
       } catch (e) {
         error.textContent = (e as Error).message;
-        return;
+        return false;
       }
       pathBox.value = listing.path;
       up.disabled = !listing.parent;
@@ -194,6 +210,26 @@ export function chooseFile(client: ApiClient, folder: string, options: FileDialo
       if (listing.entries.length === 0)
         list.append(h("li", { className: "empty", textContent: choosingFolder ? "No folders here." : "No folders or schematics here." }));
       showNamed();
+      return true;
+    }
+
+    placeList.replaceChildren(
+      ...places.map((place) => {
+        const item = h("li", { className: "dir", textContent: place.name, title: place.path, tabIndex: 0 });
+        const go = () => void show(place.path);
+        item.addEventListener("click", go);
+        onEnter(item, go);
+        return item;
+      }),
+    );
+
+    /** The starting folder, or else the first place that can be listed (LiveSPICE's user folder doesn't exist until
+     * something makes it, so a new user starts in the examples); if none can, the first failure stays shown. */
+    async function start() {
+      if (await show(folder)) return;
+      const first = error.textContent;
+      for (const place of places) if (place.path !== folder && (await show(place.path))) return;
+      error.textContent = first;
     }
 
     async function showRecent() {
@@ -240,6 +276,6 @@ export function chooseFile(client: ApiClient, folder: string, options: FileDialo
 
     void showRecent();
     dialog.showModal();
-    void show(folder).then(() => saving && nameBox.focus());
+    void start().then(() => saving && nameBox.focus());
   });
 }

@@ -120,7 +120,7 @@ classes (`s-red` for a red stroke, `terminal unconnected`), so a new theme needs
 | Action | Does |
 |---|---|
 | New | A new, untitled schematic in a new tab |
-| Open… (Ctrl+O) | Browses the server's files; for a file already open, asks whether to open another copy (a tab of its own, saving to the same file) or reload the open one from disk |
+| Open… (Ctrl+O) | Browses the server's files, with Places (the LiveSPICE folder, and LiveSPICE's example schematics, which every package includes) above the recent files. The server makes the LiveSPICE folder (`Documents/LiveSPICE`) at startup if it's missing, as LiveSPICE does; if it can't be listed, the dialog starts in the examples; for a file already open, asks whether to open another copy (a tab of its own, saving to the same file) or reload the open one from disk |
 | Save (Ctrl+S) | Saves, asking before overwriting a file that changed on disk; an untitled schematic goes to Save As |
 | Save As… (Ctrl+Shift+S) | Saves under a new name or folder, asking before replacing a file. Enter in the name box saves and closes. New folder makes one in the folder shown and goes into it; Delete deletes the schematic the name box names (highlighted in the list), after asking, unless it's open in a tab |
 | Click a tab, × or middle-click | Switches to it, or closes it (asking if it has unsaved changes) |

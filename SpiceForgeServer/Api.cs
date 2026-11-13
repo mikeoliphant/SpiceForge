@@ -26,6 +26,16 @@ public sealed class ServerContext : IDisposable
     {
         Options = options;
         Log = new LogHub(Hub);
+        // The user folder (Documents/LiveSPICE), made if it's missing, as LiveSPICE makes it (App.UserDocuments): the
+        // file dialogs start in it and save to it. Just the folder, as LiveSPICE does, not its Components.
+        try
+        {
+            Directory.CreateDirectory(options.UserFolder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            Log.Write(MessageType.Warning, "file", $"Couldn't create the user folder '{options.UserFolder}': {ex.Message}");
+        }
         Settings = new SettingsStore(options.SettingsPath);
         Files = new FileService(Settings, Log, Hub);
         Audio = new AudioService(Hub, Log, Settings, AudioService.Startup(Settings, options));
@@ -157,6 +167,7 @@ public sealed class Api
             ["folders"] = new JsonObject
             {
                 ["user"] = context.Options.UserFolder,
+                ["examples"] = context.Options.ExamplesFolder,
                 ["components"] = Json.Strings(context.ComponentFolders),
             },
         });

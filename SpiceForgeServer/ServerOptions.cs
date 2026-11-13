@@ -26,6 +26,10 @@ public sealed class ServerOptions
     /// <summary>LiveSPICE's user folder, Documents/LiveSPICE, where the client's dialogs start.</summary>
     public string UserFolder { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "LiveSPICE");
 
+    /// <summary>LiveSPICE's example schematics: the Examples folder a package has beside the server, or, run from the
+    /// repository, the LiveSPICE submodule's. Null if neither is there. The client's dialogs offer it as a place.</summary>
+    public string? ExamplesFolder { get; init; } = FindExamples();
+
     /// <summary>Where the catalogue's libraries come from: LiveSPICE's, copied next to the server, then the user's.</summary>
     public IReadOnlyList<string> ComponentFolders { get; init; } = Array.Empty<string>();
 
@@ -154,6 +158,20 @@ public sealed class ServerOptions
             string dist = Path.Combine(dir.FullName, "SpiceForgeWebUI", "dist");
             if (File.Exists(Path.Combine(dist, "index.html")))
                 return dist;
+        }
+        return null;
+    }
+
+    private static string? FindExamples()
+    {
+        string beside = Path.Combine(AppContext.BaseDirectory, "Examples");
+        if (Directory.Exists(beside))
+            return beside;
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
+        {
+            string examples = Path.Combine(dir.FullName, "Dependencies", "LiveSPICE", "Tests", "Examples");
+            if (Directory.Exists(examples))
+                return examples;
         }
         return null;
     }
