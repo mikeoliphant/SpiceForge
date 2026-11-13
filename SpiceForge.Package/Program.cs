@@ -55,9 +55,18 @@ foreach (string rid in rids)
     Step($"Publishing the server for {rid}");
     // Self-contained, so nothing needs installing first. Not ReadyToRun: with tiered compilation off, precompiled code
     // would be used as it is, less optimized than the JIT's, on the audio path.
+    // A single file: the runtime and every assembly in the one executable, rather than 350 files beside it, so the
+    // folder shows what a user needs (the server, its settings, the README, the examples). The symbols are embedded,
+    // so stack traces keep their line numbers; nothing reads an assembly's file path. No reference documentation, and
+    // no static web assets manifest (the server serves the editor from wwwroot itself; the manifest was empty).
     // The version is passed on, so the publish uses exactly the one the packages are named for.
     Run("dotnet", $"publish \"{serverProject}\" -c Release -r {rid} --self-contained true " +
+        "-p:PublishSingleFile=true -p:DebugType=embedded -p:PublishReferencesDocumentationFiles=false -p:StaticWebAssetsEnabled=false " +
+        "-p:IsTransformWebConfigDisabled=true " +
         $"-p:SpiceForgeVersion={version} {(windows ? "-p:SpiceForgeNoConsole=true " : "")}-o \"{stage}\"", repo);
+    // ASP.NET Core's module for hosting in IIS, which SpiceForge never is: a native file the single file leaves beside
+    // it on Windows. (SpiceForge.Validate server, run against the package's executable, checks nothing needs it.)
+    File.Delete(Path.Combine(stage, "aspnetcorev2_inprocess.dll"));
 
     Step("Adding the web editor, examples and documents");
     CopyFolder(dist, Path.Combine(stage, "wwwroot"), file => !file.EndsWith(".map", StringComparison.Ordinal));

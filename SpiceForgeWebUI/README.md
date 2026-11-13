@@ -46,8 +46,12 @@ reloads. `?file=<path>` opens a schematic straight away; otherwise the last one 
 
 ## Packaging
 
-`SpiceForge.Package` builds the packages into `artifacts/`: the server, self-contained (no .NET to install), with this
-editor, LiveSPICE's component libraries and its example schematics. They start the editor in a window of its own.
+`SpiceForge.Package` builds the packages into `artifacts/`: the server, self-contained (no .NET to install) as a single
+executable, with this editor, LiveSPICE's component libraries and its example schematics. They start the editor in a
+window of its own. The package's folder holds only what a user needs: `SpiceForgeServer` (`.exe` on Windows),
+`appsettings.json`, `README.txt`, `LICENSE.txt`, `CREDITS.md`, and the `Components`, `Examples`, `licenses` and
+`wwwroot` folders. To check a package's server, run `SpiceForge.Validate server` with `SPICEFORGE_SERVER` set to its
+executable.
 
 ```
 dotnet run -c Release --project SpiceForge.Package [-- --rid win-x64,linux-x64] [--skipWeb]

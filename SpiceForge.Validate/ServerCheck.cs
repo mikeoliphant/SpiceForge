@@ -62,13 +62,8 @@ internal static class ServerCheck
         string scratch = Path.Combine(Path.GetTempPath(), "SpiceForgeAsioCheck-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(scratch);
         string buffer = (bufferSize != null ? $" --bufferSize {bufferSize}" : "") + (sampleRate != null ? $" --sampleRate {sampleRate}" : "");
-        var start = new ProcessStartInfo("dotnet", $"\"{server}\" --port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" " +
-            $"--userFolder \"{scratch}\" --audio ASIO --audioDevice \"{device}\" --audioOutputs={buffer}")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
+        ProcessStartInfo start = ServerStart(server, $"--port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" " +
+            $"--userFolder \"{scratch}\" --audio ASIO --audioDevice \"{device}\" --audioOutputs={buffer}");
         using Process process = Process.Start(start)!;
         try
         {
@@ -301,13 +296,8 @@ internal static class ServerCheck
         int port = FreePort();
         string scratch = Path.Combine(Path.GetTempPath(), "SpiceForgeJackCheck-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(scratch);
-        var start = new ProcessStartInfo("dotnet", $"\"{server}\" --port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" " +
-            $"--userFolder \"{scratch}\" --audio JACK")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
+        ProcessStartInfo start = ServerStart(server, $"--port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" " +
+            $"--userFolder \"{scratch}\" --audio JACK");
         start.Environment["JACK_DEFAULT_SERVER"] = JackServerName;
         Process? spiceforge = null;
         JackSharp.Controller? watch = null;
@@ -551,12 +541,7 @@ internal static class ServerCheck
         int port = FreePort();
         string scratch = Path.Combine(Path.GetTempPath(), "SpiceForgeServerCheck-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(scratch);
-        var start = new ProcessStartInfo("dotnet", $"\"{server}\" --port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" --userFolder \"{UserFolderIn(scratch)}\"")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
+        ProcessStartInfo start = ServerStart(server, $"--port {port} --token {Token} --settings \"{Path.Combine(scratch, "settings.json")}\" --userFolder \"{UserFolderIn(scratch)}\"");
         using Process process = Process.Start(start)!;
         try
         {
@@ -1055,8 +1040,12 @@ internal static class ServerCheck
         return reply["result"] as JsonObject ?? new JsonObject();
     }
 
+    /// <summary>The server to check: SPICEFORGE_SERVER if it's set (a packaged server's executable, say, to check what
+    /// ships), else the repository's build.</summary>
     private static string? FindServer(string repo)
     {
+        if (Environment.GetEnvironmentVariable("SPICEFORGE_SERVER") is { Length: > 0 } given)
+            return File.Exists(given) ? Path.GetFullPath(given) : null;
         foreach (string configuration in new[] { "Release", "Debug" })
         {
             string path = Path.Combine(repo, "SpiceForgeServer", "bin", configuration, "net10.0", "SpiceForgeServer.dll");
@@ -1064,6 +1053,20 @@ internal static class ServerCheck
                 return path;
         }
         return null;
+    }
+
+    /// <summary>Starts a server: a build's DLL through dotnet, a packaged executable as it is. A package's
+    /// appsettings.json opens the editor and logs to a file; the check wants neither, so both are turned off.</summary>
+    private static ProcessStartInfo ServerStart(string server, string arguments)
+    {
+        arguments += " --open none --logFile=";
+        ProcessStartInfo start = server.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            ? new ProcessStartInfo("dotnet", $"\"{server}\" {arguments}")
+            : new ProcessStartInfo(server, arguments);
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        start.UseShellExecute = false;
+        return start;
     }
 
     private static int FreePort()

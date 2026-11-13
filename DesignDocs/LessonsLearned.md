@@ -1159,6 +1159,20 @@ installer) and Linux (a tarball), started in a window of its own.
   (`git describe --tags --abbrev=0`, so "0.0.1-dev"), in a target before `GetAssemblyVersion`, which derives the
   informational version from `Version`. A package's `SpiceForgeVersion` skips it (checked: 9.8.7+commit). The
   commit doesn't say whether the tree had uncommitted changes.
+- **Publish the server as a single file, so the package's folder shows what a user needs.** A self-contained publish
+  put 353 files at the package's root, 322 of them DLLs, around the six a user wants. With `PublishSingleFile` the
+  runtime and every assembly are in the one executable; on Linux the runtime's native libraries are linked into it
+  too, leaving nothing beside it. Symbols are embedded (`DebugType=embedded`), so traces keep line numbers. What was
+  left was cleared too: reference documentation (`PublishReferencesDocumentationFiles=false`), an empty static web
+  assets manifest (`StaticWebAssetsEnabled=false`), and on Windows IIS's `web.config`
+  (`IsTransformWebConfigDisabled`) and its hosting module `aspnetcorev2_inprocess.dll`, which the packager deletes.
+  The roots are now the server, `appsettings.json`, the README, LICENSE and CREDITS (and the icon on Linux), with
+  `Components`, `Examples`, `licenses` and `wwwroot`; the Linux tarball holds 42 files instead of 389, and the
+  packages are smaller (tarball 44.5 against 48.1 MB, zip 44.7 against 48.8, installer 33.2 against 35.2). Nothing
+  reads an assembly's path, and `AppContext.BaseDirectory` is still the executable's folder. Checked by running the
+  whole `SpiceForge.Validate server` against the Windows package's executable (`SPICEFORGE_SERVER`, new): 0 problems,
+  simulation and the editor's conformance included, with the examples found beside it. The Linux executable can't
+  run here, so it's checked only by its contents.
 - **Packaged examples must be reachable from the editor, not just present.** The Linux tarball held all 20 of
   LiveSPICE's examples in `SpiceForge/Examples`, yet a user saw none: the file dialogs start in
   `Documents/LiveSPICE`, which only the Windows installer fills with the examples (and which a fresh account may not

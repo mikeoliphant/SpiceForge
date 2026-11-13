@@ -831,7 +831,8 @@ applies and saves.
 
 It prints a summary of the About information first (the version and commit, copyright, license, source, and where the license texts are), then the URL to connect to, with the token, and the audio device it will use. `SpiceForge.Validate server`
 checks it: every test schematic through the JSON document and back, every editing operation against a running
-server, simulation, and the audio operations on the internal clock. `SpiceForge.Validate asio "driver" [bufferSize]
+server, simulation, and the audio operations on the internal clock. It checks the repository's build, or, with
+`SPICEFORGE_SERVER` set to a server's executable, that one: a package's, to check what ships. `SpiceForge.Validate asio "driver" [bufferSize]
 [seconds] [sampleRate]` runs the Rat on a real ASIO device with its outputs silent, and reports the load, the
 dropouts, and whether a rebuild glitches; it's for a person with the hardware, and never runs on its own.
 
