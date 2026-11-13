@@ -22,8 +22,7 @@ The three columns of times are:
 "Fixed vs stock" and "Live vs stock" are speedups: stock's time over ours, so above 1× is faster than LiveSPICE.
 "Live cost" is how much longer live takes than fixed.
 
-Measured at SpiceForge commit `bdb4cee`, with the `bench` check added, on an AMD Ryzen 7 5700X running Windows 10.
-To regenerate:
+Measured at SpiceForge commit `3909840`, on an AMD Ryzen 7 5700X running Windows 10. To regenerate:
 
 ```
 dotnet run -c Release --project SpiceForge.Validate -- bench
@@ -33,48 +32,49 @@ dotnet run -c Release --project SpiceForge.Validate -- bench
 
 | Circuit | Pots | Switches | Stock µs | Fixed µs | Live µs | Fixed vs stock | Live vs stock | Live cost |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Examples/59 Bassman Preamp+Tone Stack | 4 | 1 | 7.46 | 3.36 | 3.66 | 2.22× | 2.04× | +9% |
-| Examples/Big Muff Pi | 3 | 0 | 10.2 | 14.8 | 17.4 | 0.69× | 0.59× | +18% |
-| Examples/Boss Super Overdrive SD-1 | 3 | 0 | 1.34 | 0.90 | 0.99 | 1.49× | 1.36× | +10% |
-| Examples/Bridge Rectifier | 0 | 0 | 1.21 | 1.91 | 1.91 | 0.63× | 0.64× | 0% |
-| Examples/Common Cathode Triode Amplifier | 0 | 0 | 2.54 | 1.45 | 1.46 | 1.75× | 1.74× | 0% |
-| Examples/Common Emitter Transistor Amplifier | 0 | 0 | 0.73 | 0.58 | 0.58 | 1.26× | 1.26× | 0% |
-| Examples/Dunlop Cry Baby GCB-95 | 1 | 0 | 5.94 | 4.73 | 4.26 | 1.26× | 1.39× | -10% |
-| Examples/Fender 5e3 | 3 | 0 | 27.7 | 18.6 | 21.1 | 1.49× | 1.31× | +13% |
-| Examples/Ibanez Tube Screamer TS-9 | 3 | 0 | 0.68 | 0.55 | 0.54 | 1.25× | 1.26× | -1% |
-| Examples/MXR Distortion + | 2 | 0 | 2.21 | 1.33 | 1.66 | 1.66× | 1.33× | +25% |
-| Examples/MXR Phase 90 | 2 | 0 | 26.6 | 20.7 | 24.4 | 1.29× | 1.09× | +18% |
-| Examples/Marshall Blues Breaker | 3 | 1 | 2.02 | 1.54 | 2.50 | 1.31× | 0.81× | +62% |
-| Examples/Marshall JCM2000 DSL Preamp | 5 | 1 | 21.2 | 11.6 | 12.6 | 1.83× | 1.68× | +8% |
-| Examples/Marshall JCM800 2203 Preamp | 5 | 0 | 19.2 | 12.1 | 13.7 | 1.59× | 1.40× | +14% |
-| Examples/Marshall JCM800 2203 preamp modded | 6 | 2 | 21.2 | 11.1 | 13.2 | 1.91× | 1.61× | +18% |
-| Examples/Op-Amp Model | 0 | 0 | 1.05 | 0.81 | 0.81 | 1.29× | 1.29× | 0% |
-| Examples/Orange Rockerverb 50 Preamp | 6 | 0 | 25.8 | 14.3 | 15.8 | 1.80× | 1.63× | +11% |
+| Examples/59 Bassman Preamp+Tone Stack | 4 | 1 | 7.30 | 3.35 | 3.62 | 2.18× | 2.02× | +8% |
+| Examples/Big Muff Pi | 3 | 0 | 10.2 | 14.6 | 17.5 | 0.70× | 0.58× | +20% |
+| Examples/Boss Super Overdrive SD-1 | 3 | 0 | 1.33 | 0.90 | 0.99 | 1.47× | 1.34× | +10% |
+| Examples/Bridge Rectifier | 0 | 0 | 1.17 | 1.91 | 1.91 | 0.61× | 0.61× | 0% |
+| Examples/Common Cathode Triode Amplifier | 0 | 0 | 2.53 | 1.47 | 1.47 | 1.73× | 1.72× | 0% |
+| Examples/Common Emitter Transistor Amplifier | 0 | 0 | 0.73 | 0.58 | 0.58 | 1.26× | 1.25× | 0% |
+| Examples/Dunlop Cry Baby GCB-95 | 1 | 0 | 5.89 | 4.76 | 4.31 | 1.24× | 1.37× | -9% |
+| Examples/Fender 5e3 | 3 | 0 | 27.5 | 18.4 | 21.0 | 1.50× | 1.31× | +14% |
+| Examples/Ibanez Tube Screamer TS-9 | 3 | 0 | 0.68 | 0.55 | 0.54 | 1.25× | 1.25× | 0% |
+| Examples/MXR Distortion + | 2 | 0 | 2.21 | 1.33 | 1.65 | 1.66× | 1.34× | +24% |
+| Examples/MXR Phase 90 | 2 | 0 | 26.5 | 20.5 | 24.2 | 1.29× | 1.09× | +18% |
+| Examples/Marshall Blues Breaker | 3 | 1 | 1.99 | 1.51 | 2.36 | 1.32× | 0.84× | +56% |
+| Examples/Marshall JCM2000 DSL Preamp | 5 | 1 | 21.0 | 11.8 | 12.6 | 1.78× | 1.66× | +7% |
+| Examples/Marshall JCM800 2203 Preamp | 5 | 0 | 19.0 | 12.2 | 13.7 | 1.56× | 1.39× | +13% |
+| Examples/Marshall JCM800 2203 preamp modded | 6 | 2 | 21.2 | 10.9 | 13.4 | 1.94× | 1.59× | +23% |
+| Examples/Op-Amp Model | 0 | 0 | 1.06 | 0.82 | 0.82 | 1.28× | 1.29× | 0% |
+| Examples/Orange Rockerverb 50 Preamp | 6 | 0 | 25.6 | 14.2 | 15.7 | 1.81× | 1.63× | +11% |
 | Examples/Passive 1stOrder Lowpass RC | 0 | 0 | 0.02 | 0.13 | 0.13 | 0.13× | 0.13× | 0% |
-| Examples/Pro Co Rat | 3 | 0 | 7.56 | 6.00 | 6.58 | 1.26× | 1.15× | +10% |
-| Examples/Wien Bridge Oscillator | 1 | 0 | 0.95 | 0.83 | 0.91 | 1.14× | 1.04× | +10% |
-| Unstable/Fuzz Face | 2 | 0 | 1.99 | 1.08 | 1.18 | 1.83× | 1.68× | +9% |
-| Unstable/Orange Squeezer Compressor | 2 | 0 | 7.24 | 5.83 | 5.90 | 1.24× | 1.23× | +1% |
+| Examples/Pro Co Rat | 3 | 0 | 7.47 | 5.98 | 6.82 | 1.25× | 1.10× | +14% |
+| Examples/Wien Bridge Oscillator | 1 | 0 | 0.94 | 0.83 | 0.92 | 1.13× | 1.03× | +10% |
+| Unstable/Fuzz Face | 2 | 0 | 1.97 | 1.10 | 1.18 | 1.79× | 1.67× | +7% |
+| Unstable/Orange Squeezer Compressor | 2 | 0 | 7.19 | 5.80 | 6.06 | 1.24× | 1.19× | +5% |
 | Unstable/Triode stage | | | | | | | | LiveSPICE can't solve it |
 
 Median over the 22 circuits both can run: fixed 1.30× stock, live 1.30× stock. That both medians land on 1.30× is a
-coincidence of which circuits sit in the middle. Live costs a median of 9% over fixed, from −10% to +62%.
+coincidence of which circuits sit in the middle. Live costs a median of 9% over fixed, from −9% to +56%.
 
 ## Notes
 
-- **Live is faster than stock on 18 of the 22 circuits.** The exceptions are the Big Muff (0.59×), the Blues Breaker
-  (0.81×), the bridge rectifier (0.64×) and the passive RC filter (0.13×). With controls fixed, only the Big Muff,
+- **Live is faster than stock on 18 of the 22 circuits.** The exceptions are the Big Muff (0.58×), the Blues Breaker
+  (0.84×), the bridge rectifier (0.61×) and the passive RC filter (0.13×). With controls fixed, only the Big Muff,
   bridge rectifier and RC filter are slower than stock.
 - **The smallest circuits measure per-call overhead, not solving.** The passive RC filter takes 0.02 µs a sample in
   stock and 0.13 µs in ours.
-- **The Blues Breaker is the outlier for live cost.** It runs 62% slower live than fixed. Circuits with only pots
-  cost −10 to +25%, and the other circuits with switches (the Bassman, JCM2000 and modded JCM800) 8 to 18%. Its
+- **The Blues Breaker is the outlier for live cost.** It runs 56% slower live than fixed. Circuits with only pots
+  cost −9 to +24%, and the other circuits with switches (the Bassman, JCM2000 and modded JCM800) 7 to 23%. Its
   one switch is the likely cause, but that hasn't been isolated.
-- **The Cry Baby runs faster live than fixed.** It did so in both runs; the reason hasn't been looked into.
+- **The Cry Baby runs faster live than fixed.** It did so in every run; the reason hasn't been looked into.
 - **The "unstable" circuits ran in stock at this input.** The Fuzz Face and Orange Squeezer fail in LiveSPICE at
   other pot settings and signal levels (see `LessonsLearned.md`). At these settings stock stayed finite, so both are
   timed. The Triode stage fails in LiveSPICE's own solve, which both engines start from.
-- **Times repeat to within about 2%.** Two full runs agreed that closely on every circuit.
+- **Times repeat to within a few percent.** Over three full runs, most circuits agreed to about 2%; the largest
+  spread was 6%, on the Blues Breaker's live time (2.36 to 2.50 µs).
 - **Speed only.** The engines don't produce identical output: ours starts from a more tightly converged DC point and
   uses junction limiting, so they part ways where Newton hits the iteration cap. Accuracy against LiveSPICE is what
   the `livespice` and `jit` checks measure.

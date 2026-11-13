@@ -112,15 +112,15 @@ oversampling buys.
 - **On the example circuits, the live engine beats stock.** The `bench` check (`CircuitBenchmarks.md`) times stock
   `Simulation` against our compiled engine with controls fixed and live, engines only, at LiveSPICE's settings (8×,
   a cap of 8, linear resampling, one output). Over the 20 Examples plus the Fuzz Face and Orange Squeezer, the
-  median is 1.30× stock either way, and live is faster on 18 of 22. The Big Muff (0.59×), Blues Breaker (0.81×),
-  bridge rectifier and passive RC filter are slower. Two runs agreed to about 2%.
+  median is 1.30× stock either way, and live is faster on 18 of 22. The Big Muff (0.58×), Blues Breaker (0.84×),
+  bridge rectifier and passive RC filter are slower. Three runs agreed to about 2% on most circuits, 6% at worst.
 - **The jit check's median isn't the same number.** Its 0.91× is over `Tests/Circuits` too, whose tiny circuits
   measure call overhead (the passive RC filter is 0.13× at 0.02 µs stock), and it times fixed controls only. Quote
   `bench` for how SpiceForge as run compares with LiveSPICE.
-- **Live controls cost a median of 9%, with one outlier.** Circuits with only pots cost −10 to +25% over fixed, and
-  the Bassman, JCM2000 and modded JCM800, which have switches too, 8 to 18%. The Blues Breaker costs 62%, and its
-  one switch is the likely cause, but that hasn't been isolated. The Cry Baby runs 10% faster live than fixed, in
-  both runs, not yet explained.
+- **Live controls cost a median of 9%, with one outlier.** Circuits with only pots cost −9 to +24% over fixed, and
+  the Bassman, JCM2000 and modded JCM800, which have switches too, 7 to 23%. The Blues Breaker costs 56 to 62%, and
+  its one switch is the likely cause, but that hasn't been isolated. The Cry Baby runs 9 to 10% faster live than
+  fixed, in every run, not yet explained.
 
 ## Segments and black boxes
 
