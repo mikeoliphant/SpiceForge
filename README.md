@@ -15,33 +15,30 @@ test suite.
 
 ## What it adds
 
-- **Live knobs and switches.** Pots and switches are runtime parameters: moving one never re-solves the circuit.
-  The result matches the circuit with the setting built in, to −140 dB for pots and −193 dB for switches.
-- **A smaller solve each sample.** The equations are split once, offline, so that Newton's method works only on the
-  nonlinear devices' ports, and the step is compiled to machine code. It runs at about LiveSPICE's speed with pots
-  built in (median 0.91× over the test circuits, the large tube amps faster), while keeping every control live.
+- **Live knobs and switches.** Pots and switches are now fully dynamic under live slimulation.
+  This is done without sacrificing accuracy, but comes at a small (generally 10%-15%) cost, depending
+  on the circuit.
+- **A new, cross-platform application.** It runs in a browser, served by a local server. It has simulation with meters, a scope and
+  output selection, and audio through ASIO and JACK. Packages are built for Windows and Linux.
 - **Circuits LiveSPICE can't run.** SPICE-style junction limiting and a tightly converged DC start run the Fuzz Face
   and Orange Squeezer, which are unstable in LiveSPICE.
 - **Better resampling.** Sinc resampling around the oversampled circuit is an option, in place of LiveSPICE's linear
   interpolation and averaging.
-- **A new editor.** It runs in a browser, served by a local server. It has simulation with meters, a scope and
-  output selection, and audio through ASIO and JACK. Packages are built for Windows and Linux.
 
 `DesignDocs/LessonsLearned.md` records what was tried and measured. `CREDITS.md` lists the projects SpiceForge
 builds on.
 
-## Geting it
+## Getting it
 
 You can find binaries in the [Releases section](https://github.com/mikeoliphant/SpiceForge/releases/latest).
 
-Binaries are provided for x64 Windows and Linux. The app *should* also run on macOS, but you will have to use
-.NET locally to build it.
+Binaries are provided for x64 Windows and Linux.
 
 ## Current notable limitations
 
 - No macOS package is currently produced - it must be built locally.
 - macOS support is untested. It *should* work with JACK audio. macOS Core Audio is not yet implemented.
-- There is initial DAW plugin support, but it is still very bare bones and it is currently limited to Windows VST. It is not currently packaged for releases. 
+- There is initial DAW plugin support, but it is still very bare bones and is limited to Windows VST. It is not currently packaged for releases. 
 
 ## Building
 
@@ -84,5 +81,5 @@ dotnet run -c Release --project SpiceForge.Validate -- server
 
 ## License
 
-MIT. See [LICENSE](https://github.com/mikeoliphant/SpiceForge/blob/master/LICENSE). Dependencies keep their own licenses, listed in [CREDITS.md](https://github.com/mikeoliphant/SpiceForge/blob/master/CREDITS.md).
-A full set of applicable licenses is provided with the binary distributions distributed in the [Releases section](https://github.com/mikeoliphant/SpiceForge/releases). If you find any omissions, please let me know.
+MIT. See [LICENSE](LICENSE). Dependencies keep their own licenses, listed in [CREDITS.md](CREDITS.md).
+A full set of applicable licenses is provided with the binaries distributed in the [Releases section](https://github.com/mikeoliphant/SpiceForge/releases). If you find any omissions, please let me know.
