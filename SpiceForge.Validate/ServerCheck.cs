@@ -837,6 +837,23 @@ internal static class ServerCheck
         JsonObject? changed = await client.WaitForEvent("file.changed", TimeSpan.FromSeconds(3));
         Check(!ownWriteReported && changed?["path"]?.GetValue<string>() == copy, "an outside change is reported, and the server's own write isn't");
 
+        // Names beyond ASCII, as European users write them, through a server running with invariant globalization: a
+        // folder made, a schematic written there, read back, listed, recent, and deleted.
+        string accented = Path.Combine(scratch, "Schaltpläne – Größe");
+        Result(await client.Request("fs.mkdir", new JsonObject { ["path"] = accented }));
+        string accentedFile = Path.Combine(accented, "Überdrive ñ é ø.schx");
+        Result(await client.Request("file.write", new JsonObject { ["path"] = accentedFile, ["document"] = document.DeepClone() }));
+        JsonObject accentedRead = Result(await client.Request("file.read", new JsonObject { ["path"] = accentedFile }));
+        JsonObject accentedList = Result(await client.Request("fs.list", new JsonObject { ["path"] = accented, ["extensions"] = new JsonArray(".schx") }));
+        string[] accentedRecent = Result(await client.Request("fs.recent", null))["files"]!.AsArray().Select(r => r!.GetValue<string>()).ToArray();
+        Result(await client.Request("fs.delete", new JsonObject { ["path"] = accentedFile }));
+        Check(Directory.Exists(accented) && accentedRead["path"]?.GetValue<string>() == accentedFile
+                && XNode.DeepEquals(XDocument.Load(rat).Root, SchxConverter.ToSchematic(accentedRead["document"]!.AsObject()))
+                && accentedList["path"]?.GetValue<string>() == accented
+                && accentedList["entries"]!.AsArray().Any(e => e!["name"]!.GetValue<string>() == "Überdrive ñ é ø.schx")
+                && accentedRecent.Contains(accentedFile) && !File.Exists(accentedFile),
+            "a folder and schematic named 'Schaltpläne – Größe/Überdrive ñ é ø.schx' are made, written, read back unchanged, listed, recent and deleted");
+
         // New folders, and deleting schematics (only schematics).
         string newFolder = Path.Combine(scratch, "New folder");
         JsonObject made = Result(await client.Request("fs.mkdir", new JsonObject { ["path"] = newFolder }));

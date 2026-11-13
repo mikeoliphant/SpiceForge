@@ -1194,6 +1194,21 @@ installer) and Linux (a tarball), started in a window of its own.
   (`git describe --tags --abbrev=0`, so "0.0.1-dev"), in a target before `GetAssemblyVersion`, which derives the
   informational version from `Version`. A package's `SpiceForgeVersion` skips it (checked: 9.8.7+commit). The
   commit doesn't say whether the tree had uncommitted changes.
+- **The server needs no ICU: it runs with invariant globalization.** A self-contained Linux build still loads the
+  system's `libicu`, and without it .NET stops before any of the server's code runs, so there's no catching it.
+  Desktop distros have ICU (it comes with `libxml2` and the like), but minimal installs and containers may not. Of
+  the ways round it (a launcher script setting `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT`, or bundling ICU at about
+  30 MB), `<InvariantGlobalization>` in the server's project is the simplest: one line, set for the process, so
+  LiveSPICE runs invariant too without being changed. SpiceForge's code already parses and formats values, rotations
+  and times with the invariant culture and compares ordinally. LiveSPICE's doesn't everywhere: `Quantity.Parse`
+  uses `InstalledUICulture`, and SPICE model values go through `double.Parse` with the system's culture, so under a
+  comma-decimal locale they could misread; invariant, the decimal point is always `.`. (Inferred from the code, not
+  run under such a locale.) Only the server is invariant; the plugin, renderer and checks keep the system culture.
+  `SpiceForge.Validate server` and `jack` pass unchanged against it: value checks, schematics written back
+  unchanged, the simulation within 7.5 nV of the offline processor. File names aren't a culture matter (paths are
+  Unicode, UTF-8 on Linux, ICU or not); the server check now makes `Schaltpläne – Größe/Überdrive ñ é ø.schx`,
+  writes, reads back unchanged, lists, finds it in the recent files and deletes it, on Windows here and on Linux in
+  the Build workflow.
 - **Publish the server as a single file, so the package's folder shows what a user needs.** A self-contained publish
   put 353 files at the package's root, 322 of them DLLs, around the six a user wants. With `PublishSingleFile` the
   runtime and every assembly are in the one executable; on Linux the runtime's native libraries are linked into it
