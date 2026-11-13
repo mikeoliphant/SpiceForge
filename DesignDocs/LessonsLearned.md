@@ -1058,6 +1058,20 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   running on the clock, so the editor still showed a device that was gone. Now the configuration becomes None at the
   failed device's rate, is saved, and `settings.changed` follows; the simulation panel and the audio dialog say the
   device failed and why, as a warning.
+- **PipeWire's JACK can give a port no buffer; neither layer may assume one.** On Linux with PipeWire's JACK the
+  server aborted (`SIGABRT`) as a simulation connected: a `NullReferenceException` in `JackSharp.Processor.Silence`,
+  from `RunCycle`, from the process callback. `jack_port_get_buffer` had answered with no buffer, which JackSharp made
+  into a span over address 0; SpiceForge's driver copied a whole cycle into that empty span, which threw, so JackSharp
+  silenced the outputs in its catch, wrote through the null pointer, and that exception left an
+  `[UnmanagedCallersOnly]` callback, which ends the process. Why PipeWire gives no buffer wasn't established: the
+  ports are registered before activating, and JACK on Windows always gives one. JackSharpCore 1.1.1 gives an empty
+  span for a port without a buffer and catches anything a cycle throws; SpiceForge's driver reads silence from an
+  input without one and skips an output without one. `SpiceForge.Validate jack` (its own dummy JACK server, on
+  Windows) and JackSharpCore's tests (17 passed) still pass; the PipeWire case itself isn't checked here.
+- **The JACK check also caught the device-loss change.** When the JACK server goes, the configuration now resets
+  to None rather than falling back (see above), so `audio.state` has no `fallback`; `SpiceForge.Validate jack` waited
+  for `fallback` and failed. It isn't in the regular server check, so it wasn't run when that changed; it now
+  expects the reset, and passes.
 - **The Input must follow a device change, not keep a channel the new device lacks.** Switching from JACK to ASIO
   while running moved the outputs (they're mapped by the device's channels) but left the Input on JACK's
   `system:capture_1`, which matched nothing on ASIO and so read silence, shown as "(not open)". `Prepare` now applies

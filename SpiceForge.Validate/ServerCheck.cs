@@ -503,9 +503,12 @@ internal static class ServerCheck
             watch = null;
             StopProcess(jack);
             jack = null;
-            JsonObject? fallback = await WaitFor(client, "audio.state", e => e["fallback"]?.GetValue<bool>() == true, TimeSpan.FromSeconds(10));
-            Check(fallback?["driver"]?.GetValue<string>() == "None" && fallback["error"]?.GetValue<string>().Contains("shut down") == true,
-                $"when the JACK server goes, it falls back to the internal clock: {fallback?["error"]}");
+            // A device lost while running resets the configuration to None (not a fallback: nothing configured is
+            // missing), with the error saying why.
+            JsonObject? fallback = await WaitFor(client, "audio.state",
+                e => e["driver"]?.GetValue<string>() == "None" && e["error"] != null, TimeSpan.FromSeconds(10));
+            Check(fallback?["error"]?.GetValue<string>().Contains("shut down") == true && fallback["fallback"]?.GetValue<bool>() == false,
+                $"when the JACK server goes, it switches to no device, the internal clock: {fallback?["error"]}");
             JsonObject after = Result(await client.Request("sim.get", new JsonObject { ["sim"] = id2 }));
             Check(after["state"]?.GetValue<string>() is "running" or "rebuilding", $"and the simulation carries on ({after["state"]})");
         }

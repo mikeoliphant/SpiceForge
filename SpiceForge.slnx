@@ -27,6 +27,7 @@
     </Project>
     <Project Path="SpiceForgePlugin/SpiceForgeVst/SpiceForgeVst.csproj" />
   </Folder>
+  <Project Path="Dependencies/JackSharpCore/JackSharp/JackSharp.csproj" />
   <Project Path="Dependencies/LiveSPICE/Circuit/Circuit.csproj" />
   <Project Path="Dependencies/LiveSPICE/ComputerAlgebra/ComputerAlgebra/ComputerAlgebra.csproj" />
   <Project Path="Dependencies/LiveSPICE/Util/Util.csproj" />

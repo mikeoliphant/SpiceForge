@@ -303,7 +303,9 @@ public sealed class JackDriver : AudioDriver
             owner.Closed(this);
         });
 
-        // JACK's real-time thread.
+        // JACK's real-time thread. A port's buffer can be empty: PipeWire's JACK sometimes gives a port none for a cycle
+        // (and on Linux the server crashed copying a whole cycle into one). An input without one reads silence; an output
+        // without one is skipped.
         private void Process(ProcessContext context)
         {
             AudioBlock b = block;
@@ -317,7 +319,13 @@ public sealed class JackDriver : AudioDriver
                 return;
             }
             for (int i = 0; i < inputs.Length; i++)
-                inputs[i].GetBuffer(context).CopyTo(b.Inputs[i]);
+            {
+                Span<float> input = inputs[i].GetBuffer(context);
+                if (input.Length >= frames)
+                    input[..frames].CopyTo(b.Inputs[i]);
+                else
+                    Array.Clear(b.Inputs[i], 0, frames);
+            }
             b.Frames = frames;
             b.Skipped = 0;
             b.Xruns = Interlocked.Exchange(ref xruns, 0);
@@ -333,7 +341,11 @@ public sealed class JackDriver : AudioDriver
                 return;
             }
             for (int o = 0; o < outputs.Length; o++)
-                b.Outputs[o].AsSpan(0, frames).CopyTo(outputs[o].GetBuffer(context));
+            {
+                Span<float> output = outputs[o].GetBuffer(context);
+                if (output.Length >= frames)
+                    b.Outputs[o].AsSpan(0, frames).CopyTo(output);
+            }
         }
     }
 }
