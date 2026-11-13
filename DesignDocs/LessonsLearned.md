@@ -1,7 +1,17 @@
 # Lessons learned
 
-What the work so far has taught us, roughly in order: the eight milestones in `PLAN.md`, the singular-E fix, the
-switch to exact rebuild, and segment black boxes with lookup tables; then making pots and switches runtime parameters
+## The goal
+
+Run LiveSPICE circuits faster without changing what they sound like. SpiceForge takes the equations LiveSPICE
+produces (`Schematic.Build()` → `Circuit.Analyze()`, with LiveSPICE pinned and unmodified), reduces each timestep to
+a small Newton solve over the nonlinear device ports, with the linear part solved offline, and matches LiveSPICE's
+numerics (BDF2, oversampling, Newton start and stopping rule, device models) so the output stays within roundoff of
+LiveSPICE's own `Simulation`. The original plan was written from reading code, before anything was compiled, and was
+worked through in milestones: reference capture, extraction, linear circuits, port reduction, the Pro Co Rat, the
+dependency graph, a compiled engine, and coverage of every test circuit.
+
+What the work so far has taught us, roughly in order: those milestones, the singular-E fix, the switch to exact
+rebuild, and segment black boxes with lookup tables; then making pots and switches runtime parameters
 without re-solving (the `dynamic-pots` work), automation, the host-facing `SchematicProcessor`, and a look at what
 oversampling buys.
 
@@ -19,7 +29,7 @@ oversampling buys.
   data is LiveSPICE's own output, not ours.
 - **Know which circuits LiveSPICE itself can't run.** `Unstable/Triode stage` fails in LiveSPICE's own solve
   ("Failed to eliminate differentials"), and `Fuzz Face` and `Orange Squeezer` are unstable there too. Counting those
-  as known failures from milestone 1 kept them from being chased as bugs later.
+  as known failures from the first reference capture kept them from being chased as bugs later.
 
 ## Extraction
 
