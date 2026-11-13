@@ -6,6 +6,7 @@
     <File Path="README.md" />
   </Folder>
   <Folder Name="/DesignDocs/">
+    <File Path="DesignDocs/CircuitBenchmarks.md" />
     <File Path="DesignDocs/LessonsLearned.md" />
     <File Path="DesignDocs/UISpec.md" />
     <File Path="DesignDocs/WebSocketApi.md" />

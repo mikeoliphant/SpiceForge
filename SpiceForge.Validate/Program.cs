@@ -37,6 +37,10 @@ if (args.Length > 0 && args[0] == "segment")
 if (args.Length > 0 && args[0] == "jit")
     return JitCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
 
+// bench [filter]: stock LiveSPICE against our engine with controls fixed and live, as a Markdown table.
+if (args.Length > 0 && args[0] == "bench")
+    return BenchCheck.Run(testsDir, args.Length > 1 ? args[1] : null);
+
 if (args.Length > 0 && args[0] == "livespice")
 {
     // livespice [filter] [--jobs N] [--threshold dB]: against a tightly converged LiveSPICE, with PR 284 fixed.

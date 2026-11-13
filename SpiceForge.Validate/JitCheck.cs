@@ -105,7 +105,7 @@ internal static class JitCheck
         return failed == 0 ? 0 : 1;
     }
 
-    private static Expression BenchmarkOutput(Circuit.Circuit circuit, Expression[] nodes)
+    internal static Expression BenchmarkOutput(Circuit.Circuit circuit, Expression[] nodes)
     {
         Speaker? speaker = circuit.Components.OfType<Speaker>().FirstOrDefault();
         Expression? anode = speaker?.Anode.ConnectedTo?.V;
