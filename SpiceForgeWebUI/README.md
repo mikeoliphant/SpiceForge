@@ -65,8 +65,9 @@ Packages are unsigned: Windows SmartScreen asks before the installer or the zip'
 
 On GitHub, the **Build** workflow (`.github/workflows/build.yml`) runs on pull requests, or by hand: it builds the
 solution (Windows), runs `SpiceForge.Validate server` on Windows and Linux, and `processor` on Linux. The **Release**
-workflow, run by hand with a version, runs the server check, builds the three packages, and creates a GitHub release
-tagged `v<version>` with them attached and notes generated from the commits.
+workflow, run by hand with a version, runs the server check, builds the three packages, and creates a draft GitHub
+release for `v<version>` with them attached and no notes: write the notes and publish it on GitHub, which creates the
+tag.
 
 The app's icon is `Assets/Icon/SpiceForge.svg`. `node Assets/Icon/make-icon.mjs` renders it (with headless Chrome or
 Edge) into the `.ico` the server's executable and the installer carry, and the PNGs this editor uses as its favicons
