@@ -1058,6 +1058,24 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   running on the clock, so the editor still showed a device that was gone. Now the configuration becomes None at the
   failed device's rate, is saved, and `settings.changed` follows; the simulation panel and the audio dialog say the
   device failed and why, as a warning.
+- **The Input must follow a device change, not keep a channel the new device lacks.** Switching from JACK to ASIO
+  while running moved the outputs (they're mapped by the device's channels) but left the Input on JACK's
+  `system:capture_1`, which matched nothing on ASIO and so read silence, shown as "(not open)". `Prepare` now applies
+  the start's rule again: a lost input becomes the new device's first, or the 220 Hz test sine without any (compiled
+  on the engine, off the device's thread, taking over when ready); a source the server chose (marked `Automatic`)
+  follows the device too, so the sine it fell back to becomes the first input of a later device; a client's own
+  choice stays while the device has it. Checked in process on the Rat with a fake device switched between JACK-like,
+  ASIO-like and input-less channel sets: all five cases. The checks were built into a scratch folder
+  (`-p:OutDir`, `SPICEFORGE_REPO`, `SPICEFORGE_SERVER`) because a running server held the build's executable.
+- **The audio test needs a tone, and fades to start and stop.** Test only looped the inputs to the outputs, as
+  LiveSPICE's does, so with nothing plugged in a working device played silence and looked broken. It now plays a
+  440 Hz sine at −18 dBFS by default, with the loop as the other choice. Both pass through a raised-cosine gain,
+  20 ms each way; stopping sets the fade going and waits until two whole blocks of silence have followed it (a device
+  plays one block while the next is filled, so after one the fade's last block could still be cut off) before the
+  device closes, with a half-second limit for a device that has stopped calling. Checked in process, block by block
+  at 48 kHz: the tone starts at exactly 0, peaks at 0.1259, and its largest sample-to-sample step is 0.00725, the
+  plain sine's own steepest, so the fades add nothing; the fade-out takes 959 samples and 577 silent ones follow
+  before it reports done. The input loop, fed a steady 0.1, does the same. Not yet heard on a device.
 - **The web front end configures it in one dialog.** Audio… (in the toolbar, and Configure… in the simulation
   panel) shows the driver, device, channels as checkboxes, rate and buffer size (with their milliseconds), the
   driver's control panel button, and the test with per-channel meters and a scope of the summed input. A driver's

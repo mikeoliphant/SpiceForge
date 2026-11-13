@@ -72,7 +72,9 @@ public sealed class Simulation : IAudioClient
     private Failure? pendingFailure;
     private readonly ScopeRing scope = new();
 
-    private sealed record InputSource(JsonObject Json, Func<double, double>? Function, string? Channel);
+    /// <summary>What drives the Input. <paramref name="Automatic"/>: chosen by the server (at the start, or when the
+    /// device changed), not by the client, so a later device change may choose again.</summary>
+    private sealed record InputSource(JsonObject Json, Func<double, double>? Function, string? Channel, bool Automatic = false);
 
     private sealed record Failure(SchematicProcessor Processor, bool Diverged, string Message);
 
@@ -246,11 +248,11 @@ public sealed class Simulation : IAudioClient
                 if (needSource && p.HasInput)
                 {
                     if (device.Inputs.Count > 0)
-                        initial = new InputSource(new JsonObject { ["channel"] = device.Inputs[0] }, null, device.Inputs[0]);
+                        initial = FirstInput(device);
                     else
                     {
-                        string text = $"{Format(p.InputFullScale / 2)}*Sin(2*Pi*220*t)";
-                        initial = new InputSource(new JsonObject { ["expression"] = text }, CompileSource(text), null);
+                        string text = TestSine(p);
+                        initial = new InputSource(new JsonObject { ["expression"] = text }, CompileSource(text), null, Automatic: true);
                     }
                 }
                 return (p, initial);
@@ -546,6 +548,51 @@ public sealed class Simulation : IAudioClient
         sourceChannel = ChannelIndex(newSource.Channel, format);
     }
 
+    /// <summary>The default source with a device that has inputs: its first.</summary>
+    private static InputSource FirstInput(AudioFormat device) =>
+        new(new JsonObject { ["channel"] = device.Inputs[0] }, null, device.Inputs[0], Automatic: true);
+
+    /// <summary>The default source without device inputs: a 220 Hz sine at half the Input's full scale.</summary>
+    private static string TestSine(SchematicProcessor p) => $"{Format(p.InputFullScale / 2)}*Sin(2*Pi*220*t)";
+
+    /// <summary>
+    /// After a device change: a source that was one of the old device's inputs, which this one doesn't have, gives way to
+    /// the default for this device, as at the start (its first input, or the test sine without any); and a source the
+    /// server chose follows the device too, so the sine it fell back to becomes the first input of a device that has
+    /// some. The sine is compiled on the engine, off this thread, and takes over when it's ready; until then the lost
+    /// channel reads silence. Called under the lock.
+    /// </summary>
+    private void FollowDevice(AudioFormat device)
+    {
+        InputSource? s = source;
+        if (s == null)
+            return;
+        bool lost = s.Channel != null && ChannelIndex(s.Channel, device) < 0;
+        bool better = s.Automatic && s.Channel == null && device.Inputs.Count > 0;
+        if (!lost && !better)
+            return;
+        if (device.Inputs.Count > 0)
+        {
+            SetSource(FirstInput(device));
+            return;
+        }
+        _ = Task.Run(async () =>
+        {
+            if (processor is not SchematicProcessor p || !p.HasInput)
+                return;
+            string text = TestSine(p);
+            Func<double, double> function = await Engine.Run(() => CompileSource(text));
+            lock (sync)
+            {
+                // Unless the client chose a source meanwhile, or the device changed again.
+                if (source != s || format.Inputs.Count > 0 || stopping)
+                    return;
+                SetSource(new InputSource(new JsonObject { ["expression"] = text }, function, null, Automatic: true));
+            }
+            BroadcastControls();
+        });
+    }
+
     // The index of an input channel among the device's open inputs, or -1: a channel that isn't open reads silence.
     private static int ChannelIndex(string? channel, AudioFormat device) =>
         channel == null ? -1 : device.Inputs.ToList().FindIndex(i => string.Equals(i, channel, StringComparison.OrdinalIgnoreCase));
@@ -782,6 +829,7 @@ public sealed class Simulation : IAudioClient
         lock (sync)
         {
             sourceChannel = ChannelIndex(source?.Channel, newFormat);
+            FollowDevice(newFormat);
             OutputLookup o = outputMap;
             outputMap = o with { Map = MapOutputs(o.Channels, newFormat) };
         }

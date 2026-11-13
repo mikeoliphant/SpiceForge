@@ -115,7 +115,9 @@ export async function configureAudio(client: ApiClient): Promise<void> {
   const state = h("div", { className: "audio-state" });
   const connections = h("div", { className: "audio-connections", title: "SpiceForge's JACK ports, as connected now (including from a patchbay)" });
   const error = h("div", { className: "error" });
-  const test = h("button", { textContent: "Test", title: "Loops the sum of the inputs to every output, with the settings above (they're applied first)" });
+  const test = h("button", { textContent: "Test", title: "Plays the chosen signal on every output, with the settings above (they're applied first)" });
+  const signal = h("select", { title: "What the test plays: a tone, or what arrives on the inputs. The scope and the In meters show the inputs either way." });
+  signal.append(new Option("Tone, 440 Hz", "tone"), new Option("Inputs, looped back", "inputs"));
   const inputMeters = h("div", { className: "audio-meters" });
   const outputMeters = h("div", { className: "audio-meters" });
   const canvas = h("canvas", { className: "scope-canvas" });
@@ -136,7 +138,7 @@ export async function configureAudio(client: ApiClient): Promise<void> {
     h(
       "div",
       { className: "audio-test" },
-      h("div", { className: "audio-test-side" }, test, h("h3", { textContent: "In" }), inputMeters, h("h3", { textContent: "Out" }), outputMeters),
+      h("div", { className: "audio-test-side" }, test, signal, h("h3", { textContent: "In" }), inputMeters, h("h3", { textContent: "Out" }), outputMeters),
       h("div", { className: "audio-scope" }, canvas),
     ),
     error,
@@ -266,7 +268,7 @@ export async function configureAudio(client: ApiClient): Promise<void> {
   };
 
   const enable = () => {
-    for (const control of [driver, device, rate, buffer, ...dialog.querySelectorAll<HTMLInputElement>(".channels input")])
+    for (const control of [driver, device, rate, buffer, signal, ...dialog.querySelectorAll<HTMLInputElement>(".channels input")])
       control.disabled = testing || busy;
     panel.disabled = busy;
     ok.disabled = test.disabled = busy;
@@ -305,7 +307,7 @@ export async function configureAudio(client: ApiClient): Promise<void> {
     error.textContent = "";
     if (on && !(await apply())) return;
     try {
-      await client.request("audio.test", { enabled: on });
+      await client.request("audio.test", on ? { enabled: true, signal: signal.value } : { enabled: false });
       testing = on;
       if (!on) {
         scope.clear();

@@ -451,12 +451,21 @@ public sealed class AudioService : IDisposable
         return null;
     }
 
-    /// <summary><c>audio.test</c>: loops the sum of the inputs to every output, streaming it to the scope.</summary>
+    /// <summary><c>audio.test</c>: plays a tone on every output, or loops the sum of the inputs to them, streaming the
+    /// inputs' sum to the scope. A test already running with the other signal fades out and is replaced.</summary>
     public async Task<JsonNode?> Test(Session session, Args args)
     {
         bool enabled = args.Bool("enabled", true);
         if (enabled)
         {
+            AudioTestSignal signal = args.OptionalString("signal")?.ToLowerInvariant() switch
+            {
+                null or "tone" => AudioTestSignal.Tone,
+                "inputs" => AudioTestSignal.Inputs,
+                string other => throw new ApiException(ErrorCodes.InvalidValue, $"'{other}' isn't a test signal: 'tone' or 'inputs'."),
+            };
+            if (client is AudioTest running && running.Signal != signal)
+                await StopTest();
             AudioTest newTest;
             await gate.WaitAsync();
             try
@@ -465,7 +474,7 @@ public sealed class AudioService : IDisposable
                     return null;
                 if (client != null)
                     throw new ApiException(ErrorCodes.AudioBusy, "A simulation is running on the audio device.");
-                newTest = new AudioTest(hub);
+                newTest = new AudioTest(hub, signal);
                 await AttachLocked(newTest);
             }
             finally
@@ -480,10 +489,13 @@ public sealed class AudioService : IDisposable
         return null;
     }
 
+    /// <summary>Stops the test, after fading its output to silence, so the device doesn't close on a click. A device
+    /// that has stopped calling doesn't hold it up for more than half a second.</summary>
     public async Task StopTest()
     {
         if (client is AudioTest running)
         {
+            await running.FadeOut(TimeSpan.FromMilliseconds(500));
             running.Stop();
             await Detach(running);
         }

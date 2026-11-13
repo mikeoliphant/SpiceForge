@@ -409,7 +409,7 @@ A property descriptor:
 | `audio.getConfig` | | `driver`, `device`, `inputs: [name]`, `outputs: [name]`, `sampleRate`, `bufferSize`, `state`, `byDriver` |
 | `audio.setConfig` | any of the same fields | the configuration as applied, with `state` and `byDriver` |
 | `audio.controlPanel` | `driver`, `device` (default: the configured ones) | |
-| `audio.test` | `enabled` | |
+| `audio.test` | `enabled`, `signal` (`"tone"`, the default, or `"inputs"`) | |
 
 - **Drivers:** `None` is the internal clock (see Simulation): one device, `Internal clock`, with no channels. `ASIO`
   (Windows) lists the installed ASIO drivers as its devices, through NAudio. `JACK` (where libjack is installed:
@@ -436,9 +436,12 @@ A property descriptor:
 - **`audio.controlPanel`** opens the driver's own settings window, on the server's machine. For many ASIO drivers
   it's the only way to change the buffer size. If the driver then changes its rate or buffer size, the server
   restarts the device and rebuilds the simulation for the new rate.
-- **`audio.test`** opens the device and loops the sum of its inputs to every output, as LiveSPICE's Test button does.
-  While it runs, the summed signal streams to every connection as stream 0 (source 0), and `audio.levels` events
-  carry each channel's level. It fails with `audio_busy` while a simulation is running.
+- **`audio.test`** opens the device and plays on every output either a 440 Hz sine at −18 dBFS (`signal: "tone"`,
+  the default) or the sum of its inputs (`"inputs"`, as LiveSPICE's Test button does). It fades in and out over
+  20 ms, and stopping waits for the fade and two silent blocks before the device closes, so neither end clicks.
+  Asking for the other signal while a test runs replaces it, fading. While it runs, the inputs' sum streams to every
+  connection as stream 0 (source 0), whichever signal plays, and `audio.levels` events carry each channel's level. It
+  fails with `audio_busy` while a simulation is running.
 - **When the device opens.** It opens when a simulation or the test starts, and closes when it stops, so an idle
   server doesn't hold an ASIO driver another program wants. JACK is the exception: its client stays in the graph
   while JACK is the configured driver, from startup, playing silence when nothing runs, so connections made to its
@@ -475,6 +478,12 @@ real time at the configured rate (48 kHz by default), in blocks of the configure
 Input is driven by an expression (a 220 Hz sine at half its full scale until the client sets one), and the output
 only drives the meters; `outputs` is empty, and channel sources fail with `invalid_value`. If processing falls more
 than a quarter second behind, the clock skips ahead and `sim.stats` counts a dropout. Everything else is as below.
+
+**When the device changes while a simulation runs** (another driver or device chosen, or a fallback), the Input
+follows it. A source that was one of the old device's inputs, which the new one doesn't have, becomes the new
+device's first input, or the 220 Hz test sine if it has none; a source the server chose itself (at the start, or on a
+change) follows too, so the sine becomes a device's first input once there is one. A source the client set stays, as
+long as the device still has it. `sim.controls` follows with the new source.
 
 ### Lifecycle
 

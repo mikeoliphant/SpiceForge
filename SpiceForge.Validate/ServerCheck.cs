@@ -7,6 +7,11 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using SpiceForgeServer.Documents;
+using AudioBlock = SpiceForgeServer.Audio.AudioBlock;
+using AudioFormat = SpiceForgeServer.Audio.AudioFormat;
+using AudioTest = SpiceForgeServer.Audio.AudioTest;
+using AudioTestSignal = SpiceForgeServer.Audio.AudioTestSignal;
+using Hub = SpiceForgeServer.Protocol.Hub;
 
 /// <summary>
 /// Checks SpiceForgeServer's editing side (DesignDocs/WebSocketApi.md):
@@ -30,6 +35,7 @@ internal static class ServerCheck
         problems = 0;
         RoundTrip(testsDir);
         OutputSignals(testsDir).GetAwaiter().GetResult();
+        AudioTestSignals().GetAwaiter().GetResult();
         Live(repo, testsDir).GetAwaiter().GetResult();
         Console.WriteLine($"{problems} problem(s).");
         return problems == 0 ? 0 : 1;
@@ -146,6 +152,67 @@ internal static class ServerCheck
     }
 
     /// <summary>
+    /// The audio test's output, in process: <see cref="AudioTest"/> run block by block as a device would call it (48 kHz,
+    /// 256-sample blocks, one input, two outputs). The tone must reach its level, both outputs must carry it, and it must
+    /// start and stop without a click: no step between samples larger than the tone's own steepest (its amplitude times
+    /// 2π·440/48000, with 10% to spare), a first sample of zero, and a fade-out that ends in exact silence and is
+    /// reported only after two silent blocks. The input loop must do the same with what arrives.
+    /// </summary>
+    private static async Task AudioTestSignals()
+    {
+        Console.WriteLine("=== The audio test's signals, in process");
+        const int frames = 256;
+        var format = new AudioFormat(48000, frames, new[] { "In 1" }, new[] { "Out 1", "Out 2" });
+        double maxStep = AudioTest.ToneAmplitude * 2 * Math.PI * AudioTest.ToneHz / format.SampleRate * 1.1;
+
+        foreach (AudioTestSignal signal in new[] { AudioTestSignal.Tone, AudioTestSignal.Inputs })
+        {
+            var test = new AudioTest(new Hub(), signal);
+            test.Prepare(format);
+            AudioBlock block = AudioBlock.For(format);
+            var played = new List<float>();
+            bool outputsAgree = true;
+            void Run()
+            {
+                block.Frames = frames;
+                // For the loop: a steady 0.1 arriving, so the fades are all there is to see.
+                Array.Fill(block.Inputs[0], 0.1f);
+                test.Process(block);
+                for (int n = 0; n < frames; n++)
+                    outputsAgree &= block.Outputs[0][n] == block.Outputs[1][n];
+                played.AddRange(block.Outputs[0].Take(frames));
+            }
+
+            for (int b = 0; b < 20; b++)
+                Run();
+            int started = played.Count;
+            Task fadedOut = test.FadeOut(TimeSpan.FromSeconds(5));
+            int blocksToSilence = 0;
+            while (blocksToSilence < 20)
+            {
+                Run();
+                blocksToSilence++;
+                await Task.WhenAny(fadedOut, Task.Delay(20));
+                if (fadedOut.IsCompleted)
+                    break;
+            }
+
+            float level = signal == AudioTestSignal.Tone ? AudioTest.ToneAmplitude : 0.1f;
+            double step = signal == AudioTestSignal.Tone ? maxStep : 0.1 * Math.PI / (2 * AudioTest.FadeSeconds * format.SampleRate) * 1.1;
+            double peak = played.Take(started).Skip(started / 2).Max(Math.Abs);
+            double worstStep = played.Zip(played.Skip(1), (a, b) => Math.Abs(b - a)).Max();
+            int lastSound = played.FindLastIndex(x => x != 0);
+            int fadeSamples = (int)(AudioTest.FadeSeconds * format.SampleRate);
+            Check(Math.Abs(played[0]) < 1e-4 && peak > level * 0.99 && peak <= level * 1.0001 && outputsAgree,
+                $"{signal}: starts from silence and reaches its level on every output (first {played[0]:G3}, peak {peak:F4} of {level:F4})");
+            Check(worstStep <= step, $"{signal}: no click starting, playing or stopping (largest step {worstStep:F5}, at most {step:F5})");
+            Check(fadedOut.IsCompleted && played.Skip(lastSound + 1).All(x => x == 0) && lastSound - started <= fadeSamples + 1
+                    && played.Count - 1 - lastSound >= 2 * frames,
+                $"{signal}: stopping fades out in {lastSound - started + 1} samples, then waits {played.Count - 1 - lastSound} silent ones (two blocks) before closing");
+        }
+    }
+
+    /// <summary>
     /// Output signals, in process: a simulation of the Rat given three output channels, as a device would open them, and
     /// run block by block here, with no sound. Out 1 plays the Speakers; Out 2 the voltage across the Speaker (its
     /// output times its 0 dBFS voltage); Out 3 the voltage across the Input (the 0.5 V test sine, through the
@@ -230,6 +297,34 @@ internal static class ServerCheck
             await Running();
             double[] reset = Peaks();
             Check(reset[2] == reset[0], "setting the Speakers back puts the channel back");
+
+            // The Input follows the device when it changes (JACK to ASIO, say, while running): a source that was an input
+            // the new device lacks becomes its first input, or the test sine without any; a source the server chose
+            // follows too; a client's expression stays.
+            string? Source(string field) => sim.ToJson()["inputs"]?[0]?["source"]?[field]?.GetValue<string>();
+            async Task<string?> SourceSoon(string field)
+            {
+                for (int i = 0; i < 40 && Source(field) == null; i++)
+                    await Task.Delay(50);
+                return Source(field);
+            }
+            AudioFormat Device(params string[] inputs) => new(48000, 256, inputs, new[] { "Out 1", "Out 2", "Out 3" });
+            string? started = Source("expression");
+            sim.Prepare(Device("system:capture_1", "system:capture_2"));
+            Check(started?.Contains("Sin(2*Pi*220*t)") == true && Source("channel") == "system:capture_1",
+                $"the test sine the server chose without inputs gives way to the first input of a device with some ({Source("channel")})");
+            await sim.SetInput(input, new JsonObject { ["channel"] = "system:capture_2" });
+            sim.Prepare(Device("In 1", "In 2"));
+            Check(Source("channel") == "In 1", $"an input the new device lacks becomes its first ({Source("channel")}, not system:capture_2)");
+            await sim.SetInput(input, new JsonObject { ["channel"] = "In 2" });
+            sim.Prepare(Device());
+            string? sine = await SourceSoon("expression");
+            Check(sine?.Contains("Sin(2*Pi*220*t)") == true, $"and without inputs, the test sine ({sine})");
+            sim.Prepare(Device("In 1", "In 2"));
+            Check(Source("channel") == "In 1", $"which gives way to the first input again when they're back ({Source("channel")})");
+            await sim.SetInput(input, new JsonObject { ["expression"] = "0.1*Sin(2*Pi*100*t)" });
+            sim.Prepare(Device("system:capture_1"));
+            Check(Source("expression") == "0.1*Sin(2*Pi*100*t)", "a client's own expression stays through a device change");
             sim.Stop();
         }
         finally
@@ -914,7 +1009,9 @@ internal static class ServerCheck
         JsonObject saved = Result(await client.Request("settings.get", new JsonObject()));
         Check(saved["audio"]?["sampleRate"]?.GetValue<int>() == 44100, "and saves them in the settings");
 
-        Result(await client.Request("audio.test", new JsonObject { ["enabled"] = true }));
+        Check(Code(await client.Request("audio.test", new JsonObject { ["enabled"] = true, ["signal"] = "banana" })) == "invalid_value",
+            "audio.test refuses a signal that isn't tone or inputs");
+        Result(await client.Request("audio.test", new JsonObject { ["enabled"] = true, ["signal"] = "tone" }));
         JsonObject? opened = await WaitFor(client, "audio.state", e => e["open"]?.GetValue<bool>() == true, TimeSpan.FromSeconds(3));
         Check(opened?["open"]?.GetValue<bool>() == true && opened["sampleRate"]?.GetValue<double>() == 44100 && opened["bufferSize"]?.GetValue<int>() == 128,
             $"audio.test opens the device at the configured rate: {opened?.ToJsonString()}");
