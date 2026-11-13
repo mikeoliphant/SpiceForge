@@ -1150,3 +1150,14 @@ installer) and Linux (a tarball), started in a window of its own.
   after silence, so it isn't heard, but it's counted as a dropout.
 - The plugin defaults to 4× with a cap of 32, which the study found nearly as accurate as 8× for about 40% less CPU.
   With sinc resampling, error falls about 12 dB per doubling of N, so a user choosing sinc may want 8× back.
+- The web front end's tooltips sometimes don't appear, with no pattern found yet. They're all native (`title`
+  attributes, and `<title>` elements on the schematic), so Chromium decides when they show. The code was checked
+  for causes of its own: nothing rebuilds the DOM under the pointer while idle (the schematic redraws only on edits,
+  selection and live control changes), and no overlay covers a titled element. Chromium's own rules are the likely
+  cause: no tooltip after a click until the pointer leaves the element, none after a key press until the mouse moves,
+  probably none while the app window is inactive (unconfirmed), and often none again once one has shown. One real
+  defect: during a simulation the load label's tooltip text changes every second (`setStats`), restarting Chromium's
+  delay each time. Two checks would narrow it down: hover the toolbar straight after switching from another program,
+  then again after clicking into SpiceForge; and click a button, then rest on it. The proposed fix is a tooltip of
+  the editor's own (one delegated hover handler showing the nearest `title`, following text that changes while it's
+  shown, and themed), with the schematic's `<title>` elements moved to a data attribute.

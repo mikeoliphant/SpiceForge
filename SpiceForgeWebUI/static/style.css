@@ -325,8 +325,10 @@ button:disabled {
 /* ---- The workspace: library, canvas, properties ---- */
 
 .workspace {
+  position: relative;
   display: grid;
-  grid-template-columns: 220px 1fr 270px;
+  /* The side panels' widths are set by dragging their edges (panelWidth.ts); 236 px fits two columns of names. */
+  grid-template-columns: var(--library-width, 236px) 1fr var(--properties-width, 270px);
   min-height: 0;
 }
 
@@ -360,7 +362,8 @@ button:disabled {
   padding: 4px 8px;
 }
 
-.toolbar button.active {
+.toolbar button.active,
+.library-bar button.active {
   background: var(--active);
   border-color: var(--accent);
 }
@@ -440,28 +443,83 @@ button:disabled {
   margin-left: 10px;
 }
 
+/* The side panels' edges by the schematic: drag to resize, double-click for the default width. Each sits over its
+   border, in the workspace, so it takes no room and doesn't cover the panel's scrollbar. --splitter-at is the
+   panel's width (panelWidth.ts). */
+.panel-splitter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 2;
+  touch-action: none;
+}
+
+.panel-splitter.left {
+  left: calc(var(--splitter-at) - 2px);
+}
+
+.panel-splitter.right {
+  right: calc(var(--splitter-at) - 2px);
+}
+
+.panel-splitter:hover,
+.panel-splitter.dragging {
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+/* LiveSPICE's library: each component its icon and name, here in two columns sharing whatever width the panel has
+   (less a scrollbar, when one shows), the names trimmed to fit. */
 .library .icons {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px;
   padding: 2px 0 4px;
 }
 
 .library .entry {
-  padding: 2px;
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  height: 24px;
+  padding: 2px 4px 2px 2px;
   background: var(--canvas);
+  text-align: left;
 }
 
-.library .entry.named {
-  width: 100%;
-  justify-content: flex-start;
-  gap: 6px;
-  margin-bottom: 2px;
+.library .entry .icon {
+  flex: none;
+}
+
+.library .entry .name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The compact view: icons alone, as tiles. */
+.library.compact .icons {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.library.compact .entry {
+  width: 30px;
+  height: 30px;
+  padding: 2px;
+  justify-content: center;
+}
+
+.library.compact .entry .icon {
+  width: 22px;
+  height: 22px;
+}
+
+.library.compact .entry .name {
+  display: none;
 }
 
 .library .icon * {

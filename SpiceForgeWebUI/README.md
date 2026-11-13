@@ -92,6 +92,10 @@ classes (`s-red` for a red stroke, `terminal unconnected`), so a new theme needs
 - **Find (Ctrl+F)** looks for parts by name or part number as you type, selects the first and brings it into view;
   Enter and Shift+Enter step through the rest.
 - **Export…** saves the drawing as an SVG or PNG image, in the theme's colours, without selection or hover marks.
+- **The library** shows each component's icon and name, as LiveSPICE's does. Its ▦ button switches to a compact view
+  of icons alone (names in the tooltips), and the choice is remembered.
+- **Drag the library's or the properties' edge** by the schematic to resize that panel (remembered); double-click the
+  edge for its default width.
 - **Drag** a component from the library onto the canvas to place it where it's dropped.
 - **The library's … button** lists the component folders, and adds or removes your own. LiveSPICE component libraries
   (`.xml`) in them appear in the library for every window, as soon as they're added.
@@ -101,7 +105,7 @@ classes (`s-red` for a red stroke, `terminal unconnected`), so a new theme needs
 | Action | Does |
 |---|---|
 | New | A new, untitled schematic in a new tab |
-| Open… (Ctrl+O) | Browses the server's files; a file already open switches to its tab |
+| Open… (Ctrl+O) | Browses the server's files; for a file already open, asks whether to open another copy (a tab of its own, saving to the same file) or reload the open one from disk |
 | Save (Ctrl+S) | Saves, asking before overwriting a file that changed on disk; an untitled schematic goes to Save As |
 | Save As… (Ctrl+Shift+S) | Saves under a new name or folder, asking before replacing a file |
 | Click a tab, × or middle-click | Switches to it, or closes it (asking if it has unsaved changes) |
@@ -236,6 +240,7 @@ server and runs it.
 | `src/connectivity.ts` | Which terminals and wires form each node: LiveSPICE's rules, part of the contract |
 | `test/conformance.ts` | The conformance test |
 | `src/library.ts` | The component library panel |
+| `src/panelWidth.ts` | Resizing the side panels by dragging their edges |
 | `src/properties.ts` | The properties panel |
 | `src/fileDialog.ts` | The Open and Save As dialogs, on `fs.list` and `fs.recent` |
 | `src/theme.ts` | The colour theme: the picker's choice, kept locally and in the server's client settings |

@@ -1,6 +1,8 @@
-// The component library panel (LiveSPICE's ComponentLibrary): the catalogue's categories as expanders of symbol icons,
-// a filter that replaces them with a flat list of matching components, and a refresh button. Clicking a component
-// starts placing it (the wire entry starts the wire tool).
+// The component library panel (LiveSPICE's ComponentLibrary): the catalogue's categories as expanders of components,
+// each its symbol icon and name, a filter that replaces them with a flat list of matching components, and a refresh
+// button. The names matter: a library's specializations of one generic component (its diodes, op-amps, transistors,
+// tubes) share that component's symbol, so their icons alone can't tell them apart. A compact view of icons alone can
+// be chosen instead, and is remembered. Clicking a component starts placing it (the wire entry starts the wire tool).
 
 import type { ApiClient } from "./client";
 import type { Catalog, CatalogCategory, CatalogEntry } from "./protocol";
@@ -19,12 +21,24 @@ export const WireType = "Circuit.Conductor, Circuit";
 /** The drag data type of a library entry, carrying its id. */
 export const LibraryDragType = "application/x-spiceforge-entry";
 
+/** Where the choice of the compact, icons-only view is remembered. */
+const CompactKey = "spiceforge.libraryCompact";
+
+function readCompact(): boolean {
+  try {
+    return localStorage.getItem(CompactKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
 export class LibraryPanel {
   private catalog: Catalog | null = null;
   private readonly filter: HTMLInputElement;
   private readonly tree: HTMLDivElement;
   private readonly flat: HTMLDivElement;
   private readonly expanded = new Map<string, boolean>();
+  private compact = readCompact();
 
   /** Called when a component is clicked. */
   onPick: (entry: CatalogEntry) => void = () => {};
@@ -42,9 +56,25 @@ export class LibraryPanel {
     this.filter = h("input", { type: "search", placeholder: "Filter", className: "filter", spellcheck: false });
     const refresh = h("button", { textContent: "↻", title: "Reload the component libraries" });
     const folders = h("button", { textContent: "…", title: "Component folders: add your own libraries" });
+    const view = h("button", { textContent: "▦" });
+    const showView = () => {
+      view.title = this.compact ? "Show component names" : "Show icons only";
+      view.classList.toggle("active", this.compact);
+      root.classList.toggle("compact", this.compact);
+    };
+    showView();
+    view.addEventListener("click", () => {
+      this.compact = !this.compact;
+      try {
+        localStorage.setItem(CompactKey, String(this.compact));
+      } catch {
+        // Not remembered, then; the view still changes.
+      }
+      showView();
+    });
     this.tree = h("div", { className: "tree" });
     this.flat = h("div", { className: "flat" });
-    root.append(h("div", { className: "panel-title" }, "Components"), h("div", { className: "library-bar" }, this.filter, refresh, folders), this.tree, this.flat);
+    root.append(h("div", { className: "panel-title" }, "Components"), h("div", { className: "library-bar" }, this.filter, view, refresh, folders), this.tree, this.flat);
     this.filter.addEventListener("input", () => this.render());
     this.filter.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
@@ -105,9 +135,9 @@ export class LibraryPanel {
         const key = `${entry.name}|${entry.component.type}|${JSON.stringify(entry.component.properties)}`;
         if (!entry.name.toUpperCase().includes(text) || seen.has(key)) continue;
         seen.add(key);
-        matches.push(this.item(id, entry, true));
+        matches.push(this.item(id, entry));
       }
-      this.flat.replaceChildren(...(matches.length ? matches : [h("div", { className: "muted", textContent: "No components match." })]));
+      this.flat.replaceChildren(matches.length ? h("div", { className: "icons" }, ...matches) : h("div", { className: "muted", textContent: "No components match." }));
     }
   }
 
@@ -115,17 +145,17 @@ export class LibraryPanel {
     const key = `${path}/${c.name}`;
     const details = h("details", { className: "category", open: this.expanded.get(key) ?? c.expanded });
     details.addEventListener("toggle", () => this.expanded.set(key, details.open));
-    const grid = h("div", { className: "icons" }, ...c.entries.map((id) => this.item(id, this.catalog!.entries[id]!, false)));
+    const grid = h("div", { className: "icons" }, ...c.entries.map((id) => this.item(id, this.catalog!.entries[id]!)));
     details.append(h("summary", { textContent: c.name }), grid, ...c.children.map((child) => this.category(child, key)));
     return details;
   }
 
-  private item(id: string, entry: CatalogEntry, withName: boolean): HTMLElement {
+  /** A component's button: its icon and name (the name hidden by the compact view's CSS, and kept in the tooltip). */
+  private item(id: string, entry: CatalogEntry): HTMLElement {
     const tip = entry.description ? `${entry.name}\n${entry.description}` : entry.name;
-    const button = h("button", { className: withName ? "entry named" : "entry", title: tip });
+    const button = h("button", { className: "entry", title: tip });
     button.dataset["entry"] = id;
-    button.append(drawIcon(entry.layout, 22));
-    if (withName) button.append(h("span", { textContent: entry.name }));
+    button.append(drawIcon(entry.layout, 18), h("span", { className: "name", textContent: entry.name }));
     button.addEventListener("click", () => this.onPick(entry));
     // Dragged onto the canvas, it's placed where it's dropped.
     button.draggable = true;

@@ -15,6 +15,8 @@ import { PropertiesPanel } from "./properties";
 import { renderDocument } from "./render";
 import { SimulationPanel } from "./simulation";
 import type { CatalogEntry, Element, FileRead, Hello, Point, SchematicDocument, SymbolElement } from "./protocol";
+import { makePanelsResizable } from "./panelWidth";
+import { choose } from "./choiceDialog";
 import { applyTheme, currentTheme, initTheme, isTheme, Themes } from "./theme";
 import { SchematicView } from "./view";
 
@@ -58,6 +60,10 @@ const view = new SchematicView(svg);
 const editor = new Editor(svg, drawing, overlay, view, layouts);
 const library = new LibraryPanel($("library"), client);
 const properties = new PropertiesPanel($("properties"), editor, client, () => library.types);
+makePanelsResizable($("library").parentElement!, [
+  { panel: $("library"), side: "left", variable: "--library-width", key: "spiceforge.libraryWidth", defaultWidth: 236, min: 160, max: 600, title: "Drag to resize the library; double-click for its default width" },
+  { panel: $("properties"), side: "right", variable: "--properties-width", key: "spiceforge.propertiesWidth", defaultWidth: 270, min: 200, max: 600, title: "Drag to resize the properties; double-click for their default width" },
+]);
 const simulation = new SimulationPanel({
   client,
   root: $("sim"),
@@ -106,8 +112,12 @@ function fileName(path: string) {
   return path.split(/[\\/]/).pop()!.replace(/\.(schx|xml)$/i, "");
 }
 
+/** A tab's name: its file's, numbered for a second copy of a file open in more than one tab, or Untitled n. */
 function tabName(tab: Tab) {
-  return tab.file ? fileName(tab.file.path) : `Untitled ${tab.untitled}`;
+  if (!tab.file) return `Untitled ${tab.untitled}`;
+  const copies = tabs.filter((t) => t.file && samePath(t.file.path, tab.file!.path));
+  const index = copies.indexOf(tab);
+  return index > 0 ? `${fileName(tab.file.path)} (${index + 1})` : fileName(tab.file.path);
 }
 
 /** Whether two paths name the same file: either slash, any case (as Windows treats them). */
@@ -305,14 +315,36 @@ function reportOpened(read: FileRead) {
   setStatus(`${symbols} symbols, ${wires} wires${notes.length ? ` — ${notes.join("; ")}` : ""}`, notes.length ? "error" : "info");
 }
 
-/** Opens a file in a tab: its own, if it's open already; an untouched untitled tab; or a new one. */
-async function open(path: string) {
+/**
+ * Opens a file in a tab: an untouched untitled tab, or a new one. A file open already shows its tab, unless `ask`
+ * (the Open button): then the user chooses between another copy of it, in a tab of its own, and reloading the open
+ * one from disk. Two tabs on one file save to it independently; saving one shows the other the changed-on-disk banner.
+ */
+async function open(path: string, ask = false) {
   const existing = tabs.find((t) => t.file && samePath(t.file.path, path));
-  if (existing) return activate(existing);
+  let copy = false;
+  if (existing) {
+    if (!ask) return activate(existing);
+    activate(existing);
+    const name = tabName(existing);
+    const answer = await choose(
+      `${name} is already open`,
+      existing.state.history.dirty
+        ? `Open another copy of it from disk, or reload the open one, discarding its unsaved changes?`
+        : `Open another copy of it from disk, or reload the open one?`,
+      [
+        { label: "Open a copy", value: "copy" as const, primary: true },
+        { label: existing.state.history.dirty ? "Reload, discarding changes" : "Reload", value: "reload" as const },
+      ],
+    );
+    if (answer === "reload") return reloadTab(existing);
+    if (answer !== "copy") return;
+    copy = true;
+  }
   setStatus(`Opening ${path}…`);
   try {
     const { state, file, read } = await readFile(path);
-    if (active && pristine(active)) {
+    if (!copy && active && pristine(active)) {
       const reused = active;
       reused.state = state;
       reused.file = file;
@@ -392,9 +424,11 @@ function saved(tab: Tab, written: { path: string; modified: string }) {
 
 client.on("file.changed", (data) => {
   const { path, modified } = data as { path: string; modified: string };
-  const tab = tabs.find((t) => t.file && samePath(t.file.path, path));
-  if (!tab || !tab.file || tab.file.modified === modified) return;
-  tab.changedOnDisk = modified;
+  // Every tab on the file: with a copy open in two, saving one changes the file under the other.
+  for (const tab of tabs) {
+    if (!tab.file || !samePath(tab.file.path, path) || tab.file.modified === modified) continue;
+    tab.changedOnDisk = modified;
+  }
   showBanner();
 });
 
@@ -411,24 +445,7 @@ function showBanner() {
     : `${tabName(tab)} has changed on disk.`;
   const reload = document.createElement("button");
   reload.textContent = "Reload";
-  reload.addEventListener("click", async () => {
-    if (!tab.file) return;
-    try {
-      const { state, file, read } = await readFile(tab.file.path);
-      tab.state = state;
-      tab.file = file;
-      tab.changedOnDisk = null;
-      shownDirty.delete(tab);
-      if (active === tab) {
-        active = null;
-        tab.place = view.place;
-        activate(tab);
-      }
-      reportOpened(read);
-    } catch (e) {
-      setStatus(errorText(e), "error");
-    }
-  });
+  reload.addEventListener("click", () => void reloadTab(tab));
   const keep = document.createElement("button");
   keep.textContent = "Keep mine";
   keep.addEventListener("click", () => {
@@ -436,6 +453,26 @@ function showBanner() {
     showBanner();
   });
   banner.append(text, reload, keep);
+}
+
+/** Replaces a tab's schematic with its file's, as it is on disk now, keeping the view where it is. */
+async function reloadTab(tab: Tab) {
+  if (!tab.file) return;
+  try {
+    const { state, file, read } = await readFile(tab.file.path);
+    tab.state = state;
+    tab.file = file;
+    tab.changedOnDisk = null;
+    shownDirty.delete(tab);
+    if (active === tab) {
+      active = null;
+      tab.place = view.place;
+      activate(tab);
+    } else renderTabs();
+    reportOpened(read);
+  } catch (e) {
+    setStatus(errorText(e), "error");
+  }
 }
 
 // ---- Components and wiring ----
@@ -790,7 +827,7 @@ buttons.open.addEventListener("click", async () => {
   const from = active?.file?.path ?? localStorage.getItem("spiceforge.activeFile") ?? hello?.folders.user ?? "";
   const folder = /\.(schx|xml)$/i.test(from) ? from.replace(/[\\/][^\\/]*$/, "") : from;
   const path = await chooseFile(client, folder);
-  if (path) await open(path);
+  if (path) await open(path, true);
 });
 buttons.save.addEventListener("click", () => void save());
 buttons.saveAs.addEventListener("click", () => void saveAs());

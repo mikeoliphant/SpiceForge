@@ -192,8 +192,10 @@ The editor always has one active tool.
   - **Schematics,** which become subcircuit components; their `Port` components are the terminals.
   - Folders become nested categories.
 - **User libraries:** the same formats are also loaded from `Documents/LiveSPICE/Components`.
-- **Display:** each category is an expander showing its components as 16 × 16 symbol icons in a wrapping grid. Each
-  component's tooltip is its description, plus its shortcut keys.
+- **Display:** each category is an expander showing its components in a wrapping grid, each a 16 × 16 symbol icon
+  beside its name (80 px wide, trimmed with an ellipsis). The names are what tell a library's parts apart: its
+  diodes, op-amps, transistors and tubes share their generic component's symbol. Each component's tooltip is its
+  description, plus its shortcut keys.
 - **Filter:** a text box above the categories. A non-empty filter replaces the categories with one flat list of the
   components whose names contain the text, case-insensitively. A clear button resets it.
 - **Refresh:** a button reloads every library, behind a modal progress dialog.
