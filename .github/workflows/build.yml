@@ -22,6 +22,9 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet tool restore
+      - name: Restore .NET Tools for SpiceForgePlugin
+        working-directory: SpiceForgePlugin
+        run: dotnet tool restore
       - name: Run Image Processor
         working-directory: ${{github.workspace}}
         run: dotnet run --project ./SpiceForgePlugin/SpiceForgeImageProcessor -c Release 
