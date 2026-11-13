@@ -1065,7 +1065,8 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   on the engine, off the device's thread, taking over when ready); a source the server chose (marked `Automatic`)
   follows the device too, so the sine it fell back to becomes the first input of a later device; a client's own
   choice stays while the device has it. Checked in process on the Rat with a fake device switched between JACK-like,
-  ASIO-like and input-less channel sets: all five cases. The checks were built into a scratch folder
+  ASIO-like and input-less channel sets: all five cases. Confirmed on real devices: switching from JACK to ASIO while
+  running moved the Input to ASIO's first input. The checks were built into a scratch folder
   (`-p:OutDir`, `SPICEFORGE_REPO`, `SPICEFORGE_SERVER`) because a running server held the build's executable.
 - **The audio test needs a tone, and fades to start and stop.** Test only looped the inputs to the outputs, as
   LiveSPICE's does, so with nothing plugged in a working device played silence and looked broken. It now plays a
