@@ -2,7 +2,7 @@
 // its input, meters, pots and switches, and the scope; a probe tool that clips probes onto wires and terminals; and
 // edits sent on as `sim.update`, so the simulation follows the schematic as it changes.
 
-import { configureAudio, describeAudio, type AudioConfig, type AudioState } from "./audio";
+import { audioWarning, configureAudio, describeAudio, type AudioConfig, type AudioState } from "./audio";
 import type { ApiClient } from "./client";
 import type { EditorState } from "./editor";
 import { boxIntersects, mapBox, mapPoint, mappingOf, type Box } from "./geometry";
@@ -444,7 +444,7 @@ export class SimulationPanel {
   private setAudio(state: AudioState) {
     this.el.audio.textContent = describeAudio(state);
     this.el.audio.title = this.el.audio.textContent;
-    this.el.audio.classList.toggle("warning", !!state.fallback);
+    this.el.audio.classList.toggle("warning", audioWarning(state));
     const inputs = state.open ? (state.inputs ?? []) : [];
     if (inputs.join("\n") === this.audioInputs.join("\n")) return;
     this.audioInputs = inputs;

@@ -90,7 +90,14 @@ export function describeAudio(state: AudioState): string {
   if (state.driver !== ClockDriver && (state.inputLatency || state.outputLatency))
     text += `, ${formatMs((state.inputLatency ?? 0) + (state.outputLatency ?? 0), rate)} round trip`;
   if (state.fallback) text += `. The device couldn't be used: ${state.error ?? "it failed"}`;
+  // Switched to no device after one failed while running (unplugged, say): why.
+  else if (state.error && state.driver === ClockDriver) text += `. The audio device failed, so it switched to none: ${state.error}`;
   return text;
+}
+
+/** Whether the audio line should warn: running on the clock instead of a configured device, or since one failed. */
+export function audioWarning(state: AudioState): boolean {
+  return !!state.fallback || (!!state.open && !!state.error);
 }
 
 /** Shows the audio dialog until it's closed. */
@@ -226,7 +233,7 @@ export async function configureAudio(client: ApiClient): Promise<void> {
 
   const showState = (s: AudioState) => {
     state.textContent = `Now: ${describeAudio(s)}`;
-    state.classList.toggle("warning", !!s.fallback);
+    state.classList.toggle("warning", audioWarning(s));
     // JACK: each port's live connections, whoever made them.
     connections.replaceChildren(
       ...(s.open && s.connections ? s.connections : []).map((c) => {

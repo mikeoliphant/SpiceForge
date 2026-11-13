@@ -22,6 +22,9 @@ public sealed class AsioDriver : AudioDriver, IDisposable
 
     private readonly StaWorker worker = new("ASIO");
     private AsioStream? open;   // Touched only on the worker.
+    // Devices left as they were when they couldn't restart (see AsioStream.Close), held so their callbacks stay alive
+    // for a driver that might still call them. Touched only on the worker.
+    private readonly List<AsioDevice> abandoned = new();
 
     public override string DriverName => Name;
 
@@ -176,6 +179,7 @@ public sealed class AsioDriver : AudioDriver, IDisposable
         private long budget;   // Stopwatch ticks a callback may take before it counts as an overrun.
         private int xruns;
         private bool closing;   // Touched only on the worker.
+        private bool broken;    // A reset failed partway: the device mustn't be called again. Only on the worker.
 
         public AsioStream(AsioDriver owner, AsioDevice device, AudioDeviceInfo info, AudioConfig config, IAudioClient client)
         {
@@ -198,7 +202,11 @@ public sealed class AsioDriver : AudioDriver, IDisposable
                 BufferSize = config.BufferSize,
                 Processor = Process,
             });
-            device.DriverResetRequest += (_, _) => owner.worker.Post(Reset, ex => OnFailed($"The ASIO driver couldn't restart: {ex.Message}"));
+            device.DriverResetRequest += (_, _) => owner.worker.Post(Reset, ex =>
+            {
+                broken = true;
+                OnFailed($"The ASIO driver couldn't restart: {ex.Message}");
+            });
             device.ResyncOccurred += (_, _) => Interlocked.Increment(ref xruns);
             device.LatenciesChanged += (_, _) => OnChanged();
             device.Stopped += (_, e) => owner.worker.Post(() =>
@@ -243,11 +251,20 @@ public sealed class AsioDriver : AudioDriver, IDisposable
             OnChanged();
         }
 
+        // A device whose reset failed partway (its hardware unplugged: Reinitialize stopped it, then failed with
+        // ASE_NoClock) is left alone rather than disposed: disposing it then corrupted the process's heap and killed
+        // the server. It's kept, never called again, and the driver can be opened afresh.
         public override Task Close() => owner.worker.Run(() =>
         {
             if (closing)
                 return;
             closing = true;
+            if (broken)
+            {
+                owner.abandoned.Add(device);
+                owner.open = null;
+                return;
+            }
             try
             {
                 if (device.State == AsioDeviceState.Running)

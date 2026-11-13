@@ -212,9 +212,12 @@ public sealed class AudioService : IDisposable
         }
     }
 
-    // The device stopped on its own: a client carries on on the internal clock; with none, the stream just closes.
+    // The device stopped on its own (unplugged, say). With a client running, the configuration goes back to no device
+    // (the internal clock), at the same rate, and is saved, so the client carries on and the editor shows None rather
+    // than a device that's gone; choosing the device again brings it back. With no client, the stream just closes.
     private void OnFailed(AudioStream failed, string message) => _ = Task.Run(async () =>
     {
+        bool reset = false;
         await gate.WaitAsync();
         try
         {
@@ -227,21 +230,31 @@ public sealed class AudioService : IDisposable
                 await CloseStreamLocked();
                 return;
             }
-            log.Write(MessageType.Error, "audio", $"{message} Running on the internal clock.");
+            log.Write(MessageType.Error, "audio", $"{message} Switched to no audio device (the internal clock); the simulation carries on.");
             failed.Failed -= OnFailed;
             failed.Changed -= OnChanged;
             stream = null;
             try { await failed.Close(); }
             catch (Exception ex) { log.Write(MessageType.Warning, "audio", $"Closing the failed device: {ex.Message}"); }
-            stream = await clock.Open(config with { SampleRate = (int)failed.Format.SampleRate }, client);
+            config = LastUsed(settings, ClockDriver.Name) with { SampleRate = (int)failed.Format.SampleRate };
+            settings.SetAudio(config.ToJson());
+            reset = true;
+            stream = await clock.Open(config, client);
             stream.Failed += OnFailed;
+            stream.Changed += OnChanged;
             error = message;
+        }
+        catch (Exception ex)
+        {
+            log.Write(MessageType.Error, "audio", $"Couldn't recover from the device failing: {ex.Message}");
         }
         finally
         {
             gate.Release();
         }
         BroadcastState();
+        if (reset)
+            hub.Broadcast("settings.changed", settings.Snapshot());
     });
 
     private void OnChanged(AudioStream changed) => BroadcastState();

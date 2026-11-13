@@ -441,15 +441,19 @@ A property descriptor:
   ports in a patchbay last; simulations and the test run in that one client, and changing the configuration reopens
   it. The running simulation's latency (its resampling delay) is reported to JACK through its ports, so JACK-aware
   programs downstream can compensate.
-- **Falling back.** If the configured device can't be opened (a USB interface that isn't plugged in), or stops while
-  running, the simulation carries on on the internal clock, and `audio.state` has `fallback` and the `error`.
-  `audio.setConfig` tries the device again.
+- **Falling back.** If the configured device can't be opened (a USB interface that isn't plugged in), the simulation
+  runs on the internal clock, and `audio.state` has `fallback` and the `error`. `audio.setConfig` tries the device
+  again.
+- **A device lost while running** (unplugged, or a driver that can't restart) resets the configuration to `None`, at
+  the same sample rate, and saves it: the simulation carries on on the internal clock, `audio.state` has driver
+  `None` and the `error` (without `fallback`, since nothing configured is missing), and `settings.changed` follows.
+  Choosing the device again brings it back.
 
 Events:
 
 - `audio.state`: `open`, `driver`, `device`, and while it's open `sampleRate`, `bufferSize`, `inputs`, `outputs`,
   `inputLatency` and `outputLatency` (in samples, as the driver reports them), `fallback`, and `error` if the
-  configured device couldn't be used; `running`, whether a simulation or the test is running on it; and for JACK,
+  configured device couldn't be used or was lost; `running`, whether a simulation or the test is running on it; and for JACK,
   `connections`: each of SpiceForge's ports, the channel it was opened for, and what it's connected to now
   (`[{port, channel, connected: [name]}]`). Sent when the device opens, closes, changes, or fails, and for JACK when
   its connections change or ports come and go, whoever changed them.

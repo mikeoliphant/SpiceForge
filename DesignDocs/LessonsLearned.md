@@ -1042,6 +1042,21 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   forced on. At 44.1 kHz without tiering, in the clean environment, one rebuild of four overran a 128-sample callback
   by 3.2 ms, as a gen2 collection ran; the other three were clean. In steady state nothing
   collects: the audio path allocates nothing, and the monitor's allocations are small.
+- **Don't dispose an ASIO device whose reset failed; abandon it.** Unplugging a USB interface during a simulation
+  made its driver request a reset; `Reinitialize` then failed (`ASE_NoClock` while calling `getChannels`), the
+  fallback logged it, and closing the failed stream disposed the device. The server died moments later: Windows
+  recorded two crashes of `SpiceForgeServer.exe` with `0xc0000374` (heap corruption) in `ntdll`, and the editor lost
+  its connection, leaving only Export enabled. The crash dumps couldn't be read, nor NAudio 3's `AsioDevice` source;
+  NAudio 2's `DisposeBuffers` frees its callback block without clearing the pointer, so a dispose after a half-done
+  reinitialise freeing it twice fits, but that's inferred, not confirmed. A device whose reset failed is now never
+  called again: closing it keeps it (so callbacks a driver might still make stay alive) and frees the slot, leaking
+  one dead driver instead. Checked by unplugging the interface again during a simulation: the server stayed up and
+  the simulation carried on, on None. That the dispose was the crash is now likely, though the double free is still
+  inferred from NAudio 2's code.
+- **A lost device resets to None, and the simulation carries on.** The fallback used to keep ASIO configured while
+  running on the clock, so the editor still showed a device that was gone. Now the configuration becomes None at the
+  failed device's rate, is saved, and `settings.changed` follows; the simulation panel and the audio dialog say the
+  device failed and why, as a warning.
 - **The web front end configures it in one dialog.** Audio… (in the toolbar, and Configure… in the simulation
   panel) shows the driver, device, channels as checkboxes, rate and buffer size (with their milliseconds), the
   driver's control panel button, and the test with per-channel meters and a scope of the summed input. A driver's
