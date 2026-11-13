@@ -882,6 +882,27 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   schematic saved as NewOne.
 - **Browsers keep some of LiveSPICE's shortcuts.** Ctrl+W and Ctrl+T can't be taken by a page, so the tools also
   have plain letters (W, G, P, R, C, L, T). LiveSPICE's other Ctrl shortcuts work too.
+- **Moved parts drag their wires, rerouted with plain wires and joined once on release.** The editor used to
+  move only the selection, so moving a part left its wires behind and broke its connections. Now unselected wires with an end on a moved terminal
+  (or a moved wire's end) follow it: straight if the ends still line up, else an L that leaves the terminal in the
+  wire's old direction and turns at the fixed end's line. While dragging, the stand-ins are plain wires swapped in and
+  out with one `ChangeEdit` per pointer step, so a cancel or a Shift toggle just reverts it. On release the followers go
+  through `addWire`, so they merge and split as drawn wires do, and the move, the removal and the joins are one
+  `CompositeEdit`. A scratch script checked the routes (straight, L, both ends moving, slanted) and that undo and redo
+  give back the document exactly. Shift is the override, at the press or during the drag: Ctrl+press is already the
+  rubber band, so Ctrl could only have worked mid-drag. A terminal sitting on the middle of a wire (rather than at its end) is
+  connected but isn't followed, so moving that part still disconnects it.
+- **Slide a plain corner rather than adding a leg beside it.** With only the L route, a part whose wire turned a
+  corner got a new leg collinear with the corner's other wire. Moving away from that wire's far end lengthened it
+  properly. Moving toward it overlapped the wire, and `addWire` merges overlaps into their union, so the old wire kept
+  its full length and a stub dangled past the new corner. Now, when a follower's fixed end is a plain corner (exactly
+  one other wire touches the point, ending there at a right angle, neither moving nor following, and no symbol
+  terminal there), both wires are rebuilt: the corner moves across with the part, and the other wire runs from it to
+  its far end. The scratch script checked shortening (a 100-unit wire to 70), lengthening, shortening to nothing (the
+  wire goes), a diagonal move, and that a T junction keeps the L route, each with undo and redo exact.
+- **Show the grid as a CSS background, not SVG.** A dot pattern on the schematic `svg` element, sized and placed from
+  the view on every pan and zoom, adds nothing to the drawing, so exports never include it. Dots closer than 8 pixels
+  are thinned to every second grid point (and again), so those drawn are always snap points.
 
 ## Simulating without audio
 

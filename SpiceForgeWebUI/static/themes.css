@@ -1,6 +1,6 @@
 /*
  * Themes. Each sets the same tokens: the page's chrome, and the schematic's palette (canvas, text, the ten edge
- * colours symbols are drawn in, wires, terminals, selection). style.css and the drawing use only these tokens, so a
+ * colours symbols are drawn in, wires, terminals, selection, the grid's dots). style.css and the drawing use only these tokens, so a
  * theme is one block here. <html data-theme="..."> picks one; "system" is resolved to light or dark by the page.
  *
  * The edge colours keep their meaning in every theme (a red edge stays recognisably red), but are tuned to read on
@@ -35,6 +35,7 @@
   --sch-highlight: #808080;
   --sch-unconnected: #ff0000;
   --sch-ghost: #808080;
+  --sch-grid: rgba(0, 0, 0, 0.25);
   --band-stroke: #0000ff;
   --band-fill: rgba(30, 144, 255, 0.06);
   --edge-wire: #00008b;
@@ -77,6 +78,7 @@
   --sch-highlight: #8a919b;
   --sch-unconnected: #ff5c5c;
   --sch-ghost: #8a919b;
+  --sch-grid: rgba(255, 255, 255, 0.18);
   --band-stroke: #ffbf3c;
   --band-fill: rgba(255, 191, 60, 0.08);
   --edge-wire: #6cb2ff;
@@ -118,6 +120,7 @@
   --sch-highlight: #9097a1;
   --sch-unconnected: #ff7b72;
   --sch-ghost: #9097a1;
+  --sch-grid: rgba(255, 255, 255, 0.2);
   --band-stroke: #f2c14e;
   --band-fill: rgba(242, 193, 78, 0.08);
   --edge-wire: #8ab4f8;
@@ -159,6 +162,7 @@
   --sch-highlight: #8a8174;
   --sch-unconnected: #c62828;
   --sch-ghost: #8a8174;
+  --sch-grid: rgba(43, 38, 32, 0.25);
   --band-stroke: #1e88e5;
   --band-fill: rgba(30, 136, 229, 0.07);
   --edge-wire: #1f4e8c;
@@ -200,6 +204,7 @@
   --sch-highlight: #c0c0c0;
   --sch-unconnected: #ff4040;
   --sch-ghost: #c0c0c0;
+  --sch-grid: rgba(255, 255, 255, 0.4);
   --band-stroke: #ffff00;
   --band-fill: rgba(255, 255, 0, 0.1);
   --edge-wire: #00e5ff;

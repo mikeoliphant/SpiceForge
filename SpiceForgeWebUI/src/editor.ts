@@ -4,7 +4,9 @@
 // Selection tool:
 // - pressing on an element, without Ctrl, selects it (if it wasn't) and starts a move: the selection follows the
 //   pointer in grid steps, live, and the whole drag is one undo step (right button or Escape cancels it). Releasing
-//   without moving selects just that element;
+//   without moving selects just that element. Wires with an end on what moves (a moved symbol's terminal, a moved
+//   wire's end) follow it, rerouted straight or as an L, or sliding a plain corner along (wires.ts, followerPaths), and joined as the wire tool joins
+//   them, in the same undo step; holding Shift (at the press or during the drag) leaves them where they are;
 // - pressing on empty space, or with Ctrl, starts a rubber band. Releasing without moving is a click: Ctrl toggles the
 //   element under the pointer; on empty space, a click clears the selection (Ctrl keeps it). Releasing after a drag
 //   selects everything the band touches (Ctrl adds to the selection);
@@ -25,7 +27,7 @@ import type { LayoutCache } from "./layouts";
 import type { ComponentData, Element, Layout, Point, SchematicDocument, SymbolElement } from "./protocol";
 import { drawGhost, renderDocument, selectionBox, type Rendered } from "./render";
 import type { SchematicView } from "./view";
-import { addWire, findWirePath } from "./wires";
+import { addWire, findFollowers, findWirePath, followerPaths, followerWires, type Follower } from "./wires";
 import { computeNodes } from "./connectivity";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -37,7 +39,19 @@ export type Tool =
 
 type Gesture =
   | { kind: "band"; pointer: number; from: Point; to: Point; hit: string | null; additive: boolean }
-  | { kind: "move"; pointer: number; ids: Set<string>; last: Point; total: Point; pressed: string }
+  | {
+      kind: "move";
+      pointer: number;
+      ids: Set<string>;
+      last: Point;
+      total: Point;
+      pressed: string;
+      /** The wires attached to what moves, which follow it unless detached (Shift held). */
+      followers: Follower[];
+      detached: boolean;
+      /** The followers' rerouted stand-ins while dragging: plain wires, joined properly on release. */
+      preview: ChangeEdit | null;
+    }
   | { kind: "wire"; pointer: number; mouse: Point[] };
 
 /** One open document's editing state: what a tab keeps while another is shown. */
@@ -101,6 +115,12 @@ export class Editor {
     svg.addEventListener("mousedown", (e) => e.button === 2 && this.cancel());
     svg.addEventListener("dblclick", (e) => this.doubleClick(e));
     svg.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Shift pressed or released during a move detaches or reattaches the wires, without waiting for the pointer.
+    const shiftChanged = (e: KeyboardEvent) => {
+      if (e.key === "Shift") this.setDetached(e.shiftKey);
+    };
+    window.addEventListener("keydown", shiftChanged);
+    window.addEventListener("keyup", shiftChanged);
   }
 
   private get doc(): SchematicDocument | null {
@@ -475,7 +495,9 @@ Connects ${shown.join(", ")}` : label);
     if (hit && !ctrl) {
       // Select-and-drag in one gesture: an unselected element becomes the selection first.
       if (!this.selection.has(hit)) this.select([hit], true);
-      this.gesture = { kind: "move", pointer: e.pointerId, ids: new Set(this.selection), last: at, total: [0, 0], pressed: hit };
+      const ids = new Set(this.selection);
+      const followers = findFollowers(this.doc, this.layouts, ids);
+      this.gesture = { kind: "move", pointer: e.pointerId, ids, last: at, total: [0, 0], pressed: hit, followers, detached: e.shiftKey, preview: null };
       this.svg.classList.add("moving");
     } else {
       this.gesture = { kind: "band", pointer: e.pointerId, from: at, to: at, hit, additive: ctrl };
@@ -517,11 +539,18 @@ Connects ${shown.join(", ")}` : label);
     }
     const at = this.point(e);
     if (g.kind === "move") {
+      const detached = e.shiftKey;
       const by: Point = [at[0] - g.last[0], at[1] - g.last[1]];
-      if (by[0] === 0 && by[1] === 0) return;
+      if (by[0] === 0 && by[1] === 0) {
+        this.setDetached(detached);
+        return;
+      }
+      this.unfollow(g);
       moveElements(this.doc, g.ids, by);
       g.total = [g.total[0] + by[0], g.total[1] + by[1]];
       g.last = at;
+      g.detached = detached;
+      this.follow(g);
       this.redraw();
     } else if (g.kind === "wire") {
       const last = g.mouse[g.mouse.length - 1]!;
@@ -545,7 +574,7 @@ Connects ${shown.join(", ")}` : label);
     this.endGesture();
     if (!this.doc) return;
     if (g.kind === "move") {
-      if (g.total[0] !== 0 || g.total[1] !== 0) this.history.push(new MoveEdit(this.doc, g.ids, g.total));
+      if (g.total[0] !== 0 || g.total[1] !== 0) this.finishMove(g);
       // A click (no drag) on an element of a larger selection narrows the selection to it.
       else this.select([g.pressed], true);
     } else if (g.kind === "wire") {
@@ -585,8 +614,58 @@ Connects ${shown.join(", ")}` : label);
     if (!g) return;
     this.endGesture();
     if (g.kind === "move" && this.doc && (g.total[0] !== 0 || g.total[1] !== 0)) {
+      this.unfollow(g);
       moveElements(this.doc, g.ids, [-g.total[0], -g.total[1]]);
       this.redraw();
     }
+  }
+
+  // ---- Wires following a move ----
+
+  /** Puts the followers' rerouted stand-ins in place of them, for the move so far (unless detached). */
+  private follow(g: Extract<Gesture, { kind: "move" }>) {
+    if (!this.doc || g.detached || g.followers.length === 0 || (g.total[0] === 0 && g.total[1] === 0)) return;
+    const stand: Element[] = [];
+    for (const path of g.followers.flatMap((f) => followerPaths(f, g.total))) {
+      for (let i = 0; i + 1 < path.length; i++) {
+        const [a, b] = [path[i]!, path[i + 1]!];
+        if (a[0] !== b[0] || a[1] !== b[1]) stand.push({ id: this.newId(), kind: "wire", a, b });
+      }
+    }
+    g.preview = new ChangeEdit("", this.doc, g.followers.flatMap(followerWires), stand);
+    g.preview.apply();
+  }
+
+  /** Takes the stand-ins out, and the followers back where they were. */
+  private unfollow(g: Extract<Gesture, { kind: "move" }>) {
+    g.preview?.revert();
+    g.preview = null;
+  }
+
+  /** Shift, pressed or released during a move: the wires let go of what moves, or follow it again. */
+  private setDetached(detached: boolean) {
+    const g = this.gesture;
+    if (g?.kind !== "move" || g.detached === detached) return;
+    this.unfollow(g);
+    g.detached = detached;
+    this.follow(g);
+    this.redraw();
+  }
+
+  /** Ends a move as one undo step: the move, and the followers rerouted and joined as the wire tool joins wires. */
+  private finishMove(g: Extract<Gesture, { kind: "move" }>) {
+    if (!this.doc) return;
+    const following = g.preview !== null;
+    this.unfollow(g);
+    const move = new MoveEdit(this.doc, g.ids, g.total);
+    if (!following) {
+      this.commit(move);
+      return;
+    }
+    const removed = new ChangeEdit("Move", this.doc, g.followers.flatMap(followerWires), []);
+    removed.apply();
+    const paths = g.followers.flatMap((f) => followerPaths(f, g.total));
+    const added = paths.flatMap((path) => addWire(this.doc!, this.layouts, path, this.newId) ?? []);
+    this.commit(new CompositeEdit("Move", [move, removed, ...added]));
   }
 }

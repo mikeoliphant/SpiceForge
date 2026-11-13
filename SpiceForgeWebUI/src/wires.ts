@@ -28,7 +28,7 @@ function pointOnLine(x: Point, x1: Point, x2: Point): boolean {
 }
 
 /** Where an element's terminals are, in the schematic: a wire's two ends, or a symbol's mapped terminals. */
-function terminalsOf(e: Element, layouts: LayoutCache): Point[] {
+export function terminalsOf(e: Element, layouts: LayoutCache): Point[] {
   if (e.kind === "wire") return [e.a, e.b];
   if (e.kind !== "symbol") return [];
   const layout = layouts.get(e.component);
@@ -96,6 +96,88 @@ function addWireSegment(doc: SchematicDocument, layouts: LayoutCache, A: Point, 
   const edit = new ChangeEdit("Wire", doc, overlapping, added);
   edit.apply();
   return edit;
+}
+
+/** A wire with an end on something being moved, which that end follows. */
+export interface Follower {
+  wire: WireElement;
+  /** Where the wire was when the move began. */
+  a: Point;
+  b: Point;
+  /** Which ends move. */
+  movesA: boolean;
+  movesB: boolean;
+  /** When the fixed end is a plain corner, the wire turning there, and its far end: the corner slides with the move,
+   * so that wire lengthens or shortens rather than gaining a leg alongside it. */
+  elbow?: { wire: WireElement; far: Point };
+}
+
+const same = (p: Point, q: Point) => p[0] === q[0] && p[1] === q[1];
+const horizontal = (a: Point, b: Point) => a[1] === b[1] && a[0] !== b[0];
+const vertical = (a: Point, b: Point) => a[0] === b[0] && a[1] !== b[1];
+
+/** The wires a follower takes out of the document: itself, and its elbow's wire. */
+export function followerWires(f: Follower): WireElement[] {
+  return f.elbow ? [f.wire, f.elbow.wire] : [f.wire];
+}
+
+/** The wires not being moved with an end on one of the points that are (terminals of moved symbols, ends of moved
+ * wires): the wires a move drags along. Each that's horizontal or vertical, with one end moving, gets its elbow when
+ * its fixed end is a plain corner: exactly one other wire touches that point, ending there, at a right angle, and
+ * neither moving nor following; and no symbol has a terminal there. */
+export function findFollowers(doc: SchematicDocument, layouts: LayoutCache, moving: ReadonlySet<string>): Follower[] {
+  const points: Point[] = doc.elements.filter((e) => moving.has(e.id)).flatMap((e) => terminalsOf(e, layouts));
+  const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire");
+  const followers: Follower[] = [];
+  for (const e of wires) {
+    if (moving.has(e.id)) continue;
+    const movesA = points.some((p) => same(p, e.a));
+    const movesB = points.some((p) => same(p, e.b));
+    if (movesA || movesB) followers.push({ wire: e, a: e.a, b: e.b, movesA, movesB });
+  }
+
+  const following = new Set(followers.map((f) => f.wire));
+  const symbolTerminals = doc.elements.filter((e) => e.kind === "symbol").flatMap((e) => terminalsOf(e, layouts));
+  const claimed = new Set<WireElement>();
+  for (const f of followers) {
+    if (f.movesA === f.movesB) continue;
+    const [from, corner] = f.movesA ? [f.a, f.b] : [f.b, f.a];
+    if (!horizontal(from, corner) && !vertical(from, corner)) continue;
+    if (symbolTerminals.some((t) => same(t, corner))) continue;
+    const touching = wires.filter((w) => w !== f.wire && pointOnSegment(corner, w.a, w.b));
+    if (touching.length !== 1) continue;
+    const w = touching[0]!;
+    if (moving.has(w.id) || following.has(w) || claimed.has(w)) continue;
+    const far = same(w.a, corner) ? w.b : same(w.b, corner) ? w.a : null;
+    if (!far) continue;
+    // At a right angle: one horizontal, the other vertical.
+    if (!(horizontal(from, corner) ? vertical(corner, far) : horizontal(corner, far))) continue;
+    f.elbow = { wire: w, far };
+    claimed.add(w);
+  }
+  return followers;
+}
+
+/**
+ * Where a follower runs after a move by `by`: paths from its moved end to its fixed one. A wire with both ends moving
+ * moves whole. A wire with an elbow keeps its direction, and the corner slides across with the moved end, so the
+ * elbow's wire lengthens or shortens to it. Otherwise a horizontal or vertical wire stays straight if its ends still
+ * line up, and else becomes an L whose first leg leaves the moved end in the wire's old direction (so it still meets
+ * the terminal as it did) and turns at the fixed end's line. A slanted wire just stretches.
+ */
+export function followerPaths(f: Follower, [dx, dy]: Point): Point[][] {
+  const shift = (p: Point): Point => [p[0] + dx, p[1] + dy];
+  if (f.movesA && f.movesB) return [[shift(f.a), shift(f.b)]];
+  const [from, to] = f.movesA ? [f.a, f.b] : [f.b, f.a];
+  const moved = shift(from);
+  if (f.elbow) {
+    const corner: Point = from[1] === to[1] ? [to[0], moved[1]] : [moved[0], to[1]];
+    return [[moved, corner], [corner, f.elbow.far]];
+  }
+  if (moved[0] === to[0] || moved[1] === to[1]) return [[moved, to]];
+  if (from[1] === to[1]) return [[moved, [to[0], moved[1]], to]];
+  if (from[0] === to[0]) return [[moved, [moved[0], to[1]], to]];
+  return [[moved, to]];
 }
 
 /** SchematicEditor.AddWire for a path: each segment in turn, as one undo step. Null if it added nothing. */

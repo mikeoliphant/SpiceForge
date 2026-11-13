@@ -853,6 +853,28 @@ buttons.fit.addEventListener("click", () => view.fit(editor.bounds));
 buttons.zoomIn.addEventListener("click", () => view.zoomAt(1.5));
 buttons.zoomOut.addEventListener("click", () => view.zoomAt(1 / 1.5));
 
+// The grid: off unless chosen, and remembered in this browser.
+const GridKey = "spiceforge.showGrid";
+const gridButton = $<HTMLButtonElement>("grid");
+function showGrid(on: boolean) {
+  view.showGrid = on;
+  gridButton.classList.toggle("active", on);
+  gridButton.title = on ? "Hide the grid" : "Show the grid";
+}
+try {
+  showGrid(localStorage.getItem(GridKey) === "true");
+} catch {
+  showGrid(false);
+}
+gridButton.addEventListener("click", () => {
+  showGrid(!view.showGrid);
+  try {
+    localStorage.setItem(GridKey, String(view.showGrid));
+  } catch {
+    // Not remembered, then; the view still changes.
+  }
+});
+
 window.addEventListener("keydown", (e) => {
   if (editingText(e.target) || document.querySelector("dialog[open]")) return;
   const ctrl = e.ctrlKey || e.metaKey;

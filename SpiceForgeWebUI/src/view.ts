@@ -1,11 +1,17 @@
 // Zoom and pan of the schematic SVG, through its viewBox. As LiveSPICE's SchematicViewer: the wheel zooms 1.1× per
 // notch about the pointer, the buttons 1.5×, at most 8×; the middle button pans; Zoom Fit frames everything with a
 // 40-unit margin. Holding Space makes the left button pan too, for trackpads, which have no middle button.
+//
+// The editing grid can be shown, as dots on the grid points behind the drawing: a CSS background on the SVG, kept in
+// step with the view, so it costs nothing in the drawing and never ends up in an export. When the dots would crowd
+// closer than MinGridPixels, every second one is dropped (and again), so those shown are still grid points.
 
-import type { Box } from "./geometry";
+import { Grid, type Box } from "./geometry";
 
 export const MaxZoom = 8;
 export const MinZoom = 1 / 16;
+/** The closest the grid's dots are drawn, in screen pixels. */
+const MinGridPixels = 8;
 
 export class SchematicView {
   /** Screen pixels per schematic unit. */
@@ -15,6 +21,7 @@ export class SchematicView {
   private cy = 0;
   private drag: { x: number; y: number; cx: number; cy: number; pointer: number } | null = null;
   private space = false;
+  private grid = false;
 
   /** Called after any change of zoom or position, with the new zoom. */
   onChange: (zoom: number) => void = () => {};
@@ -89,6 +96,16 @@ export class SchematicView {
     this.apply();
   }
 
+  /** Whether the editing grid is shown. */
+  get showGrid(): boolean {
+    return this.grid;
+  }
+
+  set showGrid(on: boolean) {
+    this.grid = on;
+    this.apply();
+  }
+
   /** Whether a pointer press now pans rather than going to the editor. */
   get panning(): boolean {
     return this.space || this.drag !== null;
@@ -129,6 +146,20 @@ export class SchematicView {
     const w = r.width / this.zoom;
     const h = r.height / this.zoom;
     this.svg.setAttribute("viewBox", `${this.cx - w / 2} ${this.cy - h / 2} ${w} ${h}`);
+    this.applyGrid(r);
     this.onChange(this.zoom);
+  }
+
+  /** Places the grid's dots on the grid points: one at the schematic origin, and every step from it. */
+  private applyGrid(r: DOMRect) {
+    this.svg.classList.toggle("show-grid", this.grid);
+    if (!this.grid) return;
+    let step = Grid * this.zoom;
+    while (step < MinGridPixels) step *= 2;
+    // Each tile has its dot at its centre, so the tiles start half a step before a grid point.
+    const at = (origin: number) => (((origin - step / 2) % step) + step) % step;
+    const style = this.svg.style;
+    style.backgroundSize = `${step}px ${step}px`;
+    style.backgroundPosition = `${at(r.width / 2 - this.cx * this.zoom)}px ${at(r.height / 2 - this.cy * this.zoom)}px`;
   }
 }

@@ -832,6 +832,16 @@ button:disabled {
   min-width: 44px;
 }
 
+.view-row button.active {
+  background: var(--active);
+  border-color: var(--accent);
+}
+
+/* The editing grid, when shown: a dot on each grid point. SchematicView sizes and places the tiles. */
+#schematic.show-grid {
+  background-image: radial-gradient(circle, var(--sch-grid) 0 1px, transparent 1.5px);
+}
+
 .theme {
   color: var(--muted);
 }

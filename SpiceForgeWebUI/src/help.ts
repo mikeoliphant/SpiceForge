@@ -60,7 +60,8 @@ const Sections: Section[] = [
     title: "Mouse",
     rows: [
       ["Click", "Select a part or wire (on nothing, clear the selection)"],
-      ["Drag", "Move what's under the pointer, with the rest of the selection"],
+      ["Drag", "Move what's under the pointer, with the rest of the selection; attached wires follow"],
+      ["Shift+drag", "Move without the attached wires"],
       ["Drag on empty space", "Select everything in the rectangle"],
       ["Ctrl+click / Ctrl+drag", "Add to or remove from the selection"],
       ["Double-click a part", "Select every part of its type"],

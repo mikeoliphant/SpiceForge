@@ -77,7 +77,8 @@ Edge) into the `.ico` the server's executable and the installer carry, and the P
 
 The window has the component library on the left, the schematic in the middle, and the properties of the selection
 (or of the schematic itself, with nothing selected) on the right, under a View section with the zoom controls and the
-theme.
+theme. The Grid button beside the zoom controls shows the editing grid that elements snap to, as dots on its points
+(fewer of them when zoomed out, so they stay at least 8 pixels apart); it is off until turned on, and this browser remembers the choice.
 
 ### Themes
 
@@ -152,7 +153,8 @@ behaviour didn't make good sense, this differs. The file format is the one thing
 | Click an element | Selects it alone (in a larger selection, narrows the selection to it) |
 | Ctrl+click | Toggles it, keeping the rest |
 | Click empty space | Clears the selection (with Ctrl, keeps it) |
-| Drag an element | Selects it, if it wasn't, and moves the selection with it, in 5-unit grid steps, as one undo step |
+| Drag an element | Selects it, if it wasn't, and moves the selection with it, in 5-unit grid steps, as one undo step. Wires with an end on what moves follow it. A wire that turns a plain corner (one other wire, at a right angle, and nothing else there) keeps its direction and the corner slides with it, so the other wire lengthens or shortens. Otherwise a straight wire stays straight if it can, and else becomes an L that leaves the terminal in its old direction and turns at the line of its far end, which stays put |
+| Shift+drag an element | Moves without the attached wires, which stay where they are. Shift can also be pressed or released mid-drag |
 | Drag from empty space, or with Ctrl | Rubber band: selects everything it touches (with Ctrl, adds to the selection) |
 | Double-click a symbol | Adds every symbol of its type |
 | Right-click or Escape during a drag | Cancels it |
