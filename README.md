@@ -38,7 +38,7 @@ Binaries are provided for x64 Windows and Linux.
 
 - No macOS package is currently produced - it must be built locally.
 - macOS support is untested. It *should* work with JACK audio. macOS Core Audio is not yet implemented.
-- There is initial DAW plugin support, but it is still very bare bones and is limited to Windows VST. It is not currently packaged for releases. 
+- There is initial DAW plugin support, but it is still very bare bones and is limited to Windows VST. It is not currently packaged for releases.
 
 ## Building
 
