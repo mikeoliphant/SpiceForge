@@ -1,10 +1,10 @@
 ; SpiceForge's Windows installer, built by SpiceForge.Package (Inno Setup 6), which passes:
-;   AppVersion  the version (0.1.0)
+;   AppVersion  the version, from git tags (0.2.0, or 0.2.1-dev.4 for a development build)
 ;   SourceDir   the published, assembled folder (artifacts/stage/win-x64/SpiceForge)
 ;   OutputDir   where the installer goes (artifacts)
 
 #ifndef AppVersion
-  #define AppVersion "0.0.0"
+  #error AppVersion isn't defined: build the installer with SpiceForge.Package, which passes the version.
 #endif
 
 [Setup]

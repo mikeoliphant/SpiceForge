@@ -50,8 +50,13 @@ reloads. `?file=<path>` opens a schematic straight away; otherwise the last one 
 editor, LiveSPICE's component libraries and its example schematics. They start the editor in a window of its own.
 
 ```
-dotnet run -c Release --project SpiceForge.Package [-- --version 0.1.0] [--rid win-x64,linux-x64] [--skipWeb]
+dotnet run -c Release --project SpiceForge.Package [-- --rid win-x64,linux-x64] [--skipWeb]
 ```
+
+The version comes from git tags, its one source. A commit tagged `v0.2.0` builds as 0.2.0; a later one as a
+development version of the next patch, counting the commits since the tag (`0.2.1-dev.4`), or after a pre-release
+tag, on from it (`0.3.0-beta.1.dev.2`). Without git or a tag (a shallow clone), it's `0.0.0-dev`. Every build of the
+server works it out the same way, so the About dialog shows it too, with the commit.
 
 - **Windows:** `SpiceForge-<version>-win-x64.zip`, portable, and `SpiceForge-<version>-setup.exe`, built when
   [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed. The installer adds a Start menu entry, copies the
@@ -65,9 +70,11 @@ Packages are unsigned: Windows SmartScreen asks before the installer or the zip'
 
 On GitHub, the **Build** workflow (`.github/workflows/build.yml`) runs on pull requests, or by hand: it builds the
 solution (Windows), runs `SpiceForge.Validate server` on Windows and Linux, and `processor` on Linux. The **Release**
-workflow, run by hand with a version, runs the server check, builds the three packages, and creates a draft GitHub
-release for `v<version>` with them attached and no notes: write the notes and publish it on GitHub, which creates the
-tag.
+workflow, run by hand with a version, tags the commit `v<version>`, runs the server check, builds the three packages
+(which read their version back from the tag), then pushes the tag and creates a draft GitHub release on it with the
+packages attached and no notes: write the notes and publish it on GitHub. To redo a release that isn't published,
+delete its draft and run the workflow again with the same version: it reuses the tag, or moves it to the commit it's
+run on. A published release's tag is never moved.
 
 The app's icon is `Assets/Icon/SpiceForge.svg`. `node Assets/Icon/make-icon.mjs` renders it (with headless Chrome or
 Edge) into the `.ico` the server's executable and the installer carry, and the PNGs this editor uses as its favicons

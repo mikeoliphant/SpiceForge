@@ -255,12 +255,12 @@ Y  = y1·cos − x·sin + py
 | `settings.get` | | `recentFiles`, `audio`, `logVerbosity`, `simulationDefaults`, `componentFolders`, `client` |
 | `settings.set` | any of `logVerbosity`, `simulationDefaults`, `componentFolders`, `client` | the settings |
 
-- **`about`** is what the editor's About dialog shows: `name`, `version` ("0.0.1", or "0.0.1-dev" for a development
-  build, after the latest release tag), `commit` (the git commit built, in full; empty if unknown), `development`,
+- **`about`** is what the editor's About dialog shows: `name`, `version` (from git tags: "0.0.1" for the commit tagged
+  `v0.0.1`, or for a development build the next patch and the commits since the tag, "0.0.2-dev.9"), `commit` (the git commit built, in full; empty if unknown), `development`,
   `copyright`, `license`, `licenseFile`, `repository`, and `components`, the third-party components the server ships,
   each `{name, by, license, url, file, notices?}`. `licenseFile` and each `file` name a license text the server serves
   over HTTP at `/licenses/<file>`, from the `licenses` folder beside it; `notices` links a component's own third-party
-  notices, where they're long. `server.version` is the same version with the commit appended (`0.0.1-dev+<commit>`).
+  notices, where they're long. `server.version` is the same version with the commit appended (`0.0.2-dev.9+<commit>`).
 - **`capabilities`** says what this server supports:
   - `simulation` and `audio`: whether those operations are implemented. While they're false, `sim.*` and `audio.*`
     answer `unsupported`;

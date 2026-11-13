@@ -1159,6 +1159,18 @@ installer) and Linux (a tarball), started in a window of its own.
   (`git describe --tags --abbrev=0`, so "0.0.1-dev"), in a target before `GetAssemblyVersion`, which derives the
   informational version from `Version`. A package's `SpiceForgeVersion` skips it (checked: 9.8.7+commit). The
   commit doesn't say whether the tree had uncommitted changes.
+- **The git tag is the version's one source.** It used to come from three places that could disagree: the version
+  typed into the Release workflow (passed separately to the build, the installer and the release), the packager's
+  default when run by hand (`0.1.0`, a release that never existed), and the installer's (`0.0.0`); and the tag itself
+  only appeared when the draft was published. Development builds were "0.0.1-dev", which semver sorts *before* 0.0.1.
+  Now the server project's `SpiceForgeGitVersion` target reads `git describe --tags --long`: a tagged commit is that
+  version, a later one the next patch with the commits since (`0.0.2-dev.9`), or after a pre-release tag, on from it
+  (`0.3.0-beta.1.dev.3`); none is `0.0.0-dev`. The packager asks MSBuild for it (`-target:SpiceForgeGitVersion
+  -getProperty:Version`) and has no `--version`; the installer has no default. The Release workflow tags the commit
+  first, checks the build reads back the version asked for, and pushes the tag only with the packages built; a rerun
+  of an unpublished version reuses or moves the tag. Checked in a scratch clone: 9 after v0.0.1 gave 0.0.2-dev.9, a
+  tagged commit 0.0.2, 3 after v0.3.0-beta.1 gave 0.3.0-beta.1.dev.3, a tagged pre-release itself, and no tags
+  0.0.0-dev. MinVer does the same from a package, but only the server is versioned, and ten lines of MSBuild do it.
 - **The server's first line of output is no longer the listening line.** The About summary comes first, and
   `SpiceForge.Validate server` waited for "listening" on the first line only; it now reads lines until it.
 

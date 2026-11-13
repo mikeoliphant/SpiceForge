@@ -71,7 +71,7 @@ export interface Hello {
 /** What the About dialog shows (hello's about): license files are served at licenses/<file>. */
 export interface About {
   name: string;
-  /** "0.0.1", or "0.0.1-dev" for a development build. */
+  /** "0.0.1" for a release, or a development build's: "0.0.2-dev.9" (9 commits after v0.0.1). */
   version: string;
   /** The git commit built, in full; empty if unknown. */
   commit: string;

@@ -38,7 +38,8 @@ public static class About
     private static readonly string Informational =
         Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-    /// <summary>The version, without the commit: "0.0.1", or "0.0.1-dev" for a development build.</summary>
+    /// <summary>The version, without the commit: "0.0.1" for a release, or a development build's, as the server's project
+    /// derives it from git tags: "0.0.2-dev.9" (9 commits after v0.0.1), "0.2.0-beta.1.dev.3", or "0.0.0-dev".</summary>
     public static string Version => Informational.Split('+')[0];
 
     /// <summary>The git commit built, in full; empty if the build didn't know it.</summary>
@@ -46,7 +47,7 @@ public static class About
 
     public static string ShortCommit => Commit.Length > 7 ? Commit[..7] : Commit;
 
-    public static bool Development => Version.EndsWith("-dev", StringComparison.Ordinal);
+    public static bool Development => System.Text.RegularExpressions.Regex.IsMatch(Version, @"[-.]dev(\.\d+)?$");
 
     public static string Copyright => Assembly.GetCustomAttribute<AssemblyCopyrightAttribute>()?.Copyright ?? "";
 

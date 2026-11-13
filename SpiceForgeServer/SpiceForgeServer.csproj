@@ -28,19 +28,32 @@
     <Copyright>Copyright (c) 2026 Mike Oliphant</Copyright>
   </PropertyGroup>
 
-  <!-- A development build (no SpiceForgeVersion) is versioned after the latest release tag, as "0.0.1-dev", rather
-       than the SDK's 1.0.0, a release it never was; "0.0.0-dev" without git or a tag. Set before GetAssemblyVersion,
-       which derives the informational version from Version. -->
-  <Target Name="SpiceForgeDevelopmentVersion" BeforeTargets="GetAssemblyVersion" Condition="'$(SpiceForgeVersion)' == ''">
-    <Exec Command="git describe --tags --abbrev=0" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
-          IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low" EchoOff="true">
-      <Output TaskParameter="ConsoleOutput" PropertyName="SpiceForgeLastTag" />
+  <!-- The version, from git tags: the one source of it. A release is the commit tagged v<version> (the Release
+       workflow tags it), and a build of that commit is that version. A build of a later commit is a development build
+       of the next patch, counting the commits since the tag: 9 commits after v0.0.1 is "0.0.2-dev.9", which sorts
+       after 0.0.1 and before 0.0.2. After a pre-release tag it goes on from it: 3 after v0.2.0-beta.1 is
+       "0.2.0-beta.1.dev.3". Without git or a tag (a shallow clone) it's "0.0.0-dev". Set before GetAssemblyVersion,
+       which derives the informational version from Version; SpiceForge.Package reads it from this target too. -->
+  <Target Name="SpiceForgeGitVersion" BeforeTargets="GetAssemblyVersion" Condition="'$(SpiceForgeVersion)' == ''">
+    <Exec Command="git describe --tags --long --match &quot;v[0-9]*&quot;" WorkingDirectory="$(MSBuildProjectDirectory)"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low" EchoOff="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="SpiceForgeDescribe" />
       <Output TaskParameter="ExitCode" PropertyName="SpiceForgeGitExit" />
     </Exec>
     <PropertyGroup>
-      <SpiceForgeLastTag Condition="'$(SpiceForgeGitExit)' != '0'"></SpiceForgeLastTag>
-      <Version Condition="'$(SpiceForgeLastTag)' != ''">$(SpiceForgeLastTag.Trim().TrimStart('v'))-dev</Version>
-      <Version Condition="'$(SpiceForgeLastTag)' == ''">0.0.0-dev</Version>
+      <!-- "v0.0.1-9-g1840144": the tag, the commits since it, and the commit. -->
+      <SpiceForgeDescribe Condition="'$(SpiceForgeGitExit)' != '0'"></SpiceForgeDescribe>
+      <SpiceForgeDescribe>$(SpiceForgeDescribe.Trim())</SpiceForgeDescribe>
+      <SpiceForgeDescribed>$([System.Text.RegularExpressions.Regex]::IsMatch('$(SpiceForgeDescribe)', '^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?-\d+-g[0-9a-f]+$'))</SpiceForgeDescribed>
+      <SpiceForgeTag Condition="$(SpiceForgeDescribed)">$([System.Text.RegularExpressions.Regex]::Replace('$(SpiceForgeDescribe)', '^v(.+)-(\d+)-g[0-9a-f]+$', '$1'))</SpiceForgeTag>
+      <SpiceForgeHeight Condition="$(SpiceForgeDescribed)">$([System.Text.RegularExpressions.Regex]::Replace('$(SpiceForgeDescribe)', '^v(.+)-(\d+)-g[0-9a-f]+$', '$2'))</SpiceForgeHeight>
+      <SpiceForgePrerelease Condition="$(SpiceForgeDescribed)">$(SpiceForgeTag.Contains('-'))</SpiceForgePrerelease>
+      <SpiceForgeNextPatch Condition="$(SpiceForgeDescribed) And !$(SpiceForgePrerelease)">$([System.Text.RegularExpressions.Regex]::Replace('$(SpiceForgeTag)', '^(\d+)\.(\d+)\.(\d+)$', '$1.$2')).$([MSBuild]::Add($([System.Text.RegularExpressions.Regex]::Replace('$(SpiceForgeTag)', '^\d+\.\d+\.(\d+)$', '$1')), 1))</SpiceForgeNextPatch>
+
+      <Version Condition="!$(SpiceForgeDescribed)">0.0.0-dev</Version>
+      <Version Condition="$(SpiceForgeDescribed) And '$(SpiceForgeHeight)' == '0'">$(SpiceForgeTag)</Version>
+      <Version Condition="$(SpiceForgeDescribed) And '$(SpiceForgeHeight)' != '0' And $(SpiceForgePrerelease)">$(SpiceForgeTag).dev.$(SpiceForgeHeight)</Version>
+      <Version Condition="$(SpiceForgeDescribed) And '$(SpiceForgeHeight)' != '0' And !$(SpiceForgePrerelease)">$(SpiceForgeNextPatch)-dev.$(SpiceForgeHeight)</Version>
     </PropertyGroup>
   </Target>
 

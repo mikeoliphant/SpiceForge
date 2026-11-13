@@ -5,8 +5,12 @@ using System.IO.Compression;
 // Builds SpiceForge's packages into artifacts/: the server, self-contained, with the web editor and LiveSPICE's
 // component libraries and examples.
 //
-//   dotnet run -c Release --project SpiceForge.Package [-- --version 0.1.0] [--rid win-x64,linux-x64] [--skipWeb]
+//   dotnet run -c Release --project SpiceForge.Package [-- --rid win-x64,linux-x64] [--skipWeb]
 //       [--requireInstaller]   fail, rather than skip the installer, without Inno Setup (for releases)
+//
+// The version comes from git tags, as the server's project derives it (its SpiceForgeGitVersion target): on a commit
+// tagged v0.2.0 it's 0.2.0; on a later one, a development version such as 0.2.1-dev.4. There's no option to set it, so
+// a package can't claim a version its commit wasn't tagged with.
 //
 // - win-x64: SpiceForge-<version>-win-x64.zip (portable), and SpiceForge-<version>-setup.exe when Inno Setup's
 //   compiler (ISCC) is installed. The server is built without a console window, and logs to server.log in its
@@ -16,7 +20,13 @@ using System.IO.Compression;
 // Both start the editor in a window of its own, and stop when it closes (appsettings.json: "open": "app").
 
 string repo = FindRepository();
-string version = Option("--version") ?? "0.1.0";
+if (args.Contains("--version"))
+    Fail("There's no --version: the version comes from git tags. Tag the commit v<version> to release it (the Release workflow does).");
+string serverProject = Path.Combine(repo, "SpiceForgeServer", "SpiceForgeServer.csproj");
+string version = Output("dotnet", $"msbuild \"{serverProject}\" -nologo -target:SpiceForgeGitVersion -getProperty:Version", repo).Trim();
+if (!System.Text.RegularExpressions.Regex.IsMatch(version, @"^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$"))
+    Fail($"Couldn't work out the version from git (got '{version}').");
+Step($"Version {version}");
 string[] rids = (Option("--rid") ?? "win-x64,linux-x64").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 bool skipWeb = args.Contains("--skipWeb");
 bool requireInstaller = args.Contains("--requireInstaller");
@@ -45,7 +55,8 @@ foreach (string rid in rids)
     Step($"Publishing the server for {rid}");
     // Self-contained, so nothing needs installing first. Not ReadyToRun: with tiered compilation off, precompiled code
     // would be used as it is, less optimized than the JIT's, on the audio path.
-    Run("dotnet", $"publish \"{Path.Combine(repo, "SpiceForgeServer", "SpiceForgeServer.csproj")}\" -c Release -r {rid} --self-contained true " +
+    // The version is passed on, so the publish uses exactly the one the packages are named for.
+    Run("dotnet", $"publish \"{serverProject}\" -c Release -r {rid} --self-contained true " +
         $"-p:SpiceForgeVersion={version} {(windows ? "-p:SpiceForgeNoConsole=true " : "")}-o \"{stage}\"", repo);
 
     Step("Adding the web editor, examples and documents");
@@ -127,6 +138,17 @@ static void Run(string program, string arguments, string folder)
     process.WaitForExit();
     if (process.ExitCode != 0)
         Fail($"{program} {arguments} failed ({process.ExitCode}).");
+}
+
+static string Output(string program, string arguments, string folder)
+{
+    var start = new ProcessStartInfo(program, arguments) { WorkingDirectory = folder, UseShellExecute = false, RedirectStandardOutput = true };
+    using Process process = Process.Start(start) ?? throw new InvalidOperationException($"Couldn't start {program}.");
+    string output = process.StandardOutput.ReadToEnd();
+    process.WaitForExit();
+    if (process.ExitCode != 0)
+        Fail($"{program} {arguments} failed ({process.ExitCode}).");
+    return output;
 }
 
 static void CopyFolder(string from, string to, Func<string, bool> include)
