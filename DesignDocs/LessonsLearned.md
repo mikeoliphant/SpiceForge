@@ -1051,7 +1051,8 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   reinitialise freeing it twice fits, but that's inferred, not confirmed. A device whose reset failed is now never
   called again: closing it keeps it (so callbacks a driver might still make stay alive) and frees the slot, leaking
   one dead driver instead. Checked by unplugging the interface again during a simulation: the server stayed up and
-  the simulation carried on, on None. That the dispose was the crash is now likely, though the double free is still
+  the simulation carried on, on None. Plugging it back in and choosing it again in the audio dialog opened it
+  normally, so the abandoned instance doesn't block the driver. That the dispose was the crash is now likely, though the double free is still
   inferred from NAudio 2's code.
 - **A lost device resets to None, and the simulation carries on.** The fallback used to keep ASIO configured while
   running on the clock, so the editor still showed a device that was gone. Now the configuration becomes None at the
