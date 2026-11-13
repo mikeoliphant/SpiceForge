@@ -69,7 +69,9 @@ server works it out the same way, so the About dialog shows it too, with the com
 Packages are unsigned: Windows SmartScreen asks before the installer or the zip's server runs for the first time.
 
 On GitHub, the **Build** workflow (`.github/workflows/build.yml`) runs on pull requests, or by hand: it builds the
-solution (Windows), runs `SpiceForge.Validate server` on Windows and Linux, and `processor` on Linux. The **Release**
+solution (Windows), runs `SpiceForge.Validate server` on Windows and Linux, and `processor` on Linux. It also builds
+the three packages, versioned as a development build (`0.0.2-dev.10`), and attaches them to the run as artifacts
+(`SpiceForge-setup`, `SpiceForge-win-x64`, `SpiceForge-linux-x64`), kept for 14 days. The **Release**
 workflow, run by hand with a version, tags the commit `v<version>`, runs the server check, builds the three packages
 (which read their version back from the tag), then pushes the tag and creates a draft GitHub release on it with the
 packages attached and no notes: write the notes and publish it on GitHub. To redo a release that isn't published,

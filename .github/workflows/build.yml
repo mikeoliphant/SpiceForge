@@ -1,4 +1,6 @@
-# Builds SpiceForge and runs its checks: on pull requests, and by hand (Actions > Build > Run workflow).
+# Builds SpiceForge and runs its checks: on pull requests, and by hand (Actions > Build > Run workflow). It also builds
+# the packages (the Windows installer and zip, the Linux tarball) and attaches them to the run as artifacts, versioned
+# from git tags as development builds (0.0.2-dev.10, say): for trying a change before it's released.
 name: Build
 
 on:
@@ -60,6 +62,56 @@ jobs:
           dotnet build SpiceForge.Validate -c Release
       - name: SpiceForge.Validate server
         run: dotnet run --project SpiceForge.Validate -c Release --no-build -- server
+
+  # The packages, as the Release workflow builds them, attached to the run. On Windows, which builds all three: Inno
+  # Setup is Windows only, and the Linux tarball is written with its permissions set wherever it's made.
+  packages:
+    name: Packages
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # The whole history and the tags, which the version is worked out from.
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: SpiceForgeWebUI/package-lock.json
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+      - name: Build the web editor
+        working-directory: SpiceForgeWebUI
+        run: |
+          npm ci
+          npm run build
+      - name: Build the packages
+        run: dotnet run -c Release --project SpiceForge.Package -- --skipWeb --requireInstaller
+      # One artifact each, so one can be downloaded without the others.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpiceForge-setup
+          path: artifacts/SpiceForge-*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpiceForge-win-x64
+          path: artifacts/SpiceForge-*-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpiceForge-linux-x64
+          path: artifacts/SpiceForge-*-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
 
   # The processor against the compiled engine it wraps, on every test circuit.
   processor:
