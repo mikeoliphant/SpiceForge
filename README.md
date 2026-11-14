@@ -20,8 +20,6 @@ test suite.
   new engine still runs about 30% faster than the original LiveSPICE circuit simulation. See the [circuit benchmarks](DesignDocs/CircuitBenchmarks.md) for the full results.
 - **A new, cross-platform application.** It runs in a browser, served by a local server. It has simulation with meters, a scope and
   output selection, and audio through ASIO and JACK. Packages are built for Windows and Linux.
-- **Circuits LiveSPICE can't run.** SPICE-style junction limiting and a tightly converged DC start run the Fuzz Face
-  and Orange Squeezer, which are unstable in LiveSPICE.
 - **Better resampling.** Sinc resampling around the oversampled circuit is an option, in place of LiveSPICE's linear
   interpolation and averaging.
 
