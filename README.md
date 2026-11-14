@@ -7,8 +7,7 @@ that runs in a browser or a window of its own, playing through ASIO or JACK, on 
 
 ## Based on LiveSPICE
 
-SpiceForge is built on [LiveSPICE](https://github.com/dsharlet/LiveSPICE), which it includes,
-unmodified, as a submodule. It uses LiveSPICE's schematic files (`.schx`) and component libraries, and LiveSPICE's own
+SpiceForge is built on the low-level core of [LiveSPICE](https://github.com/dsharlet/LiveSPICE). It uses LiveSPICE's schematic files (`.schx`) and component libraries, and LiveSPICE's own
 analysis turns each schematic into its circuit equations. SpiceForge's own engine starts from those equations.
 LiveSPICE's simulation is also the reference SpiceForge is validated against, and LiveSPICE's test circuits are its
 test suite.
