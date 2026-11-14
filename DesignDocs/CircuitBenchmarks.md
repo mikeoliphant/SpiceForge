@@ -70,9 +70,10 @@ coincidence of which circuits sit in the middle. Live costs a median of 9% over 
   cost −9 to +24%, and the other circuits with switches (the Bassman, JCM2000 and modded JCM800) 7 to 23%. Its
   one switch is the likely cause, but that hasn't been isolated.
 - **The Cry Baby runs faster live than fixed.** It did so in every run; the reason hasn't been looked into.
-- **The "unstable" circuits ran in stock at this input.** The Fuzz Face and Orange Squeezer fail in LiveSPICE at
-  other pot settings and signal levels (see `LessonsLearned.md`). At these settings stock stayed finite, so both are
-  timed. The Triode stage fails in LiveSPICE's own solve, which both engines start from.
+- **The "unstable" circuits ran in stock at these settings.** LiveSPICE's test suite files the Fuzz Face and Orange
+  Squeezer under `Unstable`, but at their schematic settings and this input stock's output stayed finite, so both
+  are timed. Where, if anywhere, stock goes unstable on them hasn't been measured. The Triode stage fails in
+  LiveSPICE's own solve, which both engines start from.
 - **Times repeat to within a few percent.** Over three full runs, most circuits agreed to about 2%; the largest
   spread was 6%, on the Blues Breaker's live time (2.36 to 2.50 µs).
 - **Speed only.** The engines don't produce identical output: ours starts from a more tightly converged DC point and
