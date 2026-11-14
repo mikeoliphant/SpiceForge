@@ -15,9 +15,9 @@ test suite.
 
 ## What it adds
 
-- **Live knobs and switches.** Pots and switches are now fully dynamic under live slimulation.
-  This is done without sacrificing accuracy, but comes at a small (generally 10%-15%) cost, depending
-  on the circuit.
+- **Live knobs and switches.** Pots and switches are fully dynamic under live simulation.
+  This is done without sacrificing accuracy. It has a small performance cost over fixed pots/switches, but the
+  new engine still runs about 30% faster the original LiveSPICE circuit simulation. Full circuit benchmarks can be found here: (DesignDocs/CircuitBenchmarks.md).
 - **A new, cross-platform application.** It runs in a browser, served by a local server. It has simulation with meters, a scope and
   output selection, and audio through ASIO and JACK. Packages are built for Windows and Linux.
 - **Circuits LiveSPICE can't run.** SPICE-style junction limiting and a tightly converged DC start run the Fuzz Face
