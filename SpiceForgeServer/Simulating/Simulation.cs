@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
+using AudioIOSharp;
 using Circuit;
 using SpiceForge;
 using SpiceForgeServer.Audio;
@@ -842,7 +843,7 @@ public sealed class Simulation : IAudioClient
 
     /// <summary>One block, on the audio thread. Allocates nothing, and takes no lock: what the monitor needs is left in
     /// fields and in the scope ring.</summary>
-    public void Process(AudioBlock block)
+    public void Process(in AudioBuffers block)
     {
         int frames = block.Frames;
         SchematicProcessor? p = processor;
@@ -864,9 +865,9 @@ public sealed class Simulation : IAudioClient
         double[] input = inputs[0];
         double blockIn = 0;
         int channel = sourceChannel;
-        if (channel >= 0 && channel < block.Inputs.Length)
+        if (channel >= 0 && channel < block.InputCount)
         {
-            float[] from = block.Inputs[channel];
+            ReadOnlySpan<float> from = block.Input(channel);
             double gain = inputGain;
             for (int n = 0; n < frames; n++)
             {
@@ -912,11 +913,11 @@ public sealed class Simulation : IAudioClient
         // Each output channel plays its signal: the Speakers, or one of the build's signals.
         OutputLookup map = outputMap;
         double[] peaks = outputPeaks;
-        for (int o = 0; o < block.Outputs.Length; o++)
+        for (int o = 0; o < block.OutputCount; o++)
         {
             int signal = map.Processor == p && o < map.Map.Length ? map.Map[o] : -1;
             double[] from = signal >= 0 && signal < p.SignalSamples.Length ? p.SignalSamples[signal] : output;
-            float[] to = block.Outputs[o];
+            Span<float> to = block.Output(o);
             double peak = 0;
             for (int n = 0; n < frames; n++)
             {
@@ -954,11 +955,7 @@ public sealed class Simulation : IAudioClient
         Interlocked.Add(ref busyTicks, Stopwatch.GetTimestamp() - began);
     }
 
-    private static void Silence(AudioBlock block)
-    {
-        for (int o = 0; o < block.Outputs.Length; o++)
-            Array.Clear(block.Outputs[o], 0, block.Frames);
-    }
+    private static void Silence(in AudioBuffers block) => block.ClearOutputs();
 
     // The audio thread stops running this build at once; the monitor reports it (and rebuilds, after a divergence).
     private void GiveUp(Failure failure)

@@ -866,9 +866,10 @@ What the server needs beyond today's SpiceForge:
   position) when it builds, to report problems, nodes, controls and probes in the client's terms.
 - **Lossless files.** A file read and then written without edits should come back unchanged, apart from formatting:
   unresolved components and subcircuit bodies included. A round-trip test over the `Tests` folder checks it.
-- **Audio drivers:** ASIO through NAudio's `AsioDevice` (duplex: one callback reads the inputs and writes the
-  outputs), with every driver call on one STA thread. JACK through JackSharpCore (`Dependencies/JackSharpCore`): one
-  `Processor` client, its process callback copying spans of JACK's buffers. WASAPI maybe later.
+- **Audio drivers:** AudioIOSharp's (`Dependencies/AudioIOSharp`). ASIO through NAudio's `AsioDevice` (duplex: one
+  callback reads the inputs and writes the outputs), with every driver call on one STA thread. JACK through
+  JackSharpCore: one `Processor` client, whose process callback hands the simulation spans of JACK's own buffers.
+  WASAPI maybe later.
 - **Threading:** LiveSPICE's computer algebra isn't known to be thread-safe (see LessonsLearned.md, Validation).
   Builds, layouts and checks should therefore run one at a time, on a dedicated thread.
 

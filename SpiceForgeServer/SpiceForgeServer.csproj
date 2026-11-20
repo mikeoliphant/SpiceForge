@@ -67,19 +67,16 @@
     <None Include="..\LICENSE" Link="licenses\SpiceForge.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\Dependencies\LiveSPICE\LICENSE" Link="licenses\LiveSPICE.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\Dependencies\LiveSPICE\ComputerAlgebra\LICENSE" Link="licenses\ComputerAlgebra.txt" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\Dependencies\JackSharpCore\LICENSE" Link="licenses\JackSharpCore.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Dependencies\AudioIOSharp\LICENSE" Link="licenses\AudioIOSharp.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Dependencies\AudioIOSharp\Dependencies\JackSharpCore\LICENSE" Link="licenses\JackSharpCore.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\Assets\Licenses\*.txt" Link="licenses\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SpiceForge\SpiceForge.csproj" />
-    <!-- JACK through JackSharpCore (Dependencies/JackSharpCore): Windows, Linux (including PipeWire) and macOS. -->
-    <ProjectReference Include="..\Dependencies\JackSharpCore\JackSharp\JackSharp.csproj" />
-  </ItemGroup>
-
-  <!-- ASIO through NAudio's AsioDevice (duplex, one callback per buffer). Windows only at run time; see Audio/AsioDriver.cs. -->
-  <ItemGroup>
-    <PackageReference Include="NAudio.Asio" Version="3.3.0" />
+    <!-- Audio devices through AudioIOSharp (Dependencies/AudioIOSharp): the internal clock, ASIO (NAudio's AsioDevice,
+         Windows) and JACK (JackSharpCore: Windows, Linux including PipeWire, and macOS), behind one engine. -->
+    <ProjectReference Include="..\Dependencies\AudioIOSharp\AudioIOSharp\AudioIOSharp.csproj" />
   </ItemGroup>
 
   <!-- LiveSPICE's component libraries (diodes, transistors, tubes, op-amps), loaded into the catalogue. -->

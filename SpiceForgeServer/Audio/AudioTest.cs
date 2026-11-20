@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
+using AudioIOSharp;
 using SpiceForgeServer.Protocol;
 
 namespace SpiceForgeServer.Audio;
@@ -73,9 +74,9 @@ public sealed class AudioTest : IAudioClient
         format = newFormat;
     }
 
-    public void Process(AudioBlock block)
+    public void Process(in AudioBuffers buffers)
     {
-        int frames = block.Frames;
+        int frames = buffers.Frames;
         double[] inPeaks = inputPeaks, outPeaks = outputPeaks;
         bool scoping = scope.Begin(1, frames);
         double outPeak = 0;
@@ -84,11 +85,13 @@ public sealed class AudioTest : IAudioClient
         double fadeStep = 1 / (FadeSeconds * rate);
         bool fadingOut = this.fadingOut;
         bool wasSilent = fade <= 0;
+        // Written to the first output, then copied to the others.
+        Span<float> first = buffers.OutputCount > 0 ? buffers.Output(0) : Span<float>.Empty;
         for (int n = 0; n < frames; n++)
         {
             float sum = 0;
-            for (int i = 0; i < block.Inputs.Length; i++)
-                sum += block.Inputs[i][n];
+            for (int i = 0; i < buffers.InputCount; i++)
+                sum += buffers.Input(i)[n];
 
             fade = fadingOut ? Math.Max(0, fade - fadeStep) : Math.Min(1, fade + fadeStep);
             float gain = (float)(0.5 - 0.5 * Math.Cos(Math.PI * fade));
@@ -103,20 +106,22 @@ public sealed class AudioTest : IAudioClient
             else
                 output = gain * sum;
 
-            for (int o = 0; o < block.Outputs.Length; o++)
-                block.Outputs[o][n] = output;
+            if (first.Length > 0)
+                first[n] = output;
             outPeak = Math.Max(outPeak, Math.Abs(output));
             if (scoping)
                 scope.Put(0, n, sum);
         }
+        for (int o = 1; o < buffers.OutputCount; o++)
+            first.CopyTo(buffers.Output(o));
         // Whole blocks of silence after the fade-out. Two, since a device plays one block while the next is filled (ASIO
         // double-buffers): after the second, the fade's last block has been played, and the device can close quietly.
         if (fadingOut && wasSilent && ++silentBlocks >= 2)
             silent.TrySetResult();
-        for (int i = 0; i < block.Inputs.Length && i < inPeaks.Length; i++)
+        for (int i = 0; i < buffers.InputCount && i < inPeaks.Length; i++)
         {
             double peak = 0;
-            float[] input = block.Inputs[i];
+            ReadOnlySpan<float> input = buffers.Input(i);
             for (int n = 0; n < frames; n++)
                 peak = Math.Max(peak, Math.Abs(input[n]));
             Accumulate.Max(ref inPeaks[i], peak);

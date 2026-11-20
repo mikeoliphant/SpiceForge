@@ -7,8 +7,8 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using SpiceForgeServer.Documents;
-using AudioBlock = SpiceForgeServer.Audio.AudioBlock;
-using AudioFormat = SpiceForgeServer.Audio.AudioFormat;
+using AudioBuffers = AudioIOSharp.AudioBuffers;
+using AudioFormat = AudioIOSharp.AudioFormat;
 using AudioTest = SpiceForgeServer.Audio.AudioTest;
 using AudioTestSignal = SpiceForgeServer.Audio.AudioTestSignal;
 using Hub = SpiceForgeServer.Protocol.Hub;
@@ -169,18 +169,21 @@ internal static class ServerCheck
         {
             var test = new AudioTest(new Hub(), signal);
             test.Prepare(format);
-            AudioBlock block = AudioBlock.For(format);
+            // The channels a device would give: pinned, so the buffers can point at them.
+            float[] input = GC.AllocateArray<float>(frames, pinned: true);
+            float[][] outputs = { GC.AllocateArray<float>(frames, pinned: true), GC.AllocateArray<float>(frames, pinned: true) };
+            nint[] inputPointers = { System.Runtime.InteropServices.Marshal.UnsafeAddrOfPinnedArrayElement(input, 0) };
+            nint[] outputPointers = outputs.Select(o => System.Runtime.InteropServices.Marshal.UnsafeAddrOfPinnedArrayElement(o, 0)).ToArray();
             var played = new List<float>();
             bool outputsAgree = true;
             void Run()
             {
-                block.Frames = frames;
                 // For the loop: a steady 0.1 arriving, so the fades are all there is to see.
-                Array.Fill(block.Inputs[0], 0.1f);
-                test.Process(block);
+                Array.Fill(input, 0.1f);
+                test.Process(new AudioBuffers(inputPointers, outputPointers, frames));
                 for (int n = 0; n < frames; n++)
-                    outputsAgree &= block.Outputs[0][n] == block.Outputs[1][n];
-                played.AddRange(block.Outputs[0].Take(frames));
+                    outputsAgree &= outputs[0][n] == outputs[1][n];
+                played.AddRange(outputs[0]);
             }
 
             for (int b = 0; b < 20; b++)
@@ -238,10 +241,12 @@ internal static class ServerCheck
             string speaker = IdOf("Circuit.Speaker"), input = IdOf("Circuit.Input"), pot = IdOf("Circuit.Potentiometer");
 
             var sim = new SpiceForgeServer.Simulating.Simulation(context, 1, "Rat", document, check, context.Settings.SimulationDefaults);
-            var format = new SpiceForgeServer.Audio.AudioFormat(48000, 256, Array.Empty<string>(), new[] { "Out 1", "Out 2", "Out 3" });
+            var format = new AudioFormat(48000, 256, Array.Empty<string>(), new[] { "Out 1", "Out 2", "Out 3" });
             sim.Prepare(format);
             sim.Start();
-            var block = SpiceForgeServer.Audio.AudioBlock.For(format);
+            // Three outputs, as a device would give them: pinned, so the buffers can point at them.
+            float[][] blockOutputs = Enumerable.Range(0, 3).Select(_ => GC.AllocateArray<float>(256, pinned: true)).ToArray();
+            nint[] outputPointers = blockOutputs.Select(o => System.Runtime.InteropServices.Marshal.UnsafeAddrOfPinnedArrayElement(o, 0)).ToArray();
             async Task<bool> Running()
             {
                 for (int i = 0; i < 600; i++)
@@ -259,14 +264,13 @@ internal static class ServerCheck
                 var outs = new List<float[]>[] { new(), new(), new() };
                 for (int b = 0; b < 2 * 48000 / 256; b++)
                 {
-                    block.Frames = 256;
-                    sim.Process(block);
+                    sim.Process(new AudioBuffers(Array.Empty<nint>(), outputPointers, 256));
                     if (b >= 48000 / 256)
                         for (int o = 0; o < 3; o++)
                         {
-                            outs[o].Add(block.Outputs[o][..256]);
+                            outs[o].Add(blockOutputs[o][..256]);
                             for (int n = 0; n < 256; n++)
-                                peaks[o] = Math.Max(peaks[o], Math.Abs(block.Outputs[o][n]));
+                                peaks[o] = Math.Max(peaks[o], Math.Abs(blockOutputs[o][n]));
                         }
                 }
                 lastOuts = outs.Select(l => l.SelectMany(x => x).ToArray()).ToArray();

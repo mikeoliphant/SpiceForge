@@ -1,4 +1,5 @@
 using System.Net;
+using AudioIOSharp;
 using SpiceForgeServer;
 using SpiceForgeServer.Audio;
 using SpiceForgeServer.Protocol;
@@ -195,7 +196,7 @@ static string? UnoptimizedBuild()
 static async Task<int> ListAudio(ServerOptions options)
 {
     var settings = new SettingsStore(options.SettingsPath);
-    using var audio = new AudioService(new Hub(), new LogHub(new Hub()), settings, AudioConfig.FromJson(settings.Audio));
+    using var audio = new AudioService(new Hub(), new LogHub(new Hub()), settings, AudioJson.Config(settings.Audio));
     foreach (AudioDriver driver in audio.Drivers)
     {
         Console.WriteLine($"{driver.DriverName}:");
