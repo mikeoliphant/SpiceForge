@@ -19,7 +19,7 @@ test suite.
   new engine still runs about 30% faster than the original LiveSPICE circuit simulation. See the [circuit benchmarks](DesignDocs/CircuitBenchmarks.md) for the full results.
 - **A new, cross-platform application.** It runs in a browser, served by a local server. It features a circuit editor and a live simulation with meters, a scope and
   output selection, and audio through ASIO and JACK. Packages are built for Windows and Linux.
-- **Cross-platform DAW plugins.** CLAP and VST3, on Windows and Linux.
+- **Cross-platform DAW plugins.** CLAP and VST3, on Windows and Linux (using [AudioPlugSharp](https://github.com/mikeoliphant/AudioPlugSharp)).
 - **Better resampling.** Sinc resampling around the oversampled circuit is an option, in place of LiveSPICE's linear
   interpolation and averaging.
 
