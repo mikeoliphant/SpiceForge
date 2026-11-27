@@ -873,6 +873,22 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   - the client counted a zero-length wire as connecting, where LiveSPICE loads one as a warning symbol.
   Also, older files don't store a ground's `WireName`, so a named wire's name falls back to its type's default
   ("GND").
+- **Terminals that touch can't connect in the file format, so a part dropped onto a terminal steps back and gets a
+  wire.** `Schematic.NodeAt` only looks at wires. Two terminals on one point with no wire there each get their own
+  `_x1` node and an "Unconnected terminal" warning. A zero-length wire doesn't help: `Wire.Deserialize` loads one as a
+  `Warning` symbol with no terminals, in LiveSPICE and in our server, which loads files with the same code. Making
+  touching terminals connect only in SpiceForge would make one file mean two different circuits, so the editor makes
+  the connection a real wire instead (UISpec.md, Moving). It builds the move or placement, and if exactly one moved
+  terminal touches another part's, builds it again one grid step away along the axis on which the parts' centres
+  differ more, with a one-step wire. It keeps the second version only if `computeNodes`' partition equals the first
+  one's plus the joined pair. Comparing partitions, rather than listing what a step might disturb (another terminal
+  landing on a wire, a wire-in that no longer applies, a follower rerouted onto something), covers all of those in
+  one check. Equal-sized parts meeting end to end at a right angle always have equal centre offsets (each lead end is
+  half a part from its centre). At first a tie didn't step at all, but that left the common right-angle join
+  unconnected, so a tie now steps sideways. Checked on hand-built cases with stand-in layouts: below and above step
+  down and up; a long part to the right steps right; two resistors at a right angle step sideways; touching on both
+  sides, a step onto a wire, and an existing wire there leave the part alone; undo puts a move back with the gap wire
+  gone. The conformance test stayed at 53 schematics, 477 comparisons, 0 failures.
 - **The server announced it was listening before it had bound the port.** With another server already on 8370, a
   second one printed success and served nothing. It now announces itself once the port is bound, and reports a failed
   bind.

@@ -264,6 +264,18 @@ Escape or the right button cancels it, putting everything back.
   instead of shorting the part. If anything else connects inside the span (another wire's end, another part's
   terminal), it's left alone, so no branch is stranded. A part whose terminal lands on the middle of a wire,
   without a second terminal on it, isn't wired in. Pasting doesn't wire in.
+- **Dropped terminal to terminal, a part steps back and is wired.** Two terminals that touch with no wire there
+  don't connect (see Connectivity). So after a move (with or without Shift), a placement or a drop from the
+  library, if exactly one terminal of what was moved sits on another part's terminal with no wire there, the moved
+  part goes one grid step further away from that part, with a one-step wire across the gap. Away means along the
+  axis on which the two parts' centres differ more: a part dropped below another steps down, one to its right steps
+  right. When they differ equally both ways, as two same-sized parts meeting end to end at a right angle always do,
+  it steps sideways. It's left where it was dropped when:
+  - more than one terminal touches (a part dropped into the gap between two others, touching both);
+  - the step would change anything else that connects: another terminal landing on a wire or a part, or leaving one.
+
+  Touches between parts moved together don't count. The step happens on release, not while dragging; it's part of
+  the same undo step. Pasting doesn't step back.
 
 On release, the rerouted wires are joined as the wire tool joins wires (merged where they overlap, split at
 terminals and junctions).
@@ -280,7 +292,8 @@ other end, changes nothing.
 
 - **Clicking a component** in the library, or its shortcut, starts placing it: a gray ghost (without text, its
   terminals red) follows the pointer, hidden while the pointer is off the schematic. The arrow keys rotate and flip
-  it. A click places a copy, selected, and wires it in if it lands on a wire. The editor then returns to the
+  it. A click places a copy, selected, and wires it in if it lands on a wire; a copy whose terminal lands on another
+  part's terminal steps back a grid step and is wired to it (see Moving). The editor then returns to the
   selection tool, unless Ctrl is held. With no schematic open, the status bar says to open or create one.
 - **Dragging a component** from the library onto the schematic places it where it's dropped, as a click would.
 - **Names:** a part whose name is already used gets the letters of its name plus the first free number (a resistor
@@ -485,6 +498,8 @@ Where the editor behaves differently from LiveSPICE's WPF application, deliberat
 
 - **Moving** drags attached wires, slides corners, keeps tees, tows lone parts, heals with Shift, and wires in parts
   dropped on wires; LiveSPICE moves only the selection, leaving its wires behind.
+- **A part dropped terminal to terminal** steps back a grid step and is wired to the part it touched. LiveSPICE
+  leaves the two touching, unconnected. The file format is unchanged: the gap is closed by an ordinary wire.
 - **A press on an unselected part** selects and drags it in one gesture.
 - **A wire's free end** can be dragged to extend it.
 - **Flipping** a part turned 90° keeps it on its wires (LiveSPICE mirrors it the wrong way, off them).

@@ -12,6 +12,8 @@
 //   press or during the drag) leaves the wires, and any towed parts, where they are, and
 //   heals the wire a moved part sat in (wires.ts, findHeals). A part dropped with two of its terminals on a wire
 //   (moved, placed, or dropped from the library) is wired into it: the wire between them goes (wires.ts, insertSymbols).
+//   One whose terminal lands on another part's terminal alone, with no wire there, steps a grid step away from that
+//   part and is wired to it, if that changes nothing else that connects (wires.ts, spaceApart).
 //   Pressing within a few pixels of a wire's free end (one that connects to nothing) drags that end instead, and the
 //   wire extends to it: straight, or an L going on in its old direction (wires.ts, extendPath);
 // - pressing on empty space, or with Ctrl, starts a rubber band. Releasing without moving is a click: Ctrl toggles the
@@ -34,7 +36,20 @@ import type { LayoutCache } from "./layouts";
 import type { ComponentData, Element, Layout, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
 import { drawGhost, renderDocument, selectionBox, type Rendered } from "./render";
 import type { SchematicView } from "./view";
-import { addWire, extendPath, findFollowers, findHeals, findTowed, findWirePath, followerPaths, followerWires, insertSymbols, isFreeEnd, type Follower } from "./wires";
+import {
+  addWire,
+  extendPath,
+  findFollowers,
+  findHeals,
+  findTowed,
+  findWirePath,
+  followerPaths,
+  followerWires,
+  insertSymbols,
+  isFreeEnd,
+  spaceApart,
+  type Follower,
+} from "./wires";
 import { computeNodes } from "./connectivity";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -584,11 +599,20 @@ Connects ${shown.join(", ")}` : label);
     const doc = this.doc;
     if (!doc) return;
 
-    const add = new ChangeEdit("Add", doc, [], [symbol]);
-    add.apply();
+    const at0 = symbol.position;
+    const build = ([dx, dy]: Point): Edit[] => {
+      symbol.position = [at0[0] + dx, at0[1] + dy];
 
-    const inserted = insertSymbols(doc, this.layouts, [symbol], new Set(), this.newId);
-    this.commit(inserted ? new CompositeEdit("Add", [add, inserted]) : add);
+      const add = new ChangeEdit("Add", doc, [], [symbol]);
+      add.apply();
+
+      const inserted = insertSymbols(doc, this.layouts, [symbol], new Set(), this.newId);
+
+      return inserted ? [add, inserted] : [add];
+    };
+
+    const edits = this.spaceApart(new Set([symbol.id]), build);
+    this.commit(edits.length === 1 ? edits[0]! : new CompositeEdit("Add", edits));
 
     this.select([symbol.id], true);
 
@@ -812,27 +836,43 @@ Connects ${shown.join(", ")}` : label);
 
     this.unfollow(g);
 
+    // Back where the move began, so it can be built from there (and built again, spaced apart).
+    moveElements(doc, g.ids, [-g.total[0], -g.total[1]]);
+
     // The towed parts move with the rest, unless detached.
     const towed = !g.detached && g.towed.size > 0;
     const moving = towed ? new Set([...g.ids, ...g.towed]) : g.ids;
-    if (towed) moveElements(doc, g.towed, g.total);
 
-    const edits: Edit[] = [new MoveEdit(doc, moving, g.total)];
-    if (g.detached) {
-      edits.push(...g.heals.flatMap((path) => addWire(doc, this.layouts, path, this.newId) ?? []));
-    } else if (g.followers.length > 0) {
-      const removed = new ChangeEdit("Move", doc, g.followers.flatMap(followerWires), []);
-      removed.apply();
-      edits.push(removed);
+    const build = ([dx, dy]: Point): Edit[] => {
+      const total: Point = [g.total[0] + dx, g.total[1] + dy];
+      const move = new MoveEdit(doc, moving, total);
+      move.apply();
 
-      const paths = g.followers.flatMap((f) => followerPaths(f, g.total));
-      edits.push(...paths.flatMap((path) => addWire(doc, this.layouts, path, this.newId) ?? []));
-    }
+      const edits: Edit[] = [move];
+      if (g.detached) {
+        edits.push(...g.heals.flatMap((path) => addWire(doc, this.layouts, path, this.newId) ?? []));
+      } else if (g.followers.length > 0) {
+        const removed = new ChangeEdit("Move", doc, g.followers.flatMap(followerWires), []);
+        removed.apply();
+        edits.push(removed);
 
-    const moved = doc.elements.filter((e): e is SymbolElement => e.kind === "symbol" && moving.has(e.id));
-    const inserted = insertSymbols(doc, this.layouts, moved, moving, this.newId);
-    if (inserted) edits.push(inserted);
+        const paths = g.followers.flatMap((f) => followerPaths(f, total));
+        edits.push(...paths.flatMap((path) => addWire(doc, this.layouts, path, this.newId) ?? []));
+      }
 
+      const moved = doc.elements.filter((e): e is SymbolElement => e.kind === "symbol" && moving.has(e.id));
+      const inserted = insertSymbols(doc, this.layouts, moved, moving, this.newId);
+      if (inserted) edits.push(inserted);
+
+      return edits;
+    };
+
+    const edits = this.spaceApart(moving, build);
     this.commit(edits.length === 1 ? edits[0]! : new CompositeEdit("Move", edits));
+  }
+
+  /** Builds a move or placement, spaced a step apart from a part it would only touch (wires.ts, spaceApart). */
+  private spaceApart(moving: ReadonlySet<string>, build: (by: Point) => Edit[]): Edit[] {
+    return spaceApart(this.doc!, this.layouts, this.wireNameOf, moving, build, this.newId);
   }
 }

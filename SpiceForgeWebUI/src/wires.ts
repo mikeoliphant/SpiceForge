@@ -3,9 +3,10 @@
 // (Connectivity doesn't depend on the splitting: LiveSPICE connects a wire ending anywhere on another.)
 
 import { ChangeEdit, CompositeEdit, type Edit } from "./edits";
-import { boxIntersects, mapBox, mapPoint, mappingOf, pointOnSegment, wireIntersects, type Box } from "./geometry";
+import { boxIntersects, Grid, mapBox, mapPoint, mappingOf, onAnyWire, pointOnSegment, wireIntersects, type Box } from "./geometry";
+import { computeNodes, terminalKey } from "./connectivity";
 import type { LayoutCache } from "./layouts";
-import type { Element, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
+import type { ComponentData, Element, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
 
 /**
  * The wire tool's route: from the drag's first point to its last, straight if they line up, else an L whose first
@@ -424,6 +425,129 @@ export function insertSymbols(doc: SchematicDocument, layouts: LayoutCache, symb
   }
 
   return edits.length > 0 ? new CompositeEdit("Insert", edits) : null;
+}
+
+/** A moved part's terminal sitting on another part's terminal with no wire there, which LiveSPICE doesn't connect. */
+export interface Touch {
+  at: Point;
+  moved: SymbolElement;
+  other: SymbolElement;
+  /** The two terminals' names. */
+  movedTerminal: string;
+  otherTerminal: string;
+}
+
+/** A symbol's terminals, by name, where they are in the schematic. */
+function namedTerminals(s: SymbolElement, layouts: LayoutCache): { name: string; at: Point }[] {
+  const layout = layouts.get(s.component);
+  const m = mappingOf(s);
+  return layout ? layout.terminals.map((t) => ({ name: t.name, at: mapPoint(m, t.at) })) : [];
+}
+
+/** The touches after a move or placement: each terminal of a symbol in `moving` that lies on the terminal of a symbol
+ * not moving, where no wire passes. One per pair of terminals. */
+export function findTouches(doc: SchematicDocument, layouts: LayoutCache, moving: ReadonlySet<string>): Touch[] {
+  const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire");
+  const symbols = doc.elements.filter((e): e is SymbolElement => e.kind === "symbol");
+  const touches: Touch[] = [];
+  for (const moved of symbols) {
+    if (!moving.has(moved.id)) continue;
+
+    for (const mine of namedTerminals(moved, layouts)) {
+      if (onAnyWire(mine.at, wires)) continue;
+
+      for (const other of symbols) {
+        if (moving.has(other.id)) continue;
+
+        for (const theirs of namedTerminals(other, layouts)) {
+          if (same(theirs.at, mine.at)) touches.push({ at: mine.at, moved, other, movedTerminal: mine.name, otherTerminal: theirs.name });
+        }
+      }
+    }
+  }
+
+  return touches;
+}
+
+/** One grid step moving `moved` away from `other`, along the axis their centres differ most on (left of, above, and so
+ * on). A tie goes sideways: equal-sized parts meeting end to end at a right angle always differ equally. Null when the
+ * centres coincide. */
+export function awayFrom(moved: SymbolElement, other: SymbolElement, layouts: LayoutCache): Point | null {
+  const centre = (s: SymbolElement): Point | null => {
+    const layout = layouts.get(s.component);
+    if (!layout) return null;
+
+    // Doubled, to stay in integers.
+    const b = mapBox(mappingOf(s), layout.bounds);
+    return [b.min[0] + b.max[0], b.min[1] + b.max[1]];
+  };
+
+  const [m, o] = [centre(moved), centre(other)];
+  if (!m || !o) return null;
+
+  const [dx, dy] = [m[0] - o[0], m[1] - o[1]];
+  if (dx !== 0 && Math.abs(dx) >= Math.abs(dy)) return [Math.sign(dx) * Grid, 0];
+  if (dy !== 0) return [0, Math.sign(dy) * Grid];
+  return null;
+}
+
+/** What connects to what: each node's terminals, as a sorted list of keys, whatever the wires' ids. */
+function partition(doc: SchematicDocument, layouts: LayoutCache, wireNameOf: (c: ComponentData) => string | undefined): Set<string> {
+  const nodes = computeNodes(doc, layouts, wireNameOf);
+  const groups = new Map<number, string[]>();
+  for (const [key, n] of nodes.terminals) {
+    const group = groups.get(n);
+    if (group) group.push(key);
+    else groups.set(n, [key]);
+  }
+
+  return new Set([...groups.values()].map((g) => JSON.stringify(g.sort())));
+}
+
+/** Undoes applied edits, last first. */
+function revertAll(edits: Edit[]) {
+  for (const e of [...edits].reverse()) e.revert();
+}
+
+/**
+ * Builds a move or placement (`build` applies it, offset by the step it's given, and returns its edits). If that
+ * leaves exactly one moved terminal sitting on another part's terminal with no wire there, which LiveSPICE wouldn't
+ * connect, it's built again one grid step away from that part (awayFrom), with a wire across the gap. The spaced
+ * version is kept only if joining that pair is the only difference it makes to what connects to what; otherwise the
+ * move is built as it was asked for. Returns the edits it applied.
+ */
+export function spaceApart(
+  doc: SchematicDocument,
+  layouts: LayoutCache,
+  wireNameOf: (c: ComponentData) => string | undefined,
+  moving: ReadonlySet<string>,
+  build: (by: Point) => Edit[],
+  newId: () => string,
+): Edit[] {
+  const edits = build([0, 0]);
+
+  const touches = findTouches(doc, layouts, moving);
+  if (touches.length !== 1) return edits;
+
+  const touch = touches[0]!;
+  const by = awayFrom(touch.moved, touch.other, layouts);
+  if (!by) return edits;
+
+  const expected = partition(doc, layouts, wireNameOf);
+  expected.add(JSON.stringify([terminalKey(touch.moved.id, touch.movedTerminal), terminalKey(touch.other.id, touch.otherTerminal)].sort()));
+
+  revertAll(edits);
+
+  const spaced = build(by);
+  const gap = addWire(doc, layouts, [touch.at, [touch.at[0] + by[0], touch.at[1] + by[1]]], newId);
+  if (gap) spaced.push(gap);
+
+  const after = partition(doc, layouts, wireNameOf);
+  if (after.size === expected.size && [...after].every((p) => expected.has(p))) return spaced;
+
+  revertAll(spaced);
+
+  return build([0, 0]);
 }
 
 /** Whether a wire's end connects to nothing: no other wire touches it (at an end or along it), and no symbol has a
