@@ -412,7 +412,8 @@ A property descriptor:
 | `audio.test` | `enabled`, `signal` (`"tone"`, the default, or `"inputs"`) | |
 
 - **Drivers:** `None` is the internal clock (see Simulation): one device, `Internal clock`, with no channels. `ASIO`
-  (Windows) lists the installed ASIO drivers as its devices, through NAudio. `JACK` (where libjack is installed:
+  (Windows) lists the installed ASIO drivers as its devices, through NAudio. `ALSA` (Linux) lists the sound cards
+  and opens one directly; a card a sound server (PipeWire or PulseAudio) is using is busy, so use JACK for those. `JACK` (where libjack is installed:
   JACK2, or PipeWire's JACK on Linux) has one device, `JACK server`, the running server: its channels are other
   clients' ports by full name (`system:capture_1` as an input, `system:playback_1` as an output), physical ones first.
   SpiceForge registers a port of its own for each chosen channel (`SpiceForge:in_1`, `SpiceForge:out_1`…) and
@@ -432,7 +433,7 @@ A property descriptor:
   - Checks the configuration against the device, and saves it to the settings.
   - Moves a running simulation or test to the new device, rebuilding first if the sample rate changed.
   - A channel the device doesn't have, or an unsupported `sampleRate` or `bufferSize`, fails with `invalid_value`,
-    listing what the device has in `details`. A running device is left as it was.
+    its message listing what the device has. A running device is left as it was.
 - **`audio.controlPanel`** opens the driver's own settings window, on the server's machine. For many ASIO drivers
   it's the only way to change the buffer size. If the driver then changes its rate or buffer size, the server
   restarts the device and rebuilds the simulation for the new rate.
@@ -821,7 +822,7 @@ from the command line, environment variables prefixed `SPICEFORGE_`, or `appsett
 | `--allowedOrigins` | None, besides the server's own (comma-separated) |
 | `--settings` | `%APPDATA%/SpiceForge/server-settings.json` |
 | `--userFolder` | `Documents/LiveSPICE` |
-| `--audio` | The saved driver, else `None` (`None`, `ASIO` or `JACK`) |
+| `--audio` | The saved driver, else `None` (`None`, `ASIO`, `ALSA` or `JACK`) |
 | `--audioDevice` | The saved device, else the driver's first |
 | `--audioInputs`, `--audioOutputs` | The saved channels, else the device's defaults (comma-separated names; empty for none, as `--audioOutputs=`) |
 | `--sampleRate`, `--bufferSize` | The saved ones, else the device's |
@@ -866,8 +867,9 @@ What the server needs beyond today's SpiceForge:
   position) when it builds, to report problems, nodes, controls and probes in the client's terms.
 - **Lossless files.** A file read and then written without edits should come back unchanged, apart from formatting:
   unresolved components and subcircuit bodies included. A round-trip test over the `Tests` folder checks it.
-- **Audio drivers:** AudioIOSharp's (`Dependencies/AudioIOSharp`). ASIO through NAudio's `AsioDevice` (duplex: one
-  callback reads the inputs and writes the outputs), with every driver call on one STA thread. JACK through
+- **Audio drivers:** AudioIOSharp's (its NuGet package). ASIO through NAudio's `AsioDevice` (duplex: one
+  callback reads the inputs and writes the outputs), with every driver call on one STA thread. ALSA on Linux, opening
+  hardware devices directly (full duplex, mmap). JACK through
   JackSharpCore: one `Processor` client, whose process callback hands the simulation spans of JACK's own buffers.
   WASAPI maybe later.
 - **Threading:** LiveSPICE's computer algebra isn't known to be thread-safe (see LessonsLearned.md, Validation).

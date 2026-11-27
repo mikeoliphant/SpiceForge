@@ -1145,7 +1145,7 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
 - **JackSharpCore needed a rewrite before it could carry audio.** Its process path allocated every cycle (LINQ arrays,
   an object per port, each buffer copied into a new array and pinned to copy back), and patching lived on a separate
   `Controller`, so a program that both processes and patches needed two JACK clients. JackSharpCore 1.0
-  (merged upstream; now AudioIOSharp's submodule) layers it as JACK does: `Client` has the server's state, the graph
+  (merged upstream; now AudioIOSharp's NuGet dependency) layers it as JACK does: `Client` has the server's state, the graph
   and patching; `Processor` adds ports and a process callback over spans of JACK's own buffers; `Controller` is a
   client without ports. Its tests measure 0 bytes allocated on JACK's thread over 200 cycles of audio and MIDI.
 - **Test JACK on the dummy backend.** `jackd -d dummy` runs a real server on a timer, with no sound card: the
@@ -1196,6 +1196,11 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   running and no scope gaps on either; at 128 samples a rebuild was clean on both. At 64 samples a rebuild cost 0, 2
   and 2 blocks on the branch against 1, 1 and 1 on master, three runs each: the GC-during-rebuild risk above, at the
   smallest buffer; too few runs to say whether the branch differs.
+- **AudioIOSharp comes from its NuGet package (0.1.0), as in AudioPlugSharp's standalone host.** The submodule is
+  gone, and JackSharpCore comes with the package; their license texts are in `Assets/Licenses`. Two changes came with
+  it: the library added an ALSA driver, which the server now lists on Linux, and dropped `AudioException.Details`, so
+  an `invalid_value` from `audio.setConfig` lists what the device offers in its message only. `SpiceForge.Validate
+  server` passes as before (the Speaker 7.5 nV from offline).
 
 ## Packaging
 

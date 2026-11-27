@@ -25,6 +25,7 @@ public static class About
     {
         new("LiveSPICE", "Dillon Sharlet", "MIT License", "https://github.com/dsharlet/LiveSPICE", "LiveSPICE.txt"),
         new("ComputerAlgebra", "Dillon Sharlet", "MIT License", "https://github.com/dsharlet/ComputerAlgebra", "ComputerAlgebra.txt"),
+        new("AudioIOSharp", "Mike Oliphant", "MIT License", "https://github.com/mikeoliphant/AudioIOSharp", "AudioIOSharp.txt"),
         new("JackSharpCore", "Thomas Mayer, Mike Oliphant", "MIT License", "https://github.com/mikeoliphant/JackSharpCore", "JackSharpCore.txt"),
         new("NAudio", "Mark Heath", "MIT License", "https://github.com/naudio/NAudio", "NAudio.txt"),
         // A package is self-contained, so it includes the runtime. Their third-party notices are long, and linked.

@@ -4,6 +4,3 @@
 [submodule "SpiceForgePlugin/Dependencies/UILayout"]
 	path = SpiceForgePlugin/Dependencies/UILayout
 	url = https://github.com/mikeoliphant/UILayout
-[submodule "Dependencies/AudioIOSharp"]
-	path = Dependencies/AudioIOSharp
-	url = https://github.com/mikeoliphant/AudioIOSharp

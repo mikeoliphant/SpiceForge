@@ -1026,7 +1026,7 @@ internal static class ServerCheck
         Check(config["driver"]?.GetValue<string>() == "None" && config["state"]?["open"]?.GetValue<bool>() == false,
             "audio.getConfig: the internal clock by default, closed while nothing runs");
         JsonObject bad = await client.Request("audio.setConfig", new JsonObject { ["driver"] = "None", ["sampleRate"] = 12345 });
-        Check(Code(bad) == "invalid_value" && bad["error"]?["details"]?.AsArray().Count > 0, "a rate the device doesn't offer is invalid_value, listing those it does");
+        Check(Code(bad) == "invalid_value" && bad["error"]?["message"]?.GetValue<string>().Contains("48000") == true, "a rate the device doesn't offer is invalid_value, listing those it does");
         Check(Code(await client.Request("audio.setConfig", new JsonObject { ["driver"] = "Nonesuch" })) == "invalid_value", "an unknown driver is invalid_value");
         JsonObject set = Result(await client.Request("audio.setConfig", new JsonObject { ["driver"] = "None", ["sampleRate"] = 44100, ["bufferSize"] = 128 }));
         Check(set["sampleRate"]?.GetValue<int>() == 44100 && set["bufferSize"]?.GetValue<int>() == 128, "audio.setConfig applies a rate and buffer size");

@@ -78,7 +78,7 @@ public static class AudioJson
         return json;
     }
 
-    /// <summary>The API error an audio error is.</summary>
+    /// <summary>The API error an audio error is. Its message says what the device does offer, for a value it doesn't.</summary>
     public static ApiException ToApiException(this AudioException ex) => new(
         ex.Kind switch
         {
@@ -88,11 +88,5 @@ public static class AudioJson
             AudioErrorKind.Unavailable => ErrorCodes.AudioUnavailable,
             _ => ErrorCodes.Unsupported,
         },
-        ex.Message,
-        ex.Details switch
-        {
-            IReadOnlyList<string> names => Json.Strings(names),
-            IReadOnlyList<int> values => Json.Array(values.Select(v => (JsonNode?)v)),
-            _ => null,
-        });
+        ex.Message);
 }

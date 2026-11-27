@@ -54,7 +54,8 @@ public sealed class AudioService : IDisposable
     /// <summary>The drivers this platform has, the internal clock first.</summary>
     public IReadOnlyList<AudioDriver> Drivers => engine.Drivers;
 
-    /// <summary>The drivers this platform has: the internal clock, ASIO on Windows, and JACK where it's installed.</summary>
+    /// <summary>The drivers this platform has: the internal clock, ASIO on Windows, ALSA on Linux, and JACK where it's
+    /// installed (as <see cref="AudioEngine.PlatformDrivers"/> has them).</summary>
     public static IReadOnlyList<string> DriverNames
     {
         get
@@ -62,6 +63,8 @@ public sealed class AudioService : IDisposable
             var names = new List<string> { ClockDriver.Name };
             if (OperatingSystem.IsWindows())
                 names.Add(AsioDriver.Name);
+            if (OperatingSystem.IsLinux() && AlsaDriver.IsAvailable)
+                names.Add(AlsaDriver.Name);
             if (JackDriver.IsAvailable)
                 names.Add(JackDriver.Name);
             return names;

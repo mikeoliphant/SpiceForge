@@ -17,17 +17,18 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
 - [UILayout](https://github.com/mikeoliphant/UILayout) (Mozilla Public License 2.0), in
   `SpiceForgePlugin/Dependencies/UILayout`: the plugin's user interface and the image sheet processor that renders its
   textures. MPL 2.0 applies file by file, so UILayout's files stay under it while SpiceForge's own code is MIT.
-- [AudioIOSharp](https://github.com/mikeoliphant/AudioIOSharp) (MIT), in `Dependencies/AudioIOSharp`: real-time,
+
+### NuGet packages
+
+- [AudioIOSharp](https://github.com/mikeoliphant/AudioIOSharp) (`AudioIOSharp` 0.1.0; MIT): real-time,
   allocation-free audio I/O, shared with AudioPlugSharp's standalone host. SpiceForgeServer's audio drivers (the
   internal clock, ASIO and JACK) and the engine that runs a simulation on them, falling back to the clock, started
-  here and moved there.
-- [JackSharpCore](https://github.com/mikeoliphant/JackSharpCore) (MIT), in `Dependencies/AudioIOSharp/Dependencies/JackSharpCore`
-  (AudioIOSharp's submodule): a .NET wrapper of the JACK audio library, for the JACK support. It's a fork of
+  here and moved there; it has since added ALSA.
+- [JackSharpCore](https://github.com/mikeoliphant/JackSharpCore) (`JackSharpCore` 1.1.1, through AudioIOSharp; MIT): a
+  .NET wrapper of the JACK audio library, for the JACK support. It's a fork of
   [JackSharp](https://github.com/residuum/JackSharp) by Thomas Mayer, by way of
   [h3ll5ur7er/JackSharp](https://github.com/h3ll5ur7er/JackSharp)'s move to .NET Core, and finds the native JACK
   library with `NativeLibrary` on each platform.
-
-### NuGet packages
 
 - [AudioPlugSharp](https://github.com/mikeoliphant/AudioPlugSharp) (`AudioPlugSharp`, `AudioPlugSharpVst3`,
   `AudioPlugSharpHost`; MIT): the VST3 bridge, and the stand-alone ASIO host. The host talks to ASIO drivers through its
