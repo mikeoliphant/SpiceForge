@@ -930,6 +930,40 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   it. Pixels rather than schematic units, so the handle is the same size at any zoom. Checked in the scratch script:
   free and connected ends (a terminal, another wire's end, a mere crossing), the routes, and an extension onto a
   terminal with undo and redo exact.
+- **A part taken out of a wire heals it, and a part dropped on a wire is wired in.** Shift-moving a part used to
+  leave a gap in the wire it sat in. Now, at the press, `findHeals` finds each moving part's pairs of terminals that
+  line up where each has a wire (not moving) ending there and going on along their line, away from the other: the
+  part sits in a wire, and a detached move previews a plain wire across the gap (the same `ChangeEdit` swap as the
+  followers) and joins it with `addWire` on release, so the run becomes one wire again. One side wired, or wires
+  meeting the part at a corner, heal nothing. The reverse, `insertSymbols`, runs after a move, a placement and a
+  library drop: for each pair of lined-up terminals, widest first, if the wires along that line cover the whole span
+  between them and nothing else connects inside it (another wire's end, another part's terminal), the span is cut out
+  of them, so the wire runs into one terminal and out of the other instead of shorting it. A junction inside the
+  span leaves it alone, since cutting would strand the branch. Pasting doesn't insert. A scratch script (a part with
+  terminals 40 apart) checked: a heal to one 200-unit wire, no heal with one side or a corner, inserts into one wire,
+  across two collinear wires, over an exact-span wire, and vertically; no insert over a junction or a partial span;
+  a shift-move from one wire to another (heal and insert) and a 10-unit slide along its own wire, with undo and redo
+  exact. Not handled: a chain of parts moved together heals nothing (their shared terminals have no wire), and a part
+  wired in only by one terminal landing mid-wire isn't joined.
+- **A move tows the parts that hang off it: those its wires reach that connect to nothing else.** `findTowed` takes
+  each part, not moving, with a terminal at the far end of a moving wire (either end of a selected wire, the fixed
+  end of a follower), and tows it if it connects to no other part. Towed parts join the move, and the followers are
+  found for the selection plus them, so the wires between move whole and their other wires reroute as followers. The
+  first two versions towed only when the moving wires reached exactly one part, which almost never happens: the Boss
+  SD-1's Level pot reaches GND2, R10 and (round a corner) the output, so moving it towed nothing, though GND2 hangs
+  off it alone. Counting is unnecessary once "connects to nothing else" is checked. "Nothing else" is a flood over
+  the wires not moving from each of its terminals, stopping at the moving terminals (so the wires it's towed by lead
+  nowhere further), with wires touching along their length and terminals on a wire's middle connecting as in
+  LiveSPICE: an unconnected terminal, a dangling stub, or a wire looping back to the moved part is fine; a wire on to
+  another part, through a T or not, or a terminal sitting on another part's, isn't. Without that check, towing a lone
+  neighbour dragged it away from the rest of its circuit. A follower ending on a junction or a corner rather than a
+  terminal reaches no part, so it tows nothing. Shift (detached) tows nothing, since the wires stay put. Towed parts
+  move live (in and out with the followers' preview, so a cancel or a Shift toggle puts them back) but aren't
+  selected. Scratch-checked: towing (their wire moves whole, a dangling wire on the towed part becomes an L), both
+  lone neighbours of a part towed, a selected wire towing the part at its end, a bare terminal and a loop back to the
+  moved part still towing; a junction, a wire on to a third part, the same through a T, and a terminal touching a
+  third part towing nothing; Level's surroundings from the SD-1 file (GND2 towed, R10 and the output not); undo and
+  redo exact.
 - **Stop Enter where it's handled, or it presses the button focus returns to.** Enter in Save As's name box saved and
   closed the dialog on keydown; closing a modal dialog returns focus to what opened it, the toolbar's Save As button,
   and the same keypress then activated that button. The dialog came straight back with the old name (the write hadn't

@@ -5,7 +5,7 @@
 import { ChangeEdit, CompositeEdit, type Edit } from "./edits";
 import { boxIntersects, mapBox, mapPoint, mappingOf, pointOnSegment, wireIntersects, type Box } from "./geometry";
 import type { LayoutCache } from "./layouts";
-import type { Element, Point, SchematicDocument, WireElement } from "./protocol";
+import type { Element, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
 
 /**
  * The wire tool's route: from the drag's first point to its last, straight if they line up, else an L whose first
@@ -159,6 +159,66 @@ export function findFollowers(doc: SchematicDocument, layouts: LayoutCache, movi
 }
 
 /**
+ * The parts a move tows along: each symbol not moving with a terminal at the far end of a moving wire (either end of
+ * a moved wire, the fixed end of a follower), if that's its only connection: it connects to no other part (its other
+ * terminals may be unconnected, or wired to nothing but the move). Its own wires then follow it.
+ */
+export function findTowed(doc: SchematicDocument, layouts: LayoutCache, moving: ReadonlySet<string>): string[] {
+  const points: Point[] = doc.elements.filter((e) => moving.has(e.id)).flatMap((e) => terminalsOf(e, layouts));
+  const ends: Point[] = [];
+  for (const e of doc.elements) {
+    if (e.kind !== "wire") continue;
+
+    if (moving.has(e.id)) {
+      ends.push(e.a, e.b);
+      continue;
+    }
+
+    const movesA = points.some((p) => same(p, e.a));
+    const movesB = points.some((p) => same(p, e.b));
+    if (movesA !== movesB) ends.push(movesA ? e.b : e.a);
+  }
+
+  const reached = doc.elements.filter((e) => e.kind === "symbol" && !moving.has(e.id) && terminalsOf(e, layouts).some((t) => ends.some((p) => same(p, t))));
+
+  return reached.filter((e) => !reachesOthers(doc, layouts, e, moving, points)).map((e) => e.id);
+}
+
+/**
+ * Whether any of a part's terminals connects to a part outside the move: directly (a terminal at the same point), or
+ * through wires not moving. The search stops at the moving terminals, so the wires the part is towed by lead nowhere
+ * further; a wire touching another along its length, or a terminal on a wire's middle, connects, as in LiveSPICE.
+ */
+function reachesOthers(doc: SchematicDocument, layouts: LayoutCache, part: Element, moving: ReadonlySet<string>, stops: Point[]): boolean {
+  const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire" && !moving.has(e.id));
+  const own = terminalsOf(part, layouts);
+  const reached = new Set<WireElement>();
+  const visited: Point[] = [];
+  const frontier: Point[] = [...own];
+  while (frontier.length > 0) {
+    const p = frontier.pop()!;
+    if (visited.some((v) => same(v, p))) continue;
+
+    visited.push(p);
+    if (stops.some((s) => same(s, p))) continue;
+
+    for (const w of wires) {
+      if (reached.has(w) || !pointOnSegment(p, w.a, w.b)) continue;
+
+      reached.add(w);
+      frontier.push(w.a, w.b);
+      // Wires ending along this one's length connect to it too.
+      for (const v of wires) for (const end of [v.a, v.b]) if (v !== w && pointOnSegment(end, w.a, w.b)) frontier.push(end);
+    }
+  }
+
+  const others = doc.elements.filter((e) => e.kind === "symbol" && e !== part && !moving.has(e.id));
+  const connects = (t: Point) => own.some((o) => same(o, t)) || [...reached].some((w) => pointOnSegment(t, w.a, w.b));
+
+  return others.some((e) => terminalsOf(e, layouts).some(connects));
+}
+
+/**
  * Where a follower runs after a move by `by`: paths from its moved end to its fixed one. A wire with both ends moving
  * moves whole. A wire with an elbow keeps its direction, and the corner slides across with the moved end, so the
  * elbow's wire lengthens or shortens to it. Otherwise a horizontal or vertical wire stays straight if its ends still
@@ -178,6 +238,118 @@ export function followerPaths(f: Follower, [dx, dy]: Point): Point[][] {
   if (from[1] === to[1]) return [[moved, [to[0], moved[1]], to]];
   if (from[0] === to[0]) return [[moved, [moved[0], to[1]], to]];
   return [[moved, to]];
+}
+
+/** The pairs of a symbol's terminals that line up horizontally or vertically, farthest apart first. */
+function alignedPairs(terminals: Point[]): [Point, Point][] {
+  const pairs: [Point, Point][] = [];
+  for (let i = 0; i < terminals.length; i++) {
+    for (let j = i + 1; j < terminals.length; j++) {
+      const [p, q] = [terminals[i]!, terminals[j]!];
+      if (horizontal(p, q) || vertical(p, q)) pairs.push([p, q]);
+    }
+  }
+
+  const length = ([p, q]: [Point, Point]) => Math.abs(q[0] - p[0]) + Math.abs(q[1] - p[1]);
+
+  return pairs.sort((x, y) => length(y) - length(x));
+}
+
+/**
+ * The wires that heal the gaps a detached move (Shift held) leaves: for each moving symbol sitting in a wire, a path
+ * between the two terminals it sat on, where they were. A symbol sits in a wire between two terminals that line up
+ * when each has a wire, not moving, ending there and going on along their line, away from the other. A symbol with
+ * more than two terminals in line heals its widest such span only, once.
+ */
+export function findHeals(doc: SchematicDocument, layouts: LayoutCache, moving: ReadonlySet<string>): Point[][] {
+  const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire" && !moving.has(e.id));
+  const leaves = (p: Point, q: Point) =>
+    wires.some((w) => {
+      const far = same(w.a, p) ? w.b : same(w.b, p) ? w.a : null;
+      return far !== null && pointOnLine(far, p, q) && (far[0] - p[0]) * (q[0] - p[0]) + (far[1] - p[1]) * (q[1] - p[1]) < 0;
+    });
+
+  const heals: Point[][] = [];
+  for (const s of doc.elements) {
+    if (s.kind !== "symbol" || !moving.has(s.id)) continue;
+
+    const healed: [Point, Point][] = [];
+    for (const [p, q] of alignedPairs(terminalsOf(s, layouts))) {
+      if (healed.some(([a, b]) => pointOnSegment(p, a, b) && pointOnSegment(q, a, b))) continue;
+      if (!leaves(p, q) || !leaves(q, p)) continue;
+
+      heals.push([p, q]);
+      healed.push([p, q]);
+    }
+  }
+
+  return heals;
+}
+
+/**
+ * Takes the span between two of a symbol's terminals, lined up, out of the wires along it, so the symbol sits in the
+ * wire rather than being shorted by it: the wires along the line must cover the whole span, and nothing else may
+ * connect inside it (another wire's end, or another symbol's terminal), or it changes nothing. Wires in `moving` are
+ * left alone. Applied now, and returned as an edit; null if it changed nothing.
+ */
+function cutSpan(doc: SchematicDocument, layouts: LayoutCache, p: Point, q: Point, own: Point[], moving: ReadonlySet<string>, newId: () => string): Edit | null {
+  const axis = p[1] === q[1] ? 0 : 1;
+  const lo = Math.min(p[axis], q[axis]);
+  const hi = Math.max(p[axis], q[axis]);
+  const span = (w: WireElement): Point => [Math.min(w.a[axis], w.b[axis]), Math.max(w.a[axis], w.b[axis])];
+  const at = (v: number): Point => (axis === 0 ? [v, p[1]] : [p[0], v]);
+  const inside = (x: Point) => pointOnSegment(x, p, q) && !same(x, p) && !same(x, q);
+
+  const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire");
+  const along = wires.filter((w) => !moving.has(w.id) && !same(w.a, w.b) && pointOnLine(w.a, p, q) && pointOnLine(w.b, p, q));
+
+  let reach = lo;
+  for (const [s, e] of along.map(span).sort((x, y) => x[0] - y[0])) {
+    if (s > reach) break;
+    reach = Math.max(reach, e);
+  }
+  if (reach < hi) return null;
+
+  const others = wires.filter((w) => !along.includes(w));
+  if (others.some((w) => inside(w.a) || inside(w.b))) return null;
+
+  const symbols = doc.elements.filter((e) => e.kind === "symbol");
+  if (symbols.flatMap((e) => terminalsOf(e, layouts)).some((t) => inside(t) && !own.some((o) => same(o, t)))) return null;
+
+  const removed: WireElement[] = [];
+  const added: WireElement[] = [];
+  for (const w of along) {
+    const [s, e] = span(w);
+    if (e <= lo || s >= hi) continue;
+
+    removed.push(w);
+    if (s < lo) added.push({ id: newId(), kind: "wire", a: at(s), b: at(lo) });
+    if (e > hi) added.push({ id: newId(), kind: "wire", a: at(hi), b: at(e) });
+  }
+  if (removed.length === 0) return null;
+
+  const edit = new ChangeEdit("Insert", doc, removed, added);
+  edit.apply();
+
+  return edit;
+}
+
+/**
+ * Wires symbols in where they lie on a wire: for each pair of a symbol's terminals that line up, widest first, the
+ * wire between them is taken out (cutSpan), so the wire now runs into one terminal and out of the other. Wires in
+ * `moving` (moved with the symbols) are left alone. Applied now, as one edit; null if nothing changed.
+ */
+export function insertSymbols(doc: SchematicDocument, layouts: LayoutCache, symbols: SymbolElement[], moving: ReadonlySet<string>, newId: () => string): Edit | null {
+  const edits: Edit[] = [];
+  for (const s of symbols) {
+    const own = terminalsOf(s, layouts);
+    for (const [p, q] of alignedPairs(own)) {
+      const edit = cutSpan(doc, layouts, p, q, own, moving, newId);
+      if (edit) edits.push(edit);
+    }
+  }
+
+  return edits.length > 0 ? new CompositeEdit("Insert", edits) : null;
 }
 
 /** Whether a wire's end connects to nothing: no other wire touches it (at an end or along it), and no symbol has a

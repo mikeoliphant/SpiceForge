@@ -6,7 +6,11 @@
 //   pointer in grid steps, live, and the whole drag is one undo step (right button or Escape cancels it). Releasing
 //   without moving selects just that element. Wires with an end on what moves (a moved symbol's terminal, a moved
 //   wire's end) follow it, rerouted straight or as an L, or sliding a plain corner along (wires.ts, followerPaths), and joined as the wire tool joins
-//   them, in the same undo step; holding Shift (at the press or during the drag) leaves them where they are.
+//   them, in the same undo step. A part those wires reach (at a moved wire's end, or a following wire's fixed end)
+//   that connects to nothing else moves too, and its own wires follow it (wires.ts, findTowed). Holding Shift (at the
+//   press or during the drag) leaves the wires, and any towed parts, where they are, and
+//   heals the wire a moved part sat in (wires.ts, findHeals). A part dropped with two of its terminals on a wire
+//   (moved, placed, or dropped from the library) is wired into it: the wire between them goes (wires.ts, insertSymbols).
 //   Pressing within a few pixels of a wire's free end (one that connects to nothing) drags that end instead, and the
 //   wire extends to it: straight, or an L going on in its old direction (wires.ts, extendPath);
 // - pressing on empty space, or with Ctrl, starts a rubber band. Releasing without moving is a click: Ctrl toggles the
@@ -29,7 +33,7 @@ import type { LayoutCache } from "./layouts";
 import type { ComponentData, Element, Layout, Point, SchematicDocument, SymbolElement, WireElement } from "./protocol";
 import { drawGhost, renderDocument, selectionBox, type Rendered } from "./render";
 import type { SchematicView } from "./view";
-import { addWire, extendPath, findFollowers, findWirePath, followerPaths, followerWires, isFreeEnd, type Follower } from "./wires";
+import { addWire, extendPath, findFollowers, findHeals, findTowed, findWirePath, followerPaths, followerWires, insertSymbols, isFreeEnd, type Follower } from "./wires";
 import { computeNodes } from "./connectivity";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -48,10 +52,17 @@ type Gesture =
       last: Point;
       total: Point;
       pressed: string;
-      /** The wires attached to what moves, which follow it unless detached (Shift held). */
+      /** The parts connected only by the moving wires, which move with them unless detached (wires.ts, findTowed). */
+      towed: Set<string>;
+      /** How far the towed parts have been moved, while they're moved. */
+      towedBy: Point | null;
+      /** The wires attached to what moves (the towed parts included), which follow it unless detached (Shift held). */
       followers: Follower[];
       detached: boolean;
-      /** The followers' rerouted stand-ins while dragging: plain wires, joined properly on release. */
+      /** The wires that close the gaps moved parts leave in wires they sat in, when detached. */
+      heals: Point[][];
+      /** The followers' rerouted stand-ins (or the heals, detached) while dragging: plain wires, joined properly on
+       * release. */
       preview: ChangeEdit | null;
     }
   | { kind: "wire"; pointer: number; mouse: Point[] }
@@ -518,31 +529,61 @@ Connects ${shown.join(", ")}` : label);
       // Select-and-drag in one gesture: an unselected element becomes the selection first.
       if (!this.selection.has(hit)) this.select([hit], true);
       const ids = new Set(this.selection);
-      const followers = findFollowers(this.doc, this.layouts, ids);
-      this.gesture = { kind: "move", pointer: e.pointerId, ids, last: at, total: [0, 0], pressed: hit, followers, detached: e.shiftKey, preview: null };
+      const towed = new Set(findTowed(this.doc, this.layouts, ids));
+      const followers = findFollowers(this.doc, this.layouts, new Set([...ids, ...towed]));
+      const heals = findHeals(this.doc, this.layouts, ids);
+      this.gesture = {
+        kind: "move",
+        pointer: e.pointerId,
+        ids,
+        last: at,
+        total: [0, 0],
+        pressed: hit,
+        towed,
+        towedBy: null,
+        followers,
+        detached: e.shiftKey,
+        heals,
+        preview: null,
+      };
       this.svg.classList.add("moving");
     } else {
       this.gesture = { kind: "band", pointer: e.pointerId, from: at, to: at, hit, additive: ctrl };
     }
   }
 
-  /** SymbolTool.MouseDown: places a copy of the ghost, selects it, and returns to the selection tool unless Ctrl is
-   * held. The copy's layout is fetched first: a renamed copy's differs (its name is drawn). */
+  /** SymbolTool.MouseDown: places a copy of the ghost, wired in if it lands on a wire, selects it, and returns to the
+   * selection tool unless Ctrl is held. The copy's layout is fetched first: a renamed copy's differs (its name is
+   * drawn). */
   private async place(tool: Extract<Tool, { kind: "place" }>, at: Point, keepTool: boolean) {
     if (!this.doc) return;
+
     const symbol: SymbolElement = {
       ...this.ghostSymbol(tool, at),
       id: this.newId(),
       component: structuredClone(tool.component),
     };
     nameAdded(this.doc, [symbol]);
+
     try {
       await this.layouts.fetch([symbol.component]);
     } catch (e) {
       this.onError((e as Error).message);
       return;
     }
-    this.addElements([symbol], "Add");
+
+    // The document may have been closed while the layout was fetched.
+    const doc = this.doc;
+    if (!doc) return;
+
+    const add = new ChangeEdit("Add", doc, [], [symbol]);
+    add.apply();
+
+    const inserted = insertSymbols(doc, this.layouts, [symbol], new Set(), this.newId);
+    this.commit(inserted ? new CompositeEdit("Add", [add, inserted]) : add);
+
+    this.select([symbol.id], true);
+
     if (!keepTool) this.setTool({ kind: "select" });
   }
 
@@ -705,9 +746,26 @@ Connects ${shown.join(", ")}` : label);
 
   // ---- Wires following a move ----
 
-  /** Puts the followers' rerouted stand-ins in place of them, for the move so far (unless detached). */
+  /** Puts the followers' rerouted stand-ins in place of them, for the move so far; or, detached, the heals. */
   private follow(g: Extract<Gesture, { kind: "move" }>) {
-    if (!this.doc || g.detached || g.followers.length === 0 || (g.total[0] === 0 && g.total[1] === 0)) return;
+    if (!this.doc || (g.total[0] === 0 && g.total[1] === 0)) return;
+
+    if (g.detached) {
+      if (g.heals.length === 0) return;
+
+      const heals: Element[] = g.heals.map(([a, b]) => ({ id: this.newId(), kind: "wire", a: a!, b: b! }));
+      g.preview = new ChangeEdit("", this.doc, [], heals);
+      g.preview.apply();
+      return;
+    }
+
+    if (g.towed.size > 0) {
+      moveElements(this.doc, g.towed, g.total);
+      g.towedBy = g.total;
+    }
+
+    if (g.followers.length === 0) return;
+
     const stand: Element[] = [];
     for (const path of g.followers.flatMap((f) => followerPaths(f, g.total))) {
       for (let i = 0; i + 1 < path.length; i++) {
@@ -719,10 +777,13 @@ Connects ${shown.join(", ")}` : label);
     g.preview.apply();
   }
 
-  /** Takes the stand-ins out, and the followers back where they were. */
+  /** Takes the stand-ins out, and the followers and the towed parts back where they were. */
   private unfollow(g: Extract<Gesture, { kind: "move" }>) {
     g.preview?.revert();
     g.preview = null;
+
+    if (g.towedBy && this.doc) moveElements(this.doc, g.towed, [-g.towedBy[0], -g.towedBy[1]]);
+    g.towedBy = null;
   }
 
   /** Shift, pressed or released during a move: the wires let go of what moves, or follow it again. */
@@ -735,20 +796,35 @@ Connects ${shown.join(", ")}` : label);
     this.redraw();
   }
 
-  /** Ends a move as one undo step: the move, and the followers rerouted and joined as the wire tool joins wires. */
+  /** Ends a move as one undo step: the move; the followers rerouted and joined as the wire tool joins wires, or,
+   * detached, the gaps healed; and the moved parts wired into any wire they now lie on. */
   private finishMove(g: Extract<Gesture, { kind: "move" }>) {
-    if (!this.doc) return;
-    const following = g.preview !== null;
+    const doc = this.doc;
+    if (!doc) return;
+
     this.unfollow(g);
-    const move = new MoveEdit(this.doc, g.ids, g.total);
-    if (!following) {
-      this.commit(move);
-      return;
+
+    // The towed parts move with the rest, unless detached.
+    const towed = !g.detached && g.towed.size > 0;
+    const moving = towed ? new Set([...g.ids, ...g.towed]) : g.ids;
+    if (towed) moveElements(doc, g.towed, g.total);
+
+    const edits: Edit[] = [new MoveEdit(doc, moving, g.total)];
+    if (g.detached) {
+      edits.push(...g.heals.flatMap((path) => addWire(doc, this.layouts, path, this.newId) ?? []));
+    } else if (g.followers.length > 0) {
+      const removed = new ChangeEdit("Move", doc, g.followers.flatMap(followerWires), []);
+      removed.apply();
+      edits.push(removed);
+
+      const paths = g.followers.flatMap((f) => followerPaths(f, g.total));
+      edits.push(...paths.flatMap((path) => addWire(doc, this.layouts, path, this.newId) ?? []));
     }
-    const removed = new ChangeEdit("Move", this.doc, g.followers.flatMap(followerWires), []);
-    removed.apply();
-    const paths = g.followers.flatMap((f) => followerPaths(f, g.total));
-    const added = paths.flatMap((path) => addWire(this.doc!, this.layouts, path, this.newId) ?? []);
-    this.commit(new CompositeEdit("Move", [move, removed, ...added]));
+
+    const moved = doc.elements.filter((e): e is SymbolElement => e.kind === "symbol" && moving.has(e.id));
+    const inserted = insertSymbols(doc, this.layouts, moved, moving, this.newId);
+    if (inserted) edits.push(inserted);
+
+    this.commit(edits.length === 1 ? edits[0]! : new CompositeEdit("Move", edits));
   }
 }
