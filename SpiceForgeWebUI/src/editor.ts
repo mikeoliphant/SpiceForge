@@ -1,5 +1,6 @@
-// The document being edited, its selection and history, and the editing tools. They started as ports of LiveSPICE's
-// (UISpec.md, Tools); where LiveSPICE's behaviour didn't make good sense, they now differ (WebSocketApi.md, Editing).
+// The document being edited, its selection and history, and the editing tools, as UISpec.md (Schematic editor)
+// describes them. They started as ports of LiveSPICE's; where its behaviour didn't make good sense, they now differ
+// (UISpec.md, Departures from LiveSPICE; WebSocketApi.md, Editing).
 //
 // Selection tool:
 // - pressing on an element, without Ctrl, selects it (if it wasn't) and starts a move: the selection follows the

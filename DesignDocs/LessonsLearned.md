@@ -837,8 +837,7 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   but toggles the symbol's own flip, which mirrors its local y axis. For a symbol at an odd rotation that axis is
   horizontal on screen, so the symbol mirrors left-right while its position mirrors top-bottom. On the Pro Co Rat
   rotated once, a flip left 9 terminals unconnected, in LiveSPICE's own code as in the web editor. The web editor
-  matches it, so files behave the same in both, and the README says how to avoid it. Fixing it (flipping x
-  instead at odd rotations) would be a deliberate departure from LiveSPICE.
+  first matched it; it now departs from it (below), since the file format doesn't depend on how a flip is done.
 - **Wire joining matches LiveSPICE's `AddWire`, checked on randomized paths.** `AddWire` lives in the WPF editor, so a
   scratch program carried a near-verbatim copy of it (with `CoincidentWires` and `InRect`), running on LiveSPICE's
   own `Schematic`, `Wire` and `Symbol`. It and the web editor each drew the same 60 paths, from a fixed seed, on the
@@ -860,13 +859,10 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
 - **The editor no longer copies LiveSPICE's editor; it keeps its file format.** Matching LiveSPICE's behaviour
   exactly had done its job: it gave a full editor quickly, and the checks against LiveSPICE's own code showed the
   geometry right. From there it mostly preserved rough edges, so the guideline became "does the operation make good
-  sense", with a fixed contract: the file format, symbol geometry, and connectivity. First departures:
-  - flipping a rotated part also negates its rotation (F·R(r)·S(s) = R(−r)·S(−s)). On the Pro Co Rat rotated and
-    flipped, that leaves 0 unconnected terminals, against LiveSPICE's 9;
-  - pressing on an unselected part selects and drags it in one gesture;
-  - a paste lands under the pointer, not on top of the original;
-  - a wire's first leg follows the direction the drag starts in, instead of a distance heuristic whose own comment
-    says it's wrong.
+  sense", with a fixed contract: the file format, symbol geometry, and connectivity. UISpec.md lists the departures
+  (its last section). The flip's is checked: negating a rotated part's rotation as well (F·R(r)·S(s) =
+  R(−r)·S(−s)) leaves the Pro Co Rat, rotated and flipped, with 0 unconnected terminals, against LiveSPICE's 9. The
+  wire tool's old route came from a distance heuristic whose own comment says it's wrong.
 - **The contract is checked against the server, not against LiveSPICE's editor.** `SpiceForgeWebUI`'s conformance
   test compares the client's nodes with `circuit.check` (LiveSPICE's `Circuit.Schematic`) on all 53 test schematics,
   as loaded and after 8 random edits each: 477 comparisons, none differing. The scratch copies of LiveSPICE's editor
@@ -882,80 +878,55 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   bind.
 - **Theme the drawing with classes, not colours.** The renderer wrote LiveSPICE's colours into the SVG as `stroke` and
   `fill` attributes, which CSS variables can't reach. It now writes a class per edge colour (`s-red`, `f-red`) and per
-  role (`wire-line`, `terminal unconnected`, the ghost group), and `themes.css` maps them to tokens. Six themes
-  (System, Light, Dark, Dim, Paper, High contrast) are each one block of about 45 tokens; the Light block reproduces
-  the old look exactly (compared by screenshot on the Pro Co Rat).
+  role (`wire-line`, `terminal unconnected`, the ghost group), and `themes.css` maps them to tokens. Each theme is
+  one block of about 45 tokens; the Light block reproduces the old look exactly (compared by screenshot on the Pro
+  Co Rat).
 - **Dark themes need a selection colour that isn't blue.** Light blue wires on a dark canvas and a DodgerBlue
-  selection were hard to tell apart; the dark themes select in amber, High contrast in yellow.
+  selection were hard to tell apart.
 - **Muted text isn't a disabled colour.** High contrast's muted grey is nearly white, so disabled buttons looked live.
   Disabled controls have their own token.
 - **Apply the stored theme before the first paint.** A small inline script in `index.html` sets `data-theme` from
-  localStorage, so a dark theme doesn't flash white while the module loads. The server's client settings hold the
-  same choice and win once connected, so it survives clearing the browser and follows to another one.
+  localStorage, so a dark theme doesn't flash white while the module loads.
 - **A hidden element leaves a CSS grid's rows.** The page is a grid of rows (toolbar, tabs, banner, workspace,
   status). The banner hides with `display: none`, which takes it out of the grid, so every later element moved up a
   row. The status bar got the stretchy row, the canvas almost none, and clicks on the canvas landed on the footer.
   Named grid areas fix each element's row whether the banner shows or not.
 - **Compare paths with either slash.** A file named in the address with forward slashes, and reported by the server
   with backslashes, opened twice in tabs. The comparison now normalises slashes and ignores case, as Windows does.
-- **The editor completes a file's life:** New, Save As (with a save mode of the file dialog), tabs that each keep
-  their history, selection and view, reopened after a reload, a banner when an open file changes on disk, node names
-  in wire tooltips, and a context menu. A scripted session checked each, on copies of the Pro Co Rat and a new
-  schematic saved as NewOne.
-- **Browsers keep some of LiveSPICE's shortcuts.** Ctrl+W and Ctrl+T can't be taken by a page, so the tools also
-  have plain letters (W, G, P, R, C, L, T). LiveSPICE's other Ctrl shortcuts work too.
-- **Moved parts drag their wires, rerouted with plain wires and joined once on release.** The editor used to
-  move only the selection, so moving a part left its wires behind and broke its connections. Now unselected wires with an end on a moved terminal
-  (or a moved wire's end) follow it: straight if the ends still line up, else an L that leaves the terminal in the
-  wire's old direction and turns at the fixed end's line. While dragging, the stand-ins are plain wires swapped in and
-  out with one `ChangeEdit` per pointer step, so a cancel or a Shift toggle just reverts it. On release the followers go
-  through `addWire`, so they merge and split as drawn wires do, and the move, the removal and the joins are one
-  `CompositeEdit`. A scratch script checked the routes (straight, L, both ends moving, slanted) and that undo and redo
-  give back the document exactly. Shift is the override, at the press or during the drag: Ctrl+press is already the
-  rubber band, so Ctrl could only have worked mid-drag. A terminal sitting on the middle of a wire (rather than at its end) is
-  connected but isn't followed, so moving that part still disconnects it.
+- **The editor completes a file's life.** New, Save As, tabs, reopening after a reload, the changed-on-disk banner,
+  wire tooltips and the context menu (UISpec.md, Files and Schematic editor) were checked by a scripted session, on
+  copies of the Pro Co Rat and a new schematic saved as NewOne.
+- **Browsers keep some of LiveSPICE's shortcuts.** A page can't take Ctrl+W or Ctrl+T, which is why the tools also
+  have plain letters.
+- **Preview a move with plain stand-in wires; join once, on release.** Moving only the selection, as the editor
+  first did, left a part's wires behind and broke its connections. The wires that follow a move (UISpec.md, Moving)
+  are previewed as plain wires, swapped in and out with one `ChangeEdit` per pointer step, so a cancel or a Shift
+  toggle just reverts it. On release they go through `addWire`, so they merge and split as drawn wires do, and the
+  move, the removal and the joins are one `CompositeEdit`. A scratch script checked the routes (straight, L, both
+  ends moving, slanted) and that undo and redo give back the document exactly. Shift is the override rather than
+  Ctrl because Ctrl+press is already the rubber band, so Ctrl could only have worked mid-drag.
 - **Slide a plain corner rather than adding a leg beside it.** With only the L route, a part whose wire turned a
   corner got a new leg collinear with the corner's other wire. Moving away from that wire's far end lengthened it
   properly. Moving toward it overlapped the wire, and `addWire` merges overlaps into their union, so the old wire kept
-  its full length and a stub dangled past the new corner. Now, when a follower's fixed end is a plain corner (exactly
-  one other wire touches the point, ending there at a right angle, neither moving nor following, and no symbol
-  terminal there), both wires are rebuilt: the corner moves across with the part, and the other wire runs from it to
-  its far end. The scratch script checked shortening (a 100-unit wire to 70), lengthening, shortening to nothing (the
-  wire goes), a diagonal move, and that a T junction keeps the L route, each with undo and redo exact.
-- **A wire's free end is a handle.** Pressing within 10 screen pixels of an end that connects to nothing (no other
-  wire touches it, at its end or along it, and no terminal is there) drags that end, not the wire. The wire runs from
-  its other end straight to the pointer if they line up, else as an L going on in its old direction, so pulling a
-  stub sideways extends and turns it rather than swinging it slanted. Preview and commit work as for followers:
-  stand-ins swapped by one `ChangeEdit`, then `addWire` on release, so dropping the end on a terminal or a wire joins
-  it. Pixels rather than schematic units, so the handle is the same size at any zoom. Checked in the scratch script:
-  free and connected ends (a terminal, another wire's end, a mere crossing), the routes, and an extension onto a
-  terminal with undo and redo exact.
-- **Wires that T into a moving wire follow it too.** Followers were only the wires with an end at a moved point (a
-  terminal, a moved wire's end), so a wire ending on the length of a moved or rerouted wire stayed put and came
-  loose. Now `findFollowers` adds tees: wires, neither moving nor already following, with an end on the length of a
-  moving wire or a follower (its own wire or its elbow's). A tee's end goes where its host now runs (`teeTarget`): it
-  stays if that's still on the host, else it slides along the tee's own line to the nearest point where that line
-  meets the host (so the tee stretches or shortens straight), else to the host's nearest point, with an L from there.
-  Tees get elbows like other followers. A wire with both ends on wires moving whole moves whole. Tees of tees aren't
-  followed (one level, as towing is), and neither is a part's terminal on a moving wire's length. Scratch-checked: a
-  selected wire moved across its tee (the tee shortens), slid along with the tee still on it (unchanged), and slid
-  past it (an L); a tee on a part's follower that became an L with an elbow (the tee meets the new leg); a rung
-  between two moved wires; undo and redo exact.
-- **A part taken out of a wire heals it, and a part dropped on a wire is wired in.** Shift-moving a part used to
-  leave a gap in the wire it sat in. Now, at the press, `findHeals` finds each moving part's pairs of terminals that
-  line up where each has a wire (not moving) ending there and going on along their line, away from the other: the
-  part sits in a wire, and a detached move previews a plain wire across the gap (the same `ChangeEdit` swap as the
-  followers) and joins it with `addWire` on release, so the run becomes one wire again. One side wired, or wires
-  meeting the part at a corner, heal nothing. The reverse, `insertSymbols`, runs after a move, a placement and a
-  library drop: for each pair of lined-up terminals, widest first, if the wires along that line cover the whole span
-  between them and nothing else connects inside it (another wire's end, another part's terminal), the span is cut out
-  of them, so the wire runs into one terminal and out of the other instead of shorting it. A junction inside the
-  span leaves it alone, since cutting would strand the branch. Pasting doesn't insert. A scratch script (a part with
-  terminals 40 apart) checked: a heal to one 200-unit wire, no heal with one side or a corner, inserts into one wire,
-  across two collinear wires, over an exact-span wire, and vertically; no insert over a junction or a partial span;
-  a shift-move from one wire to another (heal and insert) and a 10-unit slide along its own wire, with undo and redo
-  exact. Not handled: a chain of parts moved together heals nothing (their shared terminals have no wire), and a part
-  wired in only by one terminal landing mid-wire isn't joined.
+  its full length and a stub dangled past the new corner. Rebuilding both wires, with the corner moved across, fixes
+  it. The scratch script checked shortening (a 100-unit wire to 70), lengthening, shortening to nothing (the wire
+  goes), a diagonal move, and that a T junction keeps the L route, each with undo and redo exact.
+- **A free end's handle is measured in pixels, not schematic units,** so it's the same size at any zoom. Extending
+  previews and commits as followers do. Checked in the scratch script: free and connected ends (a terminal, another
+  wire's end, a mere crossing), the routes, and an extension onto a terminal, with undo and redo exact.
+- **Tees must follow too, or they come loose.** Followers were at first only the wires with an end at a moved point,
+  so a wire ending on the length of a moved or rerouted wire stayed put. `findFollowers` now adds tees, with
+  `teeTarget` choosing where each end goes, after the followers and their elbows are found (a tee's host can be an
+  elbow's wire). Scratch-checked: a selected wire moved across its tee (the tee shortens), slid along with the tee
+  still on it (unchanged), and slid past it (an L); a tee on a part's follower that became an L with an elbow (the
+  tee meets the new leg); a rung between two moved wires; undo and redo exact.
+- **Healing and wiring in are each other's reverse.** `findHeals` (at the press) and `insertSymbols` (after a move, a
+  placement or a library drop) use the same test for a part sitting in a wire: two lined-up terminals with the wire
+  running on from each. Inserting refuses a span with a junction inside, since cutting would strand the branch. A
+  scratch script (a part with terminals 40 apart) checked: a heal to one 200-unit wire, no heal with one side or a
+  corner, inserts into one wire, across two collinear wires, over an exact-span wire, and vertically; no insert over
+  a junction or a partial span; a shift-move from one wire to another (heal and insert) and a 10-unit slide along
+  its own wire, with undo and redo exact.
 - **A press on the schematic must take focus explicitly.** The editor's `pointerdown` prevents the default (so a
   drag doesn't select text), and that also stops the browser moving focus. So a property field being edited kept
   focus through a click on another part, and the panel, which doesn't rebuild under a focused field, went on showing
@@ -963,25 +934,16 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   to the component it was showing (each row holds its own subject). The panel also re-renders on `focusout`, after a
   zero-delay timeout, so it catches up whichever way focus leaves, while tabbing between fields doesn't rebuild the
   grid under the cursor.
-- **A move tows the parts that hang off it: those its wires reach that connect to nothing else.** `findTowed` takes
-  each part, not moving, with a terminal at the far end of a moving wire (either end of a selected wire, the fixed
-  end of a follower), and tows it if it connects to no other part. Towed parts join the move, and the followers are
-  found for the selection plus them, so the wires between move whole and their other wires reroute as followers. The
-  first two versions towed only when the moving wires reached exactly one part, which almost never happens: the Boss
-  SD-1's Level pot reaches GND2, R10 and (round a corner) the output, so moving it towed nothing, though GND2 hangs
-  off it alone. Counting is unnecessary once "connects to nothing else" is checked. "Nothing else" is a flood over
-  the wires not moving from each of its terminals, stopping at the moving terminals (so the wires it's towed by lead
-  nowhere further), with wires touching along their length and terminals on a wire's middle connecting as in
-  LiveSPICE: an unconnected terminal, a dangling stub, or a wire looping back to the moved part is fine; a wire on to
-  another part, through a T or not, or a terminal sitting on another part's, isn't. Without that check, towing a lone
-  neighbour dragged it away from the rest of its circuit. A follower ending on a junction or a corner rather than a
-  terminal reaches no part, so it tows nothing. Shift (detached) tows nothing, since the wires stay put. Towed parts
-  move live (in and out with the followers' preview, so a cancel or a Shift toggle puts them back) but aren't
-  selected. Scratch-checked: towing (their wire moves whole, a dangling wire on the towed part becomes an L), both
-  lone neighbours of a part towed, a selected wire towing the part at its end, a bare terminal and a loop back to the
-  moved part still towing; a junction, a wire on to a third part, the same through a T, and a terminal touching a
-  third part towing nothing; Level's surroundings from the SD-1 file (GND2 towed, R10 and the output not); undo and
-  redo exact.
+- **Tow by "connects to nothing else", not by counting.** The first two versions towed only when the moving wires
+  reached exactly one part, which almost never happens: the Boss SD-1's Level pot reaches GND2, R10 and (round a
+  corner) the output, so moving it towed nothing, though GND2 hangs off it alone. Without the "nothing else" check,
+  towing a lone neighbour dragged it away from the rest of its circuit. The check is a flood over the wires not
+  moving, from each of the part's terminals, stopping at the moving terminals, so the wires it's towed by lead
+  nowhere further. Followers are then found for the selection plus the towed parts. Scratch-checked: towing (their
+  wire moves whole, a dangling wire on the towed part becomes an L), both lone neighbours of a part towed, a selected
+  wire towing the part at its end, a bare terminal and a loop back to the moved part still towing; a junction, a
+  wire on to a third part, the same through a T, and a terminal touching a third part towing nothing; Level's
+  surroundings from the SD-1 file (GND2 towed, R10 and the output not); undo and redo exact.
 - **Stop Enter where it's handled, or it presses the button focus returns to.** Enter in Save As's name box saved and
   closed the dialog on keydown; closing a modal dialog returns focus to what opened it, the toolbar's Save As button,
   and the same keypress then activated that button. The dialog came straight back with the old name (the write hadn't
@@ -991,8 +953,7 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   inside one that exists, so a mistyped path can't create a chain. `SpiceForge.Validate server` checks both, refusals
   included: 0 problems, with the web editor's conformance (53 schematics) still passing.
 - **Show the grid as a CSS background, not SVG.** A dot pattern on the schematic `svg` element, sized and placed from
-  the view on every pan and zoom, adds nothing to the drawing, so exports never include it. Dots closer than 8 pixels
-  are thinned to every second grid point (and again), so those drawn are always snap points.
+  the view on every pan and zoom, adds nothing to the drawing, so exports never include it.
 
 ## Simulating without audio
 
@@ -1060,10 +1021,9 @@ the web front end shows it on a scope.
   cheapest wins. All three of the Rat's knobs land clear.
 - **Reset the sliders' key with the sliders.** The panel rebuilds its sliders only when the set of controls changes,
   keyed on their names. Stopping cleared the sliders but not the key, so simulating the same circuit again showed none.
-- **Remember per file in the browser; resume by id across a reload.** A schematic's probes (with where their flags
-  were clipped), scope scales, input and control positions are saved in localStorage by file path, and put back
-  after `sim.start`, skipping what no longer applies. The running simulation's id is kept in sessionStorage; after a
-  reload, `sim.get` finds it still running on the server, the panel shows it again, and a `sim.update` brings it the
+- **Remember per file in the browser; resume by id across a reload.** The setup (UISpec.md, What's remembered) is
+  saved in localStorage by file path and put back after `sim.start`. The running simulation's id is kept in
+  sessionStorage; after a reload, `sim.get` finds it still running on the server, and a `sim.update` brings it the
   schematic as reloaded. Checked on the Rat: two probes, 2 ms/div, Distortion 0.8 and a 440 Hz input survived both a
   reload and a stop and restart.
 - **The longer engine checks still pass with the capped-step counters.** `SpiceForge.Validate dynamic` and
@@ -1167,13 +1127,9 @@ driver opens a stream for one client, prepares it while stopped, and calls it on
   at 48 kHz: the tone starts at exactly 0, peaks at 0.1259, and its largest sample-to-sample step is 0.00725, the
   plain sine's own steepest, so the fades add nothing; the fade-out takes 959 samples and 577 silent ones follow
   before it reports done. The input loop, fed a steady 0.1, does the same. Not yet heard on a device.
-- **The web front end configures it in one dialog.** Audio… (in the toolbar, and Configure… in the simulation
-  panel) shows the driver, device, channels as checkboxes, rate and buffer size (with their milliseconds), the
-  driver's control panel button, and the test with per-channel meters and a scope of the summed input. A driver's
-  device info is only read when it's chosen, since loading an ASIO driver takes a moment. The simulation panel's
-  Input offers the device's open inputs ("Audio in: …") ahead of the test signals, and a line says what it plays on,
-  with the round-trip latency. Binary frames are routed by source, so the test's scope (source 0) and a
-  simulation's don't mix. Checked in headless Chrome against ASIO4ALL with its outputs unticked: the dialog read the
+- **The web front end configures it in one dialog** (UISpec.md, Audio configuration). A driver's device info is only
+  read when it's chosen, since loading an ASIO driver takes a moment. Binary frames are routed by source, so the
+  test's scope (source 0) and a simulation's don't mix. Checked in headless Chrome against ASIO4ALL with its outputs unticked: the dialog read the
   device, applied 128-sample buffers, the Rat played the mic input at 21% of real time, and the test was refused
   while it ran.
 - **Output signals are extra engine outputs, resampled as the Speakers are.** LiveSPICE's pick tool plays the

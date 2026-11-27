@@ -1,8 +1,8 @@
 # WebSocket API
 
 The protocol between a local web front end (TypeScript) and a C# server that does the audio I/O and runs the
-simulation. It covers every feature in `UISpec.md`; a table at the end maps each feature to the client or to the
-messages that serve it.
+simulation. It covers every feature in `UISpec.md` (the editor's UI), and the rest of what LiveSPICE's application
+did; a table at the end maps each feature to the client or to the messages that serve it.
 
 Version 1, draft.
 
@@ -746,35 +746,40 @@ Each area of `UISpec.md`, and what serves it:
 
 | UISpec area | Served by |
 |---|---|
-| Main window, menus, toolbar, shortcuts, docking | Client; dock layout saved through `settings.set` `client` |
-| New, Close, Exit, unsaved-changes prompts, Save All | Client |
-| Open, Save, Save As | `fs.list` for the dialogs; `file.read`, `file.write` |
+| Layout, toolbar, tabs, shortcuts, dialogs | Client |
+| Theme | Client; kept through `settings.set` `client`, followed through `settings.changed` |
+| New, closing tabs, unsaved-changes prompts | Client |
+| Open, Save, Save As, New folder, Delete | `fs.list`, `fs.mkdir` and `fs.delete` for the dialogs; `file.read`, `file.write` |
 | Recent files | `fs.recent` |
 | Files changed on disk | `file.watch`, `file.changed`; `expectModified` on write |
-| Canvas, zoom, pan, auto-scroll, selection, rubber band | Client |
+| Export | Client |
+| Canvas, zoom, pan, grid, selection, rubber band, find | Client |
 | Drawing symbols, terminals, wires | Client, from catalogue layouts (terminals binding, artwork optional) |
 | Tooltips | Client, from the document and type descriptors |
-| Move, rotate, flip, delete, undo, redo | Client, by its own editing rules (see Editing) |
+| Move (followers, tees, towing, healing, wiring in), rotate, flip, delete, undo, redo | Client, by its own editing rules (see Editing) |
 | Placing components | Catalogue `entries` and their layouts |
 | Wire tool, routing, joining | Client, by its own editing rules (see Editing) |
 | Cut, Copy, Paste | Client; `schx.toXml` and `schx.fromXml` for the desktop app's clipboard format |
-| Component library, categories, filter, refresh | `catalog.get`, `catalog.refresh`; filtering in the client |
+| Component library, categories, filter, refresh | `catalog.get`, `catalog.refresh`, `catalog.changed`; filtering in the client |
+| Component folders | `settings.get`, `settings.set` `componentFolders` |
 | Properties panel, multi-selection, schematic properties | Type descriptors; `values.check`; edits in the client |
 | Connectivity | Client, by the rules above; `circuit.check` to compare |
 | Audio configuration and test | `audio.devices`, `audio.getConfig`, `audio.setConfig`, `audio.test`, `audio.levels`, stream 0 |
-| Simulate | `sim.start` |
-| Oversample, iterations | `sim.configure` |
-| Rebuild (F5) | `sim.restart` |
+| Simulate, Stop | `sim.start`, `sim.stop` |
+| Edits following the simulation | `sim.update` |
+| Resuming after a reload | `sim.get` |
+| Oversample, iteration cap, resampling | `sim.configure` |
+| Restart | `sim.restart` |
 | Knobs, groups | Simulation `pots` with `elements`; `sim.set`; `sim.controls` |
 | Switch buttons | `switches`; `sim.click` |
 | Input sources | `inputs`; `sim.setInput` |
-| Input and output gain | `sim.setGain` |
+| Input and output gain (no controls in the editor yet) | `sim.setGain` |
 | Output signals, pick tool | `outputs`; `sim.setOutput` with `voltageOf` |
-| Signal-level lamps | `sim.levels` |
+| Meters, load | `sim.levels`, `sim.stats` |
 | Probes | `sim.probe`, `sim.removeProbes`, `sim.probes` |
 | Scope | `sim.scope` and binary frames; display in the client |
-| Log, verbosity, clear | `log` events, `log.history`, `log.setVerbosity`; clearing in the client |
-| Progress while building | `sim.state` `building` with `progress` |
+| Log (no panel in the editor yet) | `log` events, `log.history`, `log.setVerbosity` |
+| Building | `sim.state` `building` with `progress` |
 | Run-time errors, divergence, sample-rate changes | `sim.state` `error`, automatic rebuild, `audio.state` |
 | Settings | `settings.get`, `settings.set` |
 

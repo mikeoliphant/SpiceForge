@@ -17,6 +17,16 @@ and why. Add to it as progress is made, not only at the end:
 - **Correct what turns out to be wrong.** If a later measurement contradicts an earlier lesson, fix the earlier one
   rather than leaving both.
 
+## Keep the UI spec up to date
+
+`DesignDocs/UISpec.md` describes the editor's UI as it is now. A change that alters what the UI does (a gesture, a
+shortcut, a panel, a dialog, what's remembered) updates the spec in the same change, in the section it belongs to:
+
+- **The spec says what the UI does; the lessons say why.** Behaviour goes in the spec. What was tried, what was
+  measured and what didn't work stay in `LessonsLearned.md`, which can point to the spec rather than repeat it.
+- **Describe our UI, not LiveSPICE's.** Where it departs from LiveSPICE, say so in the spec's last section.
+- **Keep the Help dialog in step.** Its shortcut lists in `SpiceForgeWebUI/src/help.ts` are written by hand.
+
 ## Credit outside sources
 
 `CREDITS.md` lists the projects SpiceForge depends on and the outside work that contributed insight to its solutions.
