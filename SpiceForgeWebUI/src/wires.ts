@@ -110,6 +110,10 @@ export interface Follower {
   /** When the fixed end is a plain corner, the wire turning there, and its far end: the corner slides with the move,
    * so that wire lengthens or shortens rather than gaining a leg alongside it. */
   elbow?: { wire: WireElement; far: Point };
+  /** When the moving end is a T on a moving wire's length (not at a moved point): the follower that wire belongs to,
+   * or null for a wire moving whole, with that wire's ends when the move began. The end slides to wherever the wire
+   * now runs (teeTarget). */
+  tee?: { host: Follower | null; a: Point; b: Point };
 }
 
 const same = (p: Point, q: Point) => p[0] === q[0] && p[1] === q[1];
@@ -122,9 +126,10 @@ export function followerWires(f: Follower): WireElement[] {
 }
 
 /** The wires not being moved with an end on one of the points that are (terminals of moved symbols, ends of moved
- * wires): the wires a move drags along. Each that's horizontal or vertical, with one end moving, gets its elbow when
- * its fixed end is a plain corner: exactly one other wire touches that point, ending there, at a right angle, and
- * neither moving nor following; and no symbol has a terminal there. */
+ * wires): the wires a move drags along. Then the tees: wires, not moving or following, with an end on the length of
+ * a moving or following wire (not at its ends), which keep that end on it. Each follower that's horizontal or
+ * vertical, with one end moving, gets its elbow when its fixed end is a plain corner: exactly one other wire touches
+ * that point, ending there, at a right angle, and neither moving nor following; and no symbol has a terminal there. */
 export function findFollowers(doc: SchematicDocument, layouts: LayoutCache, moving: ReadonlySet<string>): Follower[] {
   const points: Point[] = doc.elements.filter((e) => moving.has(e.id)).flatMap((e) => terminalsOf(e, layouts));
   const wires = doc.elements.filter((e): e is WireElement => e.kind === "wire");
@@ -136,9 +141,43 @@ export function findFollowers(doc: SchematicDocument, layouts: LayoutCache, movi
     if (movesA || movesB) followers.push({ wire: e, a: e.a, b: e.b, movesA, movesB });
   }
 
-  const following = new Set(followers.map((f) => f.wire));
   const symbolTerminals = doc.elements.filter((e) => e.kind === "symbol").flatMap((e) => terminalsOf(e, layouts));
-  const claimed = new Set<WireElement>();
+  const taken = new Set<WireElement>(followers.map((f) => f.wire));
+  addElbows(followers, wires, moving, symbolTerminals, taken);
+
+  // The wires that move, with the follower each belongs to (null: moving whole).
+  const hosts: { wire: WireElement; follower: Follower | null }[] = [
+    ...wires.filter((w) => moving.has(w.id)).map((wire) => ({ wire, follower: null })),
+    ...followers.flatMap((f) => followerWires(f).map((wire) => ({ wire, follower: f }))),
+  ];
+  const onLength = (p: Point, w: WireElement) => pointOnSegment(p, w.a, w.b) && !same(p, w.a) && !same(p, w.b);
+  const tees: Follower[] = [];
+  for (const e of wires) {
+    if (moving.has(e.id) || taken.has(e)) continue;
+
+    const hostA = hosts.find((h) => onLength(e.a, h.wire));
+    const hostB = hosts.find((h) => onLength(e.b, h.wire));
+    if (!hostA && !hostB) continue;
+
+    // A wire between two wires moving whole moves whole too.
+    if (hostA && hostB && !hostA.follower && !hostB.follower) {
+      tees.push({ wire: e, a: e.a, b: e.b, movesA: true, movesB: true });
+      continue;
+    }
+
+    const host = (hostA ?? hostB)!;
+    tees.push({ wire: e, a: e.a, b: e.b, movesA: host === hostA, movesB: host !== hostA, tee: { host: host.follower, a: host.wire.a, b: host.wire.b } });
+  }
+
+  for (const t of tees) taken.add(t.wire);
+  addElbows(tees, wires, moving, symbolTerminals, taken);
+
+  return [...followers, ...tees];
+}
+
+/** Gives followers their elbows (see findFollowers), claiming each elbow's wire in `taken`. */
+function addElbows(followers: Follower[], wires: WireElement[], moving: ReadonlySet<string>, symbolTerminals: Point[], taken: Set<WireElement>) {
+  const following = new Set(taken);
   for (const f of followers) {
     if (f.movesA === f.movesB) continue;
     const [from, corner] = f.movesA ? [f.a, f.b] : [f.b, f.a];
@@ -147,15 +186,48 @@ export function findFollowers(doc: SchematicDocument, layouts: LayoutCache, movi
     const touching = wires.filter((w) => w !== f.wire && pointOnSegment(corner, w.a, w.b));
     if (touching.length !== 1) continue;
     const w = touching[0]!;
-    if (moving.has(w.id) || following.has(w) || claimed.has(w)) continue;
+    if (moving.has(w.id) || following.has(w) || taken.has(w)) continue;
     const far = same(w.a, corner) ? w.b : same(w.b, corner) ? w.a : null;
     if (!far) continue;
     // At a right angle: one horizontal, the other vertical.
     if (!(horizontal(from, corner) ? vertical(corner, far) : horizontal(corner, far))) continue;
     f.elbow = { wire: w, far };
-    claimed.add(w);
+    taken.add(w);
   }
-  return followers;
+}
+
+/**
+ * Where a tee's end goes once the wire it sat on runs along `paths`: where it was, if that's still on the wire; else
+ * the nearest point where the tee's own line meets the wire, so it stretches or shortens straight; else the nearest
+ * point of the wire, where an L will reach it.
+ */
+function teeTarget(p: Point, q: Point, paths: Point[][]): Point {
+  const segments = paths.flatMap((path) => path.slice(1).map((b, i): [Point, Point] => [path[i]!, b]));
+  if (segments.some(([a, b]) => pointOnSegment(p, a, b))) return p;
+
+  let best: Point | null = null;
+  let distance = Infinity;
+  const consider = (x: Point) => {
+    const d = Math.hypot(x[0] - p[0], x[1] - p[1]);
+    if (d < distance) [best, distance] = [x, d];
+  };
+  const clamp = (v: number, a: number, b: number) => Math.min(Math.max(v, Math.min(a, b)), Math.max(a, b));
+
+  // Along the tee's own line: k is the coordinate it keeps, v the one that varies.
+  if (horizontal(p, q) || vertical(p, q)) {
+    const k = p[0] === q[0] ? 0 : 1;
+    const v = 1 - k;
+    const point = (kv: number, vv: number): Point => (k === 0 ? [kv, vv] : [vv, kv]);
+    for (const [a, b] of segments) {
+      if (a[v] === b[v] && p[k] >= Math.min(a[k], b[k]) && p[k] <= Math.max(a[k], b[k])) consider(point(p[k], a[v]));
+      else if (a[k] === p[k] && b[k] === p[k]) consider(point(p[k], clamp(p[v], a[v], b[v])));
+    }
+  }
+  if (best) return best;
+
+  for (const [a, b] of segments) consider([clamp(p[0], a[0], b[0]), clamp(p[1], a[1], b[1])]);
+
+  return best ?? p;
 }
 
 /**
@@ -223,13 +295,15 @@ function reachesOthers(doc: SchematicDocument, layouts: LayoutCache, part: Eleme
  * moves whole. A wire with an elbow keeps its direction, and the corner slides across with the moved end, so the
  * elbow's wire lengthens or shortens to it. Otherwise a horizontal or vertical wire stays straight if its ends still
  * line up, and else becomes an L whose first leg leaves the moved end in the wire's old direction (so it still meets
- * the terminal as it did) and turns at the fixed end's line. A slanted wire just stretches.
+ * the terminal as it did) and turns at the fixed end's line. A slanted wire just stretches. A tee's moved end goes
+ * where its host wire now runs (teeTarget), and routes from there the same way.
  */
 export function followerPaths(f: Follower, [dx, dy]: Point): Point[][] {
   const shift = (p: Point): Point => [p[0] + dx, p[1] + dy];
   if (f.movesA && f.movesB) return [[shift(f.a), shift(f.b)]];
   const [from, to] = f.movesA ? [f.a, f.b] : [f.b, f.a];
-  const moved = shift(from);
+  const tee = f.tee;
+  const moved = tee ? teeTarget(from, to, tee.host ? followerPaths(tee.host, [dx, dy]) : [[shift(tee.a), shift(tee.b)]]) : shift(from);
   if (f.elbow) {
     const corner: Point = from[1] === to[1] ? [to[0], moved[1]] : [moved[0], to[1]];
     return [[moved, corner], [corner, f.elbow.far]];

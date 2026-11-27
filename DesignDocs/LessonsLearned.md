@@ -930,6 +930,17 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   it. Pixels rather than schematic units, so the handle is the same size at any zoom. Checked in the scratch script:
   free and connected ends (a terminal, another wire's end, a mere crossing), the routes, and an extension onto a
   terminal with undo and redo exact.
+- **Wires that T into a moving wire follow it too.** Followers were only the wires with an end at a moved point (a
+  terminal, a moved wire's end), so a wire ending on the length of a moved or rerouted wire stayed put and came
+  loose. Now `findFollowers` adds tees: wires, neither moving nor already following, with an end on the length of a
+  moving wire or a follower (its own wire or its elbow's). A tee's end goes where its host now runs (`teeTarget`): it
+  stays if that's still on the host, else it slides along the tee's own line to the nearest point where that line
+  meets the host (so the tee stretches or shortens straight), else to the host's nearest point, with an L from there.
+  Tees get elbows like other followers. A wire with both ends on wires moving whole moves whole. Tees of tees aren't
+  followed (one level, as towing is), and neither is a part's terminal on a moving wire's length. Scratch-checked: a
+  selected wire moved across its tee (the tee shortens), slid along with the tee still on it (unchanged), and slid
+  past it (an L); a tee on a part's follower that became an L with an elbow (the tee meets the new leg); a rung
+  between two moved wires; undo and redo exact.
 - **A part taken out of a wire heals it, and a part dropped on a wire is wired in.** Shift-moving a part used to
   leave a gap in the wire it sat in. Now, at the press, `findHeals` finds each moving part's pairs of terminals that
   line up where each has a wire (not moving) ending there and going on along their line, away from the other: the
