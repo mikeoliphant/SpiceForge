@@ -133,7 +133,14 @@ export class Editor {
     this.wirePreview.style.display = "none";
     overlay.append(this.band, this.ghost, this.wirePreview);
 
-    svg.addEventListener("pointerdown", (e) => this.pointerDown(e));
+    // A press on the schematic takes focus from a field being edited (the properties panel's), committing it: the
+    // gestures prevent the default, which would otherwise have moved focus.
+    svg.addEventListener("pointerdown", (e) => {
+      const active = document.activeElement;
+      if (active instanceof HTMLInputElement || active instanceof HTMLSelectElement || active instanceof HTMLTextAreaElement) active.blur();
+
+      this.pointerDown(e);
+    });
     svg.addEventListener("pointermove", (e) => this.pointerMove(e));
     svg.addEventListener("pointerup", (e) => this.pointerUp(e));
     svg.addEventListener("pointercancel", () => this.cancel());

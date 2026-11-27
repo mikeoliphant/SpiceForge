@@ -46,6 +46,10 @@ export class PropertiesPanel {
       this.narrowed = this.picker.value || null;
       this.render();
     });
+
+    // Rendering waits while a field is edited; catch up once focus has left the grid (checked after the move, so
+    // tabbing to the next field doesn't rebuild the grid under it).
+    this.grid.addEventListener("focusout", () => setTimeout(() => this.render()));
   }
 
   /** Brings the grid up to date with the selection and the document. Leaves it alone while a field is being edited. */

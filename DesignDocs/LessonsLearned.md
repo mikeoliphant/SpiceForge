@@ -945,6 +945,13 @@ and the error against our own run at 1e-10 and 100 iterations, with the limit of
   a shift-move from one wire to another (heal and insert) and a 10-unit slide along its own wire, with undo and redo
   exact. Not handled: a chain of parts moved together heals nothing (their shared terminals have no wire), and a part
   wired in only by one terminal landing mid-wire isn't joined.
+- **A press on the schematic must take focus explicitly.** The editor's `pointerdown` prevents the default (so a
+  drag doesn't select text), and that also stops the browser moving focus. So a property field being edited kept
+  focus through a click on another part, and the panel, which doesn't rebuild under a focused field, went on showing
+  the old one. Now a press on the schematic blurs a focused form field first. Its `change` fires, committing the value
+  to the component it was showing (each row holds its own subject). The panel also re-renders on `focusout`, after a
+  zero-delay timeout, so it catches up whichever way focus leaves, while tabbing between fields doesn't rebuild the
+  grid under the cursor.
 - **A move tows the parts that hang off it: those its wires reach that connect to nothing else.** `findTowed` takes
   each part, not moving, with a terminal at the far end of a moving wire (either end of a selected wire, the fixed
   end of a follower), and tows it if it connects to no other part. Towed parts join the move, and the followers are
