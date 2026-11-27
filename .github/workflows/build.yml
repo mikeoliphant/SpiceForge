@@ -1,6 +1,7 @@
 # Builds SpiceForge and runs its checks: on pull requests, and by hand (Actions > Build > Run workflow). It also builds
-# the packages (the Windows installer and zip, the Linux tarball) and attaches them to the run as artifacts, versioned
-# from git tags as development builds (0.0.2-dev.10, say): for trying a change before it's released.
+# the packages (the Windows installer and zip, the Linux tarball, each with the plugin as CLAP and VST3) and attaches
+# them to the run as artifacts, versioned from git tags as development builds (0.0.2-dev.10, say): for trying a change
+# before it's released.
 name: Build
 
 on:
@@ -12,7 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The whole solution, the plugin included, which needs Windows.
+  # The whole solution, the plugin and its standalone host included (the plugin's CLAP and VST3 bundles are the
+  # Packages job's, with AudioPlugSharp's native adapters).
   solution:
     name: Solution (Windows)
     runs-on: windows-latest
@@ -23,10 +25,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: dotnet tool restore
-      - name: Restore .NET Tools for SpiceForgePlugin
-        working-directory: SpiceForgePlugin
-        run: dotnet tool restore
       - run: dotnet build SpiceForge.slnx -c Release
 
   # The server and its editor, checked on both platforms: the JSON document round trip, every operation against a
@@ -63,10 +61,15 @@ jobs:
       - name: SpiceForge.Validate server
         run: dotnet run --project SpiceForge.Validate -c Release --no-build -- server
 
+  # The plugin's adapters for Linux, which the Packages job can't build on Windows.
+  linux-adapters:
+    uses: ./.github/workflows/linux-adapters.yml
+
   # The packages, as the Release workflow builds them, attached to the run. On Windows, which builds all three: Inno
   # Setup is Windows only, and the Linux tarball is written with its permissions set wherever it's made.
   packages:
     name: Packages
+    needs: linux-adapters
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,8 +94,13 @@ jobs:
         run: |
           npm ci
           npm run build
+      # The plugin's Linux adapters, from the Linux adapters job; the Windows ones the packaging builds itself.
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: SpiceForgePlugin/Dependencies/AudioPlugSharp/AudioPlugSharpBridge/bin/native/linux-x64
       - name: Build the packages
-        run: dotnet run -c Release --project SpiceForge.Package -- --skipWeb --requireInstaller
+        run: dotnet run -c Release --project SpiceForge.Package -- --skipWeb --requireInstaller --requirePlugins
       # One artifact each, so one can be downloaded without the others.
       - uses: actions/upload-artifact@v4
         with:

@@ -1,4 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <!-- A nine-patch, the same shape as ButtonUnpressed; an accent color, so a pressed button stands out from the gray unpressed ones. -->
-  <rect x="2" y="2" width="28" height="28" rx="7" ry="7" fill="#3a74c8"/>
-</svg>

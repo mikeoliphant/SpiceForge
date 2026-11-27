@@ -18,14 +18,8 @@
     <File Path="SpiceForgeWebUI/tsconfig.json" />
   </Folder>
   <Folder Name="/SpiceForgePlugin/">
-    <Project Path="SpiceForgePlugin/Dependencies/UILayout/ImageSheetProcessor/ImageSheetProcessor.csproj" />
-    <Project Path="SpiceForgePlugin/Dependencies/UILayout/UILayout.MonoGame.WindowsDX/UILayout.MonoGame.WindowsDX.csproj" />
     <Project Path="SpiceForgePlugin/SpiceForgeHost/SpiceForgeHost.csproj" />
-    <Project Path="SpiceForgePlugin/SpiceForgeImageProcessor/SpiceForgeImageProcessor.csproj" />
-    <Project Path="SpiceForgePlugin/SpiceForgePlugin/SpiceForgePlugin.csproj">
-      <BuildDependency Project="SpiceForgePlugin/SpiceForgeImageProcessor/SpiceForgeImageProcessor.csproj" />
-    </Project>
-    <Project Path="SpiceForgePlugin/SpiceForgeVst/SpiceForgeVst.csproj" />
+    <Project Path="SpiceForgePlugin/SpiceForgePlugin/SpiceForgePlugin.csproj" />
   </Folder>
   <Project Path="Dependencies/LiveSPICE/Circuit/Circuit.csproj" />
   <Project Path="Dependencies/LiveSPICE/ComputerAlgebra/ComputerAlgebra/ComputerAlgebra.csproj" />

@@ -1221,6 +1221,16 @@ installer) and Linux (a tarball), started in a window of its own.
   and sets its own `OutputType` and `Version` from them.
 - **Write the Linux tarball with its permissions.** Tar tools on Windows don't reliably record the execute bit, so the
   packaging tool writes the tarball itself (`System.Formats.Tar`), the server and `createdump` 755 and the rest 644.
+- **The plugin goes in the packages, as CLAP and VST3.** The zip and the tarball have it in `clap/` and `vst3/`; the
+  installer puts it in `Common Files\CLAP` and `Common Files\VST3` (`{autocf64}`: Program Files for everyone,
+  `%LOCALAPPDATA%\Programs\Common` for the current user, both where DAWs look), not in the program's folder, as an
+  optional task. The bundles need AudioPlugSharp's native adapters for each platform, which are native code: the
+  packaging builds this machine's with CMake, and CI builds the Linux ones in a job of their own on Ubuntu 22.04 (glibc
+  2.35, as AudioPlugSharp's) and hands them to the Windows job that packages. The plugin's output carried its packages'
+  native libraries for every platform (Android, iOS, macOS...), 35 MB a bundle; only the package's platform's go in,
+  which took the Windows zip from 75.1 to 52.6 MB and the installer to 36.8 MB. The packaged (trimmed) plugin loaded and
+  ran in AudioPlugSharp's standalone host. Unlike the server, the plugin isn't self-contained: DAWs load it through the
+  installed .NET 10 runtime (the Desktop Runtime on Windows).
 - **Checked as packaged.** Each package's server, run from its folder with the window turned off, served its own
   editor and the 131-entry catalogue, listed its audio drivers (Windows: None, ASIO, JACK; Linux, under WSL's
   Ubuntu 22.04: None, JACK), logged to its file (Windows), and stopped itself when its client left. Both are about
@@ -1231,7 +1241,7 @@ installer) and Linux (a tarball), started in a window of its own.
   (the submodules' own files; NAudio's and .NET's, which no file here held, checked in verbatim from upstream under
   `Assets/Licenses`), it serves them at `/licenses/`, and the editor's About dialog shows them. The .NET runtime's and
   ASP.NET Core's third-party notices (97 KB and 57 KB) are linked rather than bundled. `SpiceForge.Validate server`
-  checks every listed file is served. Inter and the Material Symbols are the plugin's, which is packaged apart.
+  checks every listed file is served. Inter is the plugin's (through UILayout's theme), which is packaged apart.
 - **The SDK already records the commit.** The informational version carries `+<commit>` (Source Link, on by
   default), so the About dialog and the startup summary needed no build step for it. A development build was
   versioned 1.0.0, a release it never was; the server's project now versions it after the latest tag
@@ -1294,6 +1304,38 @@ installer) and Linux (a tarball), started in a window of its own.
   0.0.0-dev. MinVer does the same from a package, but only the server is versioned, and ten lines of MSBuild do it.
 - **The server's first line of output is no longer the listening line.** The About summary comes first, and
   `SpiceForge.Validate server` waited for "listening" on the first line only; it now reads lines until it.
+
+## The plugin on AudioPlugSharp 0.8
+
+The plugin moved from AudioPlugSharp 0.7 (Windows-only VST3 through a C++/CLI bridge, its own MonoGame window) to 0.8:
+CLAP and VST3 on Windows and Linux, an editor drawn into the host's window (`AudioPluginUILayout`), and
+`SpiceForgeHost` on AudioPlugSharp's standalone host.
+
+- **AudioPlugSharp comes from a submodule until 0.8 is on NuGet.** `SpiceForgePlugin/Dependencies/AudioPlugSharp`
+  replaces the UILayout submodule (UILayout comes nested in it). Its image sheets aren't in its repository, so the
+  plugin's build renders them when they're missing; the host asks the plugin's target for them too, through the
+  `MSBuild` task, since the standalone builds AudioPlugSharpUILayout as well and a target of its own raced the
+  plugin's. The DAW bundles need AudioPlugSharp's native adapters, built once with CMake; without them the build
+  warns and makes none, so CI still builds the plugin.
+- **The editor is AudioPlugSharp's and UILayout's default controls.** Pots are `Knob`s, on/off switches
+  `LampSwitch`es, switches with more positions `ChoiceDropDown`s, each in a `ParameterControl`; the settings are
+  UILayout's themed buttons and drop-downs, and "Open" uses UILayout's native file dialog. The plugin's own dial,
+  value display, lamps, image processor, MGCB content and fonts are gone.
+- **Pots and switches are host parameters from a fixed pool.** A plugin's parameters can't change once the host has
+  them, and each schematic has its own controls, so there are 16 pot parameters and 8 switch parameters, mapped to
+  the circuit's controls in order. Hosts show "Pot 1" and so on; the editor shows the circuit's names. A switch
+  parameter is a plain 0 to 1 (its steps can't follow each schematic's positions), in n equal parts as VST3 divides a
+  stepped parameter, so an on/off switch is on from 0.5. The audio thread sets the circuit's controls from the
+  parameters each block (they ramp as before). After each build the parameters are set to the circuit's positions,
+  changing only values that differ: a rebuild or a restored project reports nothing to the host, and a newly loaded
+  schematic reports its own positions. Positions are still also saved by name, so a 0.7 project, or a schematic whose
+  controls were reordered, restores by name.
+- **Checked in the standalone, without an audio device.** The saved 0.7 state (the Marshall Blues Breaker: three
+  pots and a switch) restored with its positions, and saved them as parameters too; the JCM800 2203 modded showed its
+  two three-position switches as drop-downs. The editor allocated nothing per frame (1,748 frames). The plugin
+  allocated 193,384 bytes on the audio thread, the same after 12.6 s and 30.6 s: a one-time cost of the first blocks
+  (with tiered compilation off, the JIT compiles on the thread that first calls a method), not per block. Not yet
+  checked: a DAW (automation, a project reload), dragging the controls, and Linux.
 
 ## Open issues
 

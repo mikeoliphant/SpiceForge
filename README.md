@@ -35,7 +35,7 @@ Binaries are provided for x64 Windows and Linux.
 
 - No macOS package is currently produced - it must be built locally.
 - macOS support is untested. It *should* work with JACK audio. macOS Core Audio is not yet implemented.
-- There is initial DAW plugin support, but it is still very bare bones and is limited to Windows VST. It is not currently packaged for releases.
+- There is initial DAW plugin support (CLAP and VST3, on Windows and Linux), but it is still very bare bones. The plugin needs the .NET 10 runtime installed (on Windows, the .NET Desktop Runtime).
 
 ## Building
 
@@ -47,10 +47,9 @@ git clone --recursive https://github.com/mikeoliphant/SpiceForge.git
 cd SpiceForge
 ```
 
-**Everything** (the plugin needs Windows):
+**Everything:**
 
 ```
-dotnet tool restore
 dotnet build SpiceForge.slnx -c Release
 ```
 
@@ -63,11 +62,31 @@ dotnet run -c Release --project SpiceForgeServer -- --open app
 
 Build in Release. A Debug build simulates four to five times slower.
 
-**Packages** (a Windows installer and zip, a Linux tarball) go into `artifacts/`. The installer needs
+**Packages** (a Windows installer and zip, a Linux tarball, each with the plugin) go into `artifacts/`. The plugin is
+in them for the platforms whose AudioPlugSharp adapters are built: this machine's are built when missing (with CMake),
+and CI builds the Linux ones on Linux. The installer needs
 [Inno Setup 6](https://jrsoftware.org/isinfo.php).
 
 ```
 dotnet run -c Release --project SpiceForge.Package
+```
+
+**The plugin:** `SpiceForgePlugin` builds with AudioPlugSharp 0.8, from its submodule. Its DAW plugins (CLAP and VST3)
+also need AudioPlugSharp's native adapters, built once with [CMake](https://cmake.org) 3.20 or later and a C++20
+compiler:
+
+```
+cmake -S SpiceForgePlugin/Dependencies/AudioPlugSharp/AudioPlugSharpBridge/Native -B SpiceForgePlugin/Dependencies/AudioPlugSharp/AudioPlugSharpBridge/bin/native-build
+cmake --build SpiceForgePlugin/Dependencies/AudioPlugSharp/AudioPlugSharpBridge/bin/native-build --config Release --target stage_adapters
+dotnet build SpiceForgePlugin/SpiceForgePlugin -c Release
+```
+
+The build then makes `clap/SpiceForgePlugin` and `vst3/SpiceForgePlugin.vst3` in
+`SpiceForgePlugin/SpiceForgePlugin/bin/Release/net10.0`: copy them to your CLAP or VST3 folder. To run the plugin as
+an application instead (ASIO, ALSA or JACK):
+
+```
+dotnet run -c Release --project SpiceForgePlugin/SpiceForgeHost
 ```
 
 **Checks:** `SpiceForge.Validate` holds them, for example `server` (the server and editor) and `processor`:

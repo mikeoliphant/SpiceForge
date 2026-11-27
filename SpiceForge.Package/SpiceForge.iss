@@ -1,6 +1,7 @@
 ; SpiceForge's Windows installer, built by SpiceForge.Package (Inno Setup 6), which passes:
 ;   AppVersion  the version, from git tags (0.2.0, or 0.2.1-dev.4 for a development build)
-;   SourceDir   the published, assembled folder (artifacts/stage/win-x64/SpiceForge)
+;   SourceDir   the published, assembled folder (artifacts/stage/win-x64/SpiceForge), with the plugin's bundles in
+;               clap\ and vst3\
 ;   OutputDir   where the installer goes (artifacts)
 
 #ifndef AppVersion
@@ -33,9 +34,14 @@ WizardStyle=modern
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "plugins"; Description: "The SpiceForge plugin for DAWs (CLAP and VST3; needs the .NET 10 Desktop Runtime)"; GroupDescription: "Plugins:"
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; Excludes: "\clap\*,\vst3\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The plugin goes where DAWs look for it: Common Files\CLAP and Common Files\VST3, in Program Files for everyone, or
+; in %LOCALAPPDATA%\Programs\Common for the current user ({autocf64} is whichever the installation is).
+Source: "{#SourceDir}\clap\*"; DestDir: "{autocf64}\CLAP"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist; Tasks: plugins
+Source: "{#SourceDir}\vst3\*"; DestDir: "{autocf64}\VST3"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist; Tasks: plugins
 ; The examples also go to the user's LiveSPICE folder, where the editor's dialogs start; files there aren't replaced.
 Source: "{#SourceDir}\Examples\*.schx"; DestDir: "{userdocs}\LiveSPICE\Examples"; Flags: onlyifdoesntexist uninsneveruninstall
 

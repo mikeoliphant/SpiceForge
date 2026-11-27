@@ -14,9 +14,17 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
   are the test suite. The plugin's editor follows the layout of LiveSPICE's VST.
 - [ComputerAlgebra](https://github.com/dsharlet/ComputerAlgebra) by Dillon Sharlet (MIT), inside LiveSPICE: the symbolic
   algebra (gradients, simplification, LINQ compilation) the extractor and the compiled engine are built on.
+- [AudioPlugSharp](https://github.com/mikeoliphant/AudioPlugSharp) (MIT), in `SpiceForgePlugin/Dependencies/AudioPlugSharp`
+  (0.8, which isn't on NuGet yet): the plugin's CLAP and VST3 adapters and the .NET bridge they load it through, its
+  editor (`AudioPluginUILayout`, and the knobs, switches and drop-downs bound to its parameters), and the standalone
+  host `SpiceForgeHost` runs it in.
+  - The adapters are built from the [CLAP](https://github.com/free-audio/clap) headers by Alexandre Bique (MIT) and
+    Steinberg's [VST 3 plugin interfaces](https://github.com/steinbergmedia/vst3_pluginterfaces) (MIT, from v3.8). VST
+    is a trademark of Steinberg Media Technologies GmbH.
 - [UILayout](https://github.com/mikeoliphant/UILayout) (Mozilla Public License 2.0), in
-  `SpiceForgePlugin/Dependencies/UILayout`: the plugin's user interface and the image sheet processor that renders its
-  textures. MPL 2.0 applies file by file, so UILayout's files stay under it while SpiceForge's own code is MIT.
+  `SpiceForgePlugin/Dependencies/AudioPlugSharp/Dependencies/UILayout` (AudioPlugSharp's submodule): the plugin's user
+  interface, its theme and the processors that render the theme's textures. MPL 2.0 applies file by file, so
+  UILayout's files stay under it while SpiceForge's own code is MIT.
 
 ### NuGet packages
 
@@ -30,23 +38,17 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
   [h3ll5ur7er/JackSharp](https://github.com/h3ll5ur7er/JackSharp)'s move to .NET Core, and finds the native JACK
   library with `NativeLibrary` on each platform.
 
-- [AudioPlugSharp](https://github.com/mikeoliphant/AudioPlugSharp) (`AudioPlugSharp`, `AudioPlugSharpVst3`,
-  `AudioPlugSharpHost`; MIT): the VST3 bridge, and the stand-alone ASIO host. The host talks to ASIO drivers through its
-  own interop code and includes no Steinberg ASIO SDK code.
-  - The VST3 bridge (`SpiceForgeVstBridge.vst3`) is built from Steinberg's
-    [VST 3 SDK](https://github.com/steinbergmedia/vst3sdk), licensed under the Steinberg VST3 License or, alternatively,
-    GPL version 3. SpiceForge's source is MIT; a distributed `.vst3` binary is subject to the Steinberg VST3 License's
-    terms for the SDK parts. VST is a trademark of Steinberg Media Technologies GmbH.
-- [MonoGame](https://github.com/MonoGame/MonoGame) (`MonoGame.Framework.WindowsDX`, `MonoGame.Framework.DesktopGL`,
-  `MonoGame.Content.Builder.Task`; Microsoft Public License): rendering the plugin's editor, and building its content.
+- [MonoGame](https://github.com/MonoGame/MonoGame) (`MonoGame.Framework.DesktopGL`, through AudioPlugSharp; Microsoft
+  Public License): rendering the plugin's editor.
+- [NativeFileDialogNET](https://github.com/byte-0x74/NativeFiledialogNET) (through UILayout; zlib License): the plugin's
+  dialog for opening a schematic.
 - [NAudio](https://github.com/naudio/NAudio) by Mark Heath (MIT): reading and writing WAV files in the renderer,
   validation tools and host. `NAudio.Asio` (3.3.0) is the ASIO support, through AudioIOSharp: its `AsioDevice` duplex mode
   runs one callback per buffer with each channel as a float span, converting to and from the driver's native format,
   and reports driver resets and resyncs. It calls ASIO drivers through its own COM vtable definitions
   (`AsioDriver.AsioDriverVTable`).
-- [SVG.NET](https://github.com/svg-net/SVG) (`Svg`, through UILayout's image processor; Microsoft Public License):
-  rendering the editor's SVG images.
-- [Roslyn](https://github.com/dotnet/roslyn) (`Microsoft.CodeAnalysis.CSharp`; MIT), referenced by the plugin.
+- [Svg.Skia](https://github.com/wieslawsoltes/Svg.Skia) by Wiesław Šoltés (MIT), through UILayout's image processor:
+  rendering the theme's SVG images, at build time only.
 - UILayout's image processor also uses SharpFont (`SpaceWizards.SharpFont`; MIT) and StbImageSharp and
   StbImageWriteSharp, at build time only.
 
@@ -73,11 +75,8 @@ The web front end, `SpiceForgeWebUI`, has no runtime dependencies. These build i
 
 ### Assets
 
-- [Inter](https://github.com/rsms/inter) by Rasmus Andersson (SIL Open Font License 1.1): the editor's font.
-- The editor's file, edit and reload icons are from Google's
-  [Material Symbols](https://github.com/google/material-design-icons) (Apache License 2.0).
-- The switch lamps are styled after the PowerOn and PowerOff images of
-  [Stompbox](https://github.com/mikeoliphant/StompboxUI).
+- [Inter](https://github.com/rsms/inter) by Rasmus Andersson (SIL Open Font License 1.1): the plugin editor's font,
+  through UILayout's theme.
 
 ## Ideas and insight
 

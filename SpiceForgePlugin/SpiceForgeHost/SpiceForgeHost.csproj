@@ -1,18 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+	<!--
+		SpiceForge as an application: the plugin in AudioPlugSharp's standalone host (ASIO, ALSA, JACK, or no device).
+	-->
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
-		<TargetFramework>net10.0-windows</TargetFramework>
+		<TargetFramework>net10.0</TargetFramework>
 		<Version>0.0.1</Version>
-		<UseWindowsForms>true</UseWindowsForms>
+		<!-- As in the standalone host: every method compiled once, fully optimized, so tiering's recompiles don't cause
+		     dropouts at small buffer sizes. -->
+		<TieredCompilation>false</TieredCompilation>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="AudioPlugSharpHost" Version="0.7.13" />
-		<PackageReference Include="NAudio" Version="3.3.0" />
-	</ItemGroup>
-
-	<ItemGroup>
+		<ProjectReference Include="..\Dependencies\AudioPlugSharp\AudioPlugSharpStandalone\AudioPlugSharpStandalone.csproj" />
 		<ProjectReference Include="..\SpiceForgePlugin\SpiceForgePlugin.csproj" />
 	</ItemGroup>
+
+	<!-- The standalone builds AudioPlugSharpUILayout too, so its image sheets have to be there first: rendered by the
+	     plugin's target, which MSBuild runs once however many projects ask for it. -->
+	<Target Name="RenderAudioPlugSharpTextures" BeforeTargets="ResolveProjectReferences">
+		<MSBuild Projects="..\SpiceForgePlugin\SpiceForgePlugin.csproj" Targets="RenderAudioPlugSharpTextures" />
+	</Target>
+
 </Project>

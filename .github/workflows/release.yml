@@ -1,6 +1,7 @@
 # Makes a release, by hand (Actions > Release > Run workflow, with a version): tags this commit v<version>, checks the
-# server, builds the packages (the Windows installer and zip, the Linux tarball), pushes the tag, and creates a draft
-# GitHub release on it, with the packages attached and no notes. Write the notes and publish it on GitHub.
+# server, builds the packages (the Windows installer and zip, the Linux tarball, each with the plugin as CLAP and VST3),
+# pushes the tag, and creates a draft GitHub release on it, with the packages attached and no notes. Write the notes and
+# publish it on GitHub.
 #
 # The tag is the version's one source: everything built here reads it back from git (the server project's
 # SpiceForgeGitVersion target), as development builds do. It's pushed only once the packages are built, so a failed
@@ -23,7 +24,12 @@ permissions:
   contents: write
 
 jobs:
+  # The plugin's adapters for Linux, which the release job can't build on Windows.
+  linux-adapters:
+    uses: ./.github/workflows/linux-adapters.yml
+
   release:
+    needs: linux-adapters
     runs-on: windows-latest
     env:
       VERSION: ${{ inputs.version }}
@@ -88,8 +94,13 @@ jobs:
           dotnet build SpiceForge.Validate -c Release
           dotnet run --project SpiceForge.Validate -c Release --no-build -- server
 
+      # The plugin's Linux adapters, from the Linux adapters job; the Windows ones the packaging builds itself.
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: SpiceForgePlugin/Dependencies/AudioPlugSharp/AudioPlugSharpBridge/bin/native/linux-x64
       - name: Build the packages
-        run: dotnet run -c Release --project SpiceForge.Package -- --skipWeb --requireInstaller
+        run: dotnet run -c Release --project SpiceForge.Package -- --skipWeb --requireInstaller --requirePlugins
 
       - name: Push the tag and create the release
         shell: pwsh
