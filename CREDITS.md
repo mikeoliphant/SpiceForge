@@ -17,13 +17,18 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
 - [UILayout](https://github.com/mikeoliphant/UILayout) (Mozilla Public License 2.0), in
   `SpiceForgePlugin/Dependencies/UILayout`: the plugin's user interface and the image sheet processor that renders its
   textures. MPL 2.0 applies file by file, so UILayout's files stay under it while SpiceForge's own code is MIT.
-- [JackSharpCore](https://github.com/mikeoliphant/JackSharpCore) (MIT), in `Dependencies/JackSharpCore`: a .NET wrapper
-  of the JACK audio library, for SpiceForgeServer's JACK support. It's a fork of
+
+### NuGet packages
+
+- [AudioIOSharp](https://github.com/mikeoliphant/AudioIOSharp) (`AudioIOSharp` 0.1.0; MIT): real-time,
+  allocation-free audio I/O, shared with AudioPlugSharp's standalone host. SpiceForgeServer's audio drivers (the
+  internal clock, ASIO and JACK) and the engine that runs a simulation on them, falling back to the clock, started
+  here and moved there; it has since added ALSA.
+- [JackSharpCore](https://github.com/mikeoliphant/JackSharpCore) (`JackSharpCore` 1.1.1, through AudioIOSharp; MIT): a
+  .NET wrapper of the JACK audio library, for the JACK support. It's a fork of
   [JackSharp](https://github.com/residuum/JackSharp) by Thomas Mayer, by way of
   [h3ll5ur7er/JackSharp](https://github.com/h3ll5ur7er/JackSharp)'s move to .NET Core, and finds the native JACK
   library with `NativeLibrary` on each platform.
-
-### NuGet packages
 
 - [AudioPlugSharp](https://github.com/mikeoliphant/AudioPlugSharp) (`AudioPlugSharp`, `AudioPlugSharpVst3`,
   `AudioPlugSharpHost`; MIT): the VST3 bridge, and the stand-alone ASIO host. The host talks to ASIO drivers through its
@@ -35,7 +40,7 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
 - [MonoGame](https://github.com/MonoGame/MonoGame) (`MonoGame.Framework.WindowsDX`, `MonoGame.Framework.DesktopGL`,
   `MonoGame.Content.Builder.Task`; Microsoft Public License): rendering the plugin's editor, and building its content.
 - [NAudio](https://github.com/naudio/NAudio) by Mark Heath (MIT): reading and writing WAV files in the renderer,
-  validation tools and host. `NAudio.Asio` (3.3.0) is SpiceForgeServer's ASIO support: its `AsioDevice` duplex mode
+  validation tools and host. `NAudio.Asio` (3.3.0) is the ASIO support, through AudioIOSharp: its `AsioDevice` duplex mode
   runs one callback per buffer with each channel as a float span, converting to and from the driver's native format,
   and reports driver resets and resyncs. It calls ASIO drivers through its own COM vtable definitions
   (`AsioDriver.AsioDriverVTable`).

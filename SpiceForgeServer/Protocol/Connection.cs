@@ -98,6 +98,8 @@ public static class Connection
             (string code, string message, JsonNode? details) = ex switch
             {
                 ApiException api2 => (api2.Code, api2.Message, api2.Details),
+                AudioIOSharp.AudioException audio => Audio.AudioJson.ToApiException(audio) is var mapped
+                    ? (mapped.Code, mapped.Message, mapped.Details) : default,
                 JsonException json => (ErrorCodes.BadRequest, $"That isn't JSON: {json.Message}", null),
                 _ => (ErrorCodes.Internal, ex.ToString(), null),
             };
