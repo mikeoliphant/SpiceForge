@@ -42,10 +42,17 @@ Check names, titles and links against the source rather than from memory, and me
 
 ## Working conventions
 
-- **LiveSPICE stays unmodified.** `Dependencies/LiveSPICE` is a pinned submodule; everything SpiceForge replaces
-  starts after `Circuit.Analyze()`.
+- **LiveSPICE is SpiceForge's fork, changed only on purpose.** `Dependencies/LiveSPICE` is the
+  [mikeoliphant/LiveSPICE](https://github.com/mikeoliphant/LiveSPICE) fork, worked on in its `master`, since upstream
+  is dormant. The tag `livespice-b2a4bb0` marks the last upstream commit, the baseline for "what LiveSPICE does".
+  Everything SpiceForge replaces still starts after `Circuit.Analyze()`. A change in the fork is a fix: recorded in
+  `LessonsLearned.md` (Owning the LiveSPICE fork), with a check that fails without it, and the submodule bumped in the
+  SpiceForge change that needs it.
+- **Stay `.schx` compatible both ways.** SpiceForge reads LiveSPICE's files, quirks included, and the files it writes
+  must load as the same circuit in LiveSPICE. So the fork keeps the `Circuit` assembly name and its type names (files
+  store them), and fixes how things are read, not what a file means.
 - **The interpreter and the compiled engine agree bit for bit.** A change to one is mirrored in the other, in the same
   order of operations, and checked.
 - **Validate before calling something done.** `SpiceForge.Validate` has the checks (`dynamic`, `processor`,
   `switches`, `rejection`, `livespice` and more); run the ones a change touches, and report what they showed.
-- **Commit and push only when asked.**
+- **Commit and push only when asked,** in the LiveSPICE fork as much as here (tags included).

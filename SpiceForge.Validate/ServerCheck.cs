@@ -609,6 +609,9 @@ internal static class ServerCheck
             problems++;
     }
 
+    /// <summary>Names the characters that look alike in a console (U+2126 and U+03A9, U+03BC and U+00B5).</summary>
+    private static string Escape(string s) => string.Concat(s.Select(c => c < 128 ? c.ToString() : $"<U+{(int)c:X4}>"));
+
     private static void RoundTrip(string testsDir)
     {
         Console.WriteLine("=== Round trip through the JSON document");
@@ -764,6 +767,30 @@ internal static class ServerCheck
         Check(checkedValues[0]!["value"]?.GetValue<string>() == "4.7 kΩ", $"'4.7k' checks as {checkedValues[0]!["value"]}");
         Check(checkedValues[1]!["ok"]!.GetValue<bool>() == false, "'banana' is refused as a resistance");
         Check(checkedValues[2]!["value"]?.GetValue<string>() == "Logarithmic", "an enumeration checks");
+
+        // Units spelled with look-alike characters, or in words: the server's invariant globalization compares
+        // ordinally, so each must be recognised as itself (LessonsLearned.md, Owning the LiveSPICE fork). The micro sign once read
+        // as nothing at all, so "4.7 µF" was 4.7 F.
+        (string type, string property, string value, string expected)[] spellings =
+        {
+            ("Circuit.Resistor, Circuit", "Resistance", "2 kΩ", "2 kΩ"),
+            ("Circuit.Resistor, Circuit", "Resistance", "2 kOhm", "2 kΩ"),
+            ("Circuit.Resistor, Circuit", "Resistance", "10 ohm", "10 Ω"),
+            ("Circuit.Capacitor, Circuit", "Capacitance", "4.7 µF", "4.7 μF"),
+            ("Circuit.Capacitor, Circuit", "Capacitance", "4.7 uF", "4.7 μF"),
+        };
+        JsonObject spelled = Result(await client.Request("values.check", new JsonObject
+        {
+            ["items"] = new JsonArray(spellings.Select(s => (JsonNode)new JsonObject { ["type"] = s.type, ["property"] = s.property, ["value"] = s.value }).ToArray()),
+        }));
+        JsonArray spelledValues = spelled["items"]!.AsArray();
+        for (int i = 0; i < spellings.Length; i++)
+        {
+            string? got = spelledValues[i]?["value"]?.GetValue<string>();
+            Check(got == spellings[i].expected, $"'{Escape(spellings[i].value)}' checks as '{Escape(got ?? "(refused)")}'");
+        }
+
+        Check(entries.Any(e => e.Value?["name"]?.GetValue<string>() == "6SL7GT"), "the catalogue has the 6SL7GT triode (its file once wrote Rgk with a Greek omega)");
 
         // Files: read, check, write, and read back.
         string rat = Path.Combine(testsDir, "Examples", "Pro Co Rat.schx");

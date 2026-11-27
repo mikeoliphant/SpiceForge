@@ -8,7 +8,8 @@ SpiceForge itself is MIT licensed (see `LICENSE`); each dependency keeps its own
 ### Submodules
 
 - [LiveSPICE](https://github.com/dsharlet/LiveSPICE) by Dillon Sharlet (MIT), used through the
-  [mikeoliphant/LiveSPICE](https://github.com/mikeoliphant/LiveSPICE) fork in `Dependencies/LiveSPICE`, unmodified.
+  [mikeoliphant/LiveSPICE](https://github.com/mikeoliphant/LiveSPICE) fork in `Dependencies/LiveSPICE`: upstream as of
+  `b2a4bb0` (tag `livespice-b2a4bb0`), plus fixes made for SpiceForge (LessonsLearned.md, Owning the LiveSPICE fork).
   Its schematic format, component models, `Circuit.Analyze()` and transient solution are the front end every engine
   here starts from; its `Simulation` is the reference the engines were validated against, and its `Tests` circuits
   are the test suite. The plugin's editor follows the layout of LiveSPICE's VST.

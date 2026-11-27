@@ -3,7 +3,8 @@
 ## The goal
 
 Run LiveSPICE circuits faster without changing what they sound like. SpiceForge takes the equations LiveSPICE
-produces (`Schematic.Build()` → `Circuit.Analyze()`, with LiveSPICE pinned and unmodified), reduces each timestep to
+produces (`Schematic.Build()` → `Circuit.Analyze()`, from LiveSPICE as it was at `b2a4bb0`, with only the fixes in
+Owning the LiveSPICE fork since), reduces each timestep to
 a small Newton solve over the nonlinear device ports, with the linear part solved offline, and matches LiveSPICE's
 numerics (BDF2, oversampling, Newton start and stopping rule, device models) so the output stays within roundoff of
 LiveSPICE's own `Simulation`. The original plan was written from reading code, before anything was compiled, and was
@@ -21,9 +22,10 @@ oversampling buys.
   produces the same iterates as LiveSPICE's full Newton (to about 1e-14 relative). Its speed premise didn't (see
   Performance). Treat a plan built without compiling anything as a set of hypotheses for the milestones to test.
 - **LiveSPICE can stay unmodified.** `Schematic.Build()` → `Circuit.Analyze()` exposes the flat MNA equations,
-  unknowns and initial conditions publicly. Everything we replace starts after that, so the submodule stays pinned
-  with no patches. Classes like `Potentiometer` aren't sealed, so components can be swapped after `Build()` when
-  needed.
+  unknowns and initial conditions publicly. Everything we replace starts after that, so the engines never needed a
+  patch to it. Classes like `Potentiometer` aren't sealed, so components can be swapped after `Build()` when needed.
+  (The submodule did stay unmodified until upstream went dormant; fixes outside the engines now go into the fork:
+  Owning the LiveSPICE fork.)
 - **Verify the reference before trusting it.** Counting Newton iterations needed a copy of `Simulation` with one
   recording call. Every capture checks that the copy's output is bit-identical to the stock class, so the reference
   data is LiveSPICE's own output, not ours.
@@ -1360,6 +1362,34 @@ CLAP and VST3 on Windows and Linux, an editor drawn into the host's window (`Aud
   allocated 193,384 bytes on the audio thread, the same after 12.6 s and 30.6 s: a one-time cost of the first blocks
   (with tiered compilation off, the JIT compiles on the thread that first calls a method), not per block. Not yet
   checked: a DAW (automation, a project reload), dragging the controls, and Linux.
+
+## Owning the LiveSPICE fork
+
+- **Upstream LiveSPICE is dormant, so the fork is ours to fix.** The submodule pointed at the
+  mikeoliphant/LiveSPICE fork all along, pinned at `b2a4bb0` (June 2025), which was also the fork's and upstream's
+  last merge. Keeping it unmodified meant working around its bugs in SpiceForge, forever. Its `master` now carries
+  SpiceForge's fixes. The tag `livespice-b2a4bb0` keeps the baseline for comparisons. Branching wasn't worth it:
+  nothing else needs the fork's `master` to equal upstream, and a pull request upstream can still be cut from
+  upstream's `master` with the fixes picked onto it. What stays fixed is the file format both ways (AGENTS.md).
+- **Unit spellings that look alike read differently once comparisons are ordinal.** The server's catalogue logged
+  "Failed to load component: Expected end" at startup, and the 6SL7GT triode was missing from the library. Its
+  `Rgk="2 kΩ"` in `Tubes.xml` used the Greek capital omega (U+03A9); every other tube uses the ohm sign (U+2126),
+  which is what `Units` lists. `Units.Parse` stripped units with a culture-aware `EndsWith`, which counts the two as
+  the same, so LiveSPICE's desktop loads the tube. The server is built with `InvariantGlobalization` (for minimal
+  Linux installs and locale-independent numbers), where that `EndsWith` is ordinal, so the omega stayed and the
+  expression parser failed on it. Deserializing all 87 library components under each mode reproduced it: all load
+  normally, and the 6SL7GT alone fails under invariant globalization. Testing `Quantity.Parse` turned up two more:
+  - the micro sign (U+00B5, what keyboards type) isn't the Greek mu (U+03BC) the prefixes list, and it was dropped
+    without an error, so "4.7 µF" read as 4.7 F, in LiveSPICE too;
+  - the fallback for "Ohm" upper-cased the string and then compared with "Ohm", so it never matched, and the "m"
+    would have matched metres first anyway: "2 kOhm" and "10 ohm" failed in both modes.
+
+  The fix, in the fork: `Units.Parse` takes "ohm" in any case and the Greek omega first, then compares the unit
+  names ordinally; `Quantity`'s prefixes take the micro sign as micro; `Tubes.xml` uses the ohm sign. Files don't
+  change: LiveSPICE writes the ohm sign and the Greek mu, and none of the test schematics or libraries contain the
+  other spellings. `SpiceForge.Validate server` checks each spelling through `values.check` in the real server, and
+  that the 6SL7GT is in the catalogue. Without the fix, those five checks fail (three refused, "4.7 F", the triode
+  missing); with it, 0 problems, and the conformance test stays at 53 schematics, 477 comparisons, 0 failures.
 
 ## Open issues
 
