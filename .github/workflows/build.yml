@@ -12,7 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The whole solution, the plugin included, which needs Windows.
+  # The whole solution, the plugin and its standalone host included (without the plugin's DAW bundles, which need
+  # AudioPlugSharp's native adapters).
   solution:
     name: Solution (Windows)
     runs-on: windows-latest
@@ -23,10 +24,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: dotnet tool restore
-      - name: Restore .NET Tools for SpiceForgePlugin
-        working-directory: SpiceForgePlugin
-        run: dotnet tool restore
       - run: dotnet build SpiceForge.slnx -c Release
 
   # The server and its editor, checked on both platforms: the JSON document round trip, every operation against a

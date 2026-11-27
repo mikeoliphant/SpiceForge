@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AudioPlugSharp;
+using AudioPlugSharpUILayout;
 using SpiceForge;
 using UILayout;
 
@@ -37,12 +38,17 @@ namespace SpiceForgePlugin
     /// channel goes through the circuit, and its output goes to both output channels.
     /// </summary>
     /// <remarks>
-    /// Schematics are built on a background thread, since compiling takes a second or two; the audio passes through
-    /// unchanged until the first build is ready, and a rebuild (new settings, or the schematic edited on disk) swaps in
-    /// when it's done, starting from the same pot and switch positions. The editor polls <see cref="Version"/> to
-    /// notice a new processor or status.
+    /// <para>Schematics are built on a background thread, since compiling takes a second or two; the audio passes
+    /// through unchanged until the first build is ready, and a rebuild (new settings, or the schematic edited on disk)
+    /// swaps in when it's done, starting from the same pot and switch positions. The editor polls
+    /// <see cref="Version"/> to notice a new processor or status.</para>
+    /// <para>The circuit's pots and switches are host parameters from a fixed pool (a plugin's parameters can't change
+    /// once the host has them): the circuit's first <see cref="PotCount"/> pots are "Pot 1", "Pot 2"... in the order
+    /// the processor lists them, and its first <see cref="SwitchCount"/> switches "Switch 1"... The parameters drive
+    /// the circuit's controls each block; after each build they are set to where the circuit's controls are, which
+    /// reports a newly loaded schematic's positions to the host.</para>
     /// </remarks>
-    public class SpiceForgePlugin : AudioPluginBase
+    public class SpiceForgePlugin : AudioPluginUILayout
     {
         // 4× rather than LiveSPICE's 8×: with the cap of 32 below it was within 1-3 dB of 8× on every example, for
         // 35-45% less CPU (see Oversampling in LessonsLearned.md).
@@ -52,6 +58,16 @@ namespace SpiceForgePlugin
         public const int DefaultIterations = 32;
         public static readonly int[] OversampleChoices = { 1, 2, 4, 8, 16 };
         public static readonly int[] IterationChoices = { 1, 2, 4, 8, 16, 32, 64 };
+
+        /// <summary>How many of a circuit's pots and switches are host parameters (and shown in the editor).</summary>
+        public const int PotCount = 16;
+        public const int SwitchCount = 8;
+
+        /// <summary>The pot parameters: the circuit's pots, in order, from 0 to 1.</summary>
+        public IReadOnlyList<AudioPluginParameter> PotParameters => potParameters;
+
+        /// <summary>The switch parameters: the circuit's switches, in order (see <see cref="SwitchPositionParameter"/>).</summary>
+        public IReadOnlyList<SwitchPositionParameter> SwitchParameters => switchParameters;
 
         /// <summary>The schematic loaded (or being loaded), or empty.</summary>
         public string SchematicPath { get; private set; } = "";
@@ -102,7 +118,10 @@ namespace SpiceForgePlugin
         FileSystemWatcher watcher;
         Timer reloadTimer;
 
-        MonoGameHost GameHost;
+        readonly AudioPluginParameter[] potParameters = new AudioPluginParameter[PotCount];
+        readonly SwitchPositionParameter[] switchParameters = new SwitchPositionParameter[SwitchCount];
+
+        SpiceForgeEditor editor;
 
         public SpiceForgePlugin()
         {
@@ -115,7 +134,6 @@ namespace SpiceForgePlugin
 
             PluginID = 0x47B5882C49394EAD;
 
-            HasUserInterface = true;
             EditorWidth = 800;
             EditorHeight = 400;
 
@@ -128,6 +146,28 @@ namespace SpiceForgePlugin
 
             InputPorts = new AudioIOPort[] { stereoInput = new DoubleAudioIOPort("Stereo Input", EAudioChannelConfiguration.Stereo) };
             OutputPorts = new AudioIOPort[] { stereoOutput = new DoubleAudioIOPort("Stereo Output", EAudioChannelConfiguration.Stereo) };
+
+            for (int i = 0; i < PotCount; i++)
+            {
+                AddParameter(potParameters[i] = new AudioPluginParameter
+                {
+                    ID = "pot" + (i + 1),
+                    Name = "Pot " + (i + 1),
+                    MinValue = 0,
+                    MaxValue = 1,
+                    DefaultValue = 0.5,
+                    ValueFormat = "{0:0.00}",
+                });
+            }
+
+            for (int i = 0; i < SwitchCount; i++)
+            {
+                AddParameter(switchParameters[i] = new SwitchPositionParameter
+                {
+                    ID = "switch" + (i + 1),
+                    Name = "Switch " + (i + 1),
+                });
+            }
         }
 
         /// <summary>Loads a schematic, at its own pot and switch settings.</summary>
@@ -251,6 +291,13 @@ namespace SpiceForgePlugin
                         var built = new SchematicProcessor(path, rate, options);
                         if (request != Volatile.Read(ref buildRequest))
                             return;
+
+                        // The controls may have moved while it built: the running circuit has their latest positions.
+                        if (keepPositions)
+                            CopyPositions(CurrentProcessor, built);
+
+                        SyncParameters(built);
+
                         Volatile.Write(ref processor, built);
                         failed = false;
                         Volatile.Write(ref finishedRequest, request);
@@ -267,6 +314,66 @@ namespace SpiceForgePlugin
                     }
                 }
             });
+        }
+
+        // Sets the new circuit's pots and switches to where the running circuit's of the same names are.
+        static void CopyPositions(SchematicProcessor from, SchematicProcessor to)
+        {
+            if (from == null)
+                return;
+
+            foreach (PotControl pot in to.Pots)
+            {
+                if (from.GetPot(pot.Name) is PotControl old)
+                    pot.Position = old.Position;
+            }
+
+            foreach (SwitchControl sw in to.Switches)
+            {
+                if ((from.GetSwitch(sw.Name) is SwitchControl old) && (old.Position < sw.Positions))
+                    sw.Position = old.Position;
+            }
+        }
+
+        // Sets the pool's parameters to the circuit's positions, before it runs (so the audio thread doesn't move its
+        // controls back to the old values). Only values that differ are set, so a rebuild or a restored state reports
+        // nothing to the host, and a new schematic reports its own positions. An edit made here, off the UI thread, is
+        // forwarded to the host on its next editor frame.
+        void SyncParameters(SchematicProcessor circuit)
+        {
+            for (int i = 0; i < Math.Min(circuit.Pots.Count, PotCount); i++)
+                SetParameter(potParameters[i], circuit.Pots[i].Position);
+
+            for (int i = 0; i < Math.Min(circuit.Switches.Count, SwitchCount); i++)
+            {
+                SwitchControl sw = circuit.Switches[i];
+
+                switchParameters[i].Positions = sw.Positions;
+
+                SetParameter(switchParameters[i], SwitchPositionParameter.ToValue(sw.Position, sw.Positions));
+            }
+        }
+
+        static void SetParameter(AudioPluginParameter parameter, double value)
+        {
+            if (parameter.EditValue == value)
+                return;
+
+            parameter.ProcessValue = value;
+            parameter.EditValue = value;
+        }
+
+        // [audio thread] The parameters move the circuit's controls (which ramp to where they're set).
+        void ApplyParameters(SchematicProcessor circuit)
+        {
+            IReadOnlyList<PotControl> pots = circuit.Pots;
+            IReadOnlyList<SwitchControl> switches = circuit.Switches;
+
+            for (int i = 0; i < Math.Min(pots.Count, PotCount); i++)
+                pots[i].Position = Math.Clamp(potParameters[i].ProcessValue, 0, 1);
+
+            for (int i = 0; i < Math.Min(switches.Count, SwitchCount); i++)
+                switches[i].Position = SwitchPositionParameter.ToPosition(switchParameters[i].ProcessValue, switches[i].Positions);
         }
 
         void WatchSchematic()
@@ -336,71 +443,23 @@ namespace SpiceForgePlugin
             Rebuild(keepPositions: false);
         }
 
-        IntPtr parentWindow;
+        // ---- editor (UI thread) ----
 
-        public override void ShowEditor(IntPtr parentWindow)
+        protected override UIElement CreateEditorUI()
         {
-            Logger.Log("Show Editor");
+            editor = new SpiceForgeEditor(this);
 
-            this.parentWindow = parentWindow;
-
-            if (parentWindow == IntPtr.Zero)
-            {
-                RunGame();
-            }
-            else
-            {
-                Thread thread = new Thread(new ThreadStart(RunGame));
-
-                thread.SetApartmentState(ApartmentState.STA);
-
-                thread.Start();
-            }
+            return editor.Root;
         }
 
-        void RunGame()
+        protected override void EditorUpdate(float secondsElapsed)
         {
-            Logger.Log("Start Host");
-
-            try
-            {
-                int screenWidth = (int)EditorWidth;
-                int screenHeight = (int)EditorHeight;
-
-                SpiceForgeLayout layout = new SpiceForgeLayout(this);
-
-                layout.Scale = 0.35f;
-
-                using (GameHost = new MonoGameHost(parentWindow, screenWidth, screenHeight, fullscreen: false))
-                {
-                    GameHost.IsMouseVisible = true;
-
-                    GameHost.StartGame(layout);
-                }
-
-                layout = null;
-            }
-            catch (Exception ex)
-            {
-                Logger.Log("Host run failed with: " + ex.ToString());
-            }
+            editor?.Update();
         }
 
-        public override void ResizeEditor(uint newWidth, uint newHeight)
+        protected override void EditorClosing()
         {
-            base.ResizeEditor(newWidth, newHeight);
-
-            if (GameHost != null)
-            {
-                GameHost.RequestResize((int)newWidth, (int)newHeight);
-            }
-        }
-
-        public override void HideEditor()
-        {
-            base.HideEditor();
-
-            GameHost.Exit();
+            editor = null;
         }
 
         public override void InitializeProcessing()
@@ -438,6 +497,8 @@ namespace SpiceForgePlugin
                 stereoInput.PassThroughTo(stereoOutput);
                 return;
             }
+
+            ApplyParameters(current);
 
             stereoInput.GetAudioBuffer(0).CopyTo(monoIn[0]);
 

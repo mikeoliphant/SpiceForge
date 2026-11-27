@@ -1,4 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <!-- The dial's position mark, pointing up from the center; white, so the layout can tint it. -->
-  <line x1="64" y1="21" x2="64" y2="46" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>
-</svg>

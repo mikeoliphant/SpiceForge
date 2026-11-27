@@ -1,50 +1,35 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+	<!--
+		The SpiceForge plugin: a LiveSPICE schematic run by SpiceForge's processor, with a UILayout editor
+		(AudioPluginUILayout). AudioPlugSharp 0.8 comes from the Dependencies/AudioPlugSharp submodule (it has no
+		packages yet), with UILayout nested in it. Each build makes the DAW bundles in the output folder,
+		clap/SpiceForgePlugin and vst3/SpiceForgePlugin.vst3, once AudioPlugSharp's native adapters have been built
+		(see README.md, Building); without them it builds the plugin and warns.
+	-->
+	<Import Project="..\Dependencies\AudioPlugSharp\AudioPlugSharpBridge\build\InRepo.props" />
+
 	<PropertyGroup>
-		<TargetFramework>net10.0-windows</TargetFramework>
+		<TargetFramework>net10.0</TargetFramework>
 		<Version>0.0.1</Version>
-		<UseWindowsForms>true</UseWindowsForms>
-		<AllowUnsafeBlocks>false</AllowUnsafeBlocks>
-		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-		<UseWindowsForms>true</UseWindowsForms>
+		<AudioPlugSharpDir>$(MSBuildThisFileDirectory)..\Dependencies\AudioPlugSharp\</AudioPlugSharpDir>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="AudioPlugSharp" Version="0.7.13" />
-		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="3.9.0" />
-		<PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4" />
-		<PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.4" />
+		<ProjectReference Include="..\..\SpiceForge\SpiceForge.csproj" />
+		<ProjectReference Include="$(AudioPlugSharpDir)AudioPlugSharp\AudioPlugSharp.csproj" />
+		<ProjectReference Include="$(AudioPlugSharpDir)AudioPlugSharpUILayout\AudioPlugSharpUILayout.csproj" />
 	</ItemGroup>
 
-	<ItemGroup>
-		<TrimmerRootAssembly Include="Microsoft.Xna.Framework.Content.ContentTypeReader" Visible="false" />
-	</ItemGroup>
-
-	<ItemGroup>
-	  <ProjectReference Include="..\..\SpiceForge\SpiceForge.csproj" />
-	  <ProjectReference Include="..\Dependencies\UILayout\UILayout.MonoGame.WindowsDX\UILayout.MonoGame.WindowsDX.csproj" />
-	</ItemGroup>
-	<Target Name="RestoreDotnetTools" BeforeTargets="Restore">
-		<Message Text="Restoring dotnet tools" Importance="High" />
-		<Exec Command="dotnet tool restore" />
+	<!-- The image sheets of UILayout's theme and AudioPlugSharp's audio controls aren't in their repositories: render
+	     them, before the projects that embed them build, when the checkout doesn't have them yet. -->
+	<Target Name="RenderAudioPlugSharpTextures" BeforeTargets="ResolveProjectReferences"
+			Condition="!Exists('$(AudioPlugSharpDir)Dependencies\UILayout\UILayout.DefaultTextures\Textures\ImageManifest.xml') Or !Exists('$(AudioPlugSharpDir)AudioPlugSharpUILayout\Textures\ImageManifest.xml')">
+		<Message Text="Rendering UILayout's and AudioPlugSharp's image sheets" Importance="High" />
+		<Exec Command="dotnet run --project &quot;$(AudioPlugSharpDir)Dependencies\UILayout\DefaultTexturesProcessor&quot; -c Release" />
+		<Exec Command="dotnet run --project &quot;$(AudioPlugSharpDir)AudioPlugSharpImageProcessor&quot; -c Release" />
 	</Target>
 
-	<!-- Build order only: the image processor generates Content/Textures, so it is built first but not referenced. -->
-	<ItemGroup>
-		<ProjectReference Include="..\SpiceForgeImageProcessor\SpiceForgeImageProcessor.csproj"
-						  ReferenceOutputAssembly="false"
-						  OutputItemType="ImageProcessorPath" />
-	</ItemGroup>
+	<Import Project="..\Dependencies\AudioPlugSharp\AudioPlugSharpBridge\build\InRepo.targets" />
 
-	<!-- Regenerate the sprite sheets and ImageManifest.xml when the image processor's Program.cs is newer than the
-	     manifest (or the manifest is missing). This has to run before MonoGame's content builder, which runs before
-	     BeforeBuild and packs Content/Textures. -->
-	<Target Name="RunImageProcessor"
-			DependsOnTargets="ResolveProjectReferences"
-			BeforeTargets="RunContentBuilder"
-			Inputs="..\SpiceForgeImageProcessor\Program.cs"
-			Outputs="Content\Textures\ImageManifest.xml">
-		<Message Text="Running SpiceForgeImageProcessor" Importance="High" />
-		<Exec Command="dotnet &quot;%(ImageProcessorPath.Identity)&quot;" />
-	</Target>
 </Project>
