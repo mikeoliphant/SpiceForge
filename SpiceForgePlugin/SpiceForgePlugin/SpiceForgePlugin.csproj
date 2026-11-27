@@ -15,6 +15,11 @@
 		<AudioPlugSharpDir>$(MSBuildThisFileDirectory)..\Dependencies\AudioPlugSharp\</AudioPlugSharpDir>
 	</PropertyGroup>
 
+	<!-- For packages (SpiceForge.Package): the version, as the server's (the plugin reports its file version). -->
+	<PropertyGroup Condition="'$(SpiceForgeVersion)' != ''">
+		<Version>$(SpiceForgeVersion)</Version>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<ProjectReference Include="..\..\SpiceForge\SpiceForge.csproj" />
 		<ProjectReference Include="$(AudioPlugSharpDir)AudioPlugSharp\AudioPlugSharp.csproj" />

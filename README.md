@@ -35,7 +35,7 @@ Binaries are provided for x64 Windows and Linux.
 
 - No macOS package is currently produced - it must be built locally.
 - macOS support is untested. It *should* work with JACK audio. macOS Core Audio is not yet implemented.
-- There is initial DAW plugin support (CLAP and VST3, on Windows and Linux), but it is still very bare bones. It is not currently packaged for releases.
+- There is initial DAW plugin support (CLAP and VST3, on Windows and Linux), but it is still very bare bones. The plugin needs the .NET 10 runtime installed (on Windows, the .NET Desktop Runtime).
 
 ## Building
 
@@ -62,7 +62,9 @@ dotnet run -c Release --project SpiceForgeServer -- --open app
 
 Build in Release. A Debug build simulates four to five times slower.
 
-**Packages** (a Windows installer and zip, a Linux tarball) go into `artifacts/`. The installer needs
+**Packages** (a Windows installer and zip, a Linux tarball, each with the plugin) go into `artifacts/`. The plugin is
+in them for the platforms whose AudioPlugSharp adapters are built: this machine's are built when missing (with CMake),
+and CI builds the Linux ones on Linux. The installer needs
 [Inno Setup 6](https://jrsoftware.org/isinfo.php).
 
 ```

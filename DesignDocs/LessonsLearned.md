@@ -1221,6 +1221,16 @@ installer) and Linux (a tarball), started in a window of its own.
   and sets its own `OutputType` and `Version` from them.
 - **Write the Linux tarball with its permissions.** Tar tools on Windows don't reliably record the execute bit, so the
   packaging tool writes the tarball itself (`System.Formats.Tar`), the server and `createdump` 755 and the rest 644.
+- **The plugin goes in the packages, as CLAP and VST3.** The zip and the tarball have it in `clap/` and `vst3/`; the
+  installer puts it in `Common Files\CLAP` and `Common Files\VST3` (`{autocf64}`: Program Files for everyone,
+  `%LOCALAPPDATA%\Programs\Common` for the current user, both where DAWs look), not in the program's folder, as an
+  optional task. The bundles need AudioPlugSharp's native adapters for each platform, which are native code: the
+  packaging builds this machine's with CMake, and CI builds the Linux ones in a job of their own on Ubuntu 22.04 (glibc
+  2.35, as AudioPlugSharp's) and hands them to the Windows job that packages. The plugin's output carried its packages'
+  native libraries for every platform (Android, iOS, macOS...), 35 MB a bundle; only the package's platform's go in,
+  which took the Windows zip from 75.1 to 52.6 MB and the installer to 36.8 MB. The packaged (trimmed) plugin loaded and
+  ran in AudioPlugSharp's standalone host. Unlike the server, the plugin isn't self-contained: DAWs load it through the
+  installed .NET 10 runtime (the Desktop Runtime on Windows).
 - **Checked as packaged.** Each package's server, run from its folder with the window turned off, served its own
   editor and the 131-entry catalogue, listed its audio drivers (Windows: None, ASIO, JACK; Linux, under WSL's
   Ubuntu 22.04: None, JACK), logged to its file (Windows), and stopped itself when its client left. Both are about

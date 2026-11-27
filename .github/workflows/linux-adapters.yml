@@ -1,0 +1,38 @@
+# AudioPlugSharp's native CLAP and VST3 adapters for linux-x64, for the plugin in the Linux package (the packages are
+# built on Windows, and the adapters are native code). Built on Ubuntu 22.04, so they need no newer glibc than 2.35, as
+# AudioPlugSharp's own. Called by the Build and Release workflows; the adapters are the native-linux-x64 artifact.
+name: Linux adapters
+
+on:
+  workflow_call:
+
+jobs:
+  adapters:
+    name: Linux adapters
+    runs-on: ubuntu-22.04
+    env:
+      BRIDGE: SpiceForgePlugin/Dependencies/AudioPlugSharp/AudioPlugSharpBridge
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libfreetype6
+      # The plugin's build renders AudioPlugSharp's image sheets, which the native build's managed part needs.
+      - name: Build the plugin
+        run: dotnet build SpiceForgePlugin/SpiceForgePlugin -c Release
+      - name: Build the adapters
+        run: |
+          cmake -S $BRIDGE/Native -B $BRIDGE/bin/native-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build $BRIDGE/bin/native-build --target stage_adapters --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-x64
+          path: ${{ env.BRIDGE }}/bin/native/linux-x64/
+          if-no-files-found: error
+          retention-days: 1
